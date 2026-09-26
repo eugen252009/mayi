@@ -1,0 +1,14 @@
+# Architecture overview — protocol v5 approval foundation
+
+1. Python parses/inspects commands and constructs one structured proposal. Python is untrusted; Python policy is advisory and cannot authorize execution.
+2. The Rust broker receives proposals on a request-only Unix socket, authenticates the peer UID with `SO_PEERCRED`, rejects a requester matching the configured approver UID, validates strict protocol-v5 schemas, and stores one immutable semantic request.
+3. Rust generates a fresh unpredictable broker instance ID and challenge ID. Its canonical digest identifies request semantics and binds requester/target identities, challenge, instance and broker-owned expiry; it is not approval evidence.
+4. A separate approval socket authenticates a configured, distinct UID. Production requires three distinct UIDs and separate request/approval socket groups. `GET_CHALLENGE` creates a fresh one-shot view bound to broker instance, challenge, digest, approver UID, and monotonic expiry. The Rust console checks those correlations; decisions must carry the exact current view ID. Audit logs store only its hash.
+5. Rust owns pending/approved/denied/expired state and monotonic expiry. Explain leaves the original request pending. State is in-memory only, so restart changes broker identity and invalidates all outstanding approvals.
+6. Rust has an internal one-shot consume transition for testing/future design, but consumption always reports `EXECUTION_DISABLED`. There is no reachable filesystem execution from protocol v5.
+
+## Trust limitations
+
+The requester, broker, and approver UIDs and role socket groups must be distinct in production. Socket parent/ancestor ownership is checked and socket modes are set to 0660. Same-UID development mode does not provide OS process isolation. A Rust console requires a TTY, checks broker/challenge/digest/view correlations, displays Rust's sanitized rendering, and asks for an exact decision; it remains unaudited. A compromised broker UID can substitute the broker service and is outside same-UID isolation guarantees. Cross-UID account/group and full console/socket-substitution qualification was not completed; the milestone remains incomplete.
+
+The previous filesystem executor remains dormant in source and retains audited race/topology/resource defects. No filesystem-race remediation is included in this milestone. Do not remove the hard execution-disabled boundary. Real root, fake-root mutation, sudo, setuid and capabilities remain disabled.
