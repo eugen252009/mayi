@@ -1,0 +1,1 @@
+{"approval":{"digest":"bb97e83aeda224a5e87eb7020318e8258ca557e0b685d84196156d2f895dee00","scope":"once"},"expires_at":1790358015,"nonce":"d3f58c51aac381770609710ab35ec803","operations":[{"package":"foo","type":"package_install"}],"protocol":4,"request_id":"fixture-package_install","requester":{"uid":1000},"target":{"gid":1000,"uid":1000}}

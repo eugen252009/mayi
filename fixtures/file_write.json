@@ -1,0 +1,1 @@
+{"approval":{"digest":"6bbfaffa6ea230464f0985a973125e0e3a66131a9cf6e3dc10f464cfbc196a70","scope":"once"},"expires_at":1790358015,"nonce":"9c8202f89513681aacee105a59bc3662","operations":[{"mode":"replace","path":"/etc/example.conf","type":"file_write"}],"protocol":4,"request_id":"fixture-file_write","requester":{"uid":1000},"target":{"gid":1000,"uid":1000}}

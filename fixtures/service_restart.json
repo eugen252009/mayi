@@ -1,0 +1,1 @@
+{"approval":{"digest":"a3a4b6f4268c6f860c7d8f20acc204e3c8009fc55ad89fcdd31b0462ec21a0e3","scope":"once"},"expires_at":1790358015,"nonce":"01d60421c808e1330c228a2be15e522d","operations":[{"service":"tparun.service","type":"service_restart"}],"protocol":4,"request_id":"fixture-service_restart","requester":{"uid":1000},"target":{"gid":1000,"uid":1000}}
