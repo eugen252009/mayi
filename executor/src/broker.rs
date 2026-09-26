@@ -14,8 +14,8 @@ use std::{
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    io::{self, BufRead, Read, Write},
-    os::unix::net::UnixStream,
+    io::{self, Read, Write},
+    os::{fd::AsRawFd, unix::net::UnixStream},
     path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -421,12 +421,6 @@ impl Broker {
         if op.to_string().len() > MAX_OPERATION {
             return response_error("OPERATION_TOO_LARGE", "operation exceeds limit");
         }
-        if !strict_operation(op) {
-            return response_error("UNKNOWN_FIELD", "operation schema is not exact");
-        }
-        if let Err(e) = validate_op(op) {
-            return response_error("INVALID_OPERATION", e);
-        }
         let Some(ty) = op.get("type").and_then(Value::as_str) else {
             return response_error("INVALID_OPERATION", "operation type required");
         };
@@ -435,6 +429,12 @@ impl Broker {
                 "UNSUPPORTED_OPERATION",
                 "operation is denied by broker policy",
             );
+        }
+        if !strict_operation(op) {
+            return response_error("UNKNOWN_FIELD", "operation schema is not exact");
+        }
+        if let Err(e) = validate_op(op) {
+            return response_error("INVALID_OPERATION", e);
         }
         let challenge = match fresh_token(&mut self.challenge_counter) {
             Ok(id) => id,
@@ -695,32 +695,89 @@ impl Broker {
             _ => response_error("INVALID_MESSAGE_TYPE", "unsupported approval message"),
         }
     }
-    #[allow(dead_code)]
-    fn consume_approved(&mut self, id: &str, digest: &str) -> Value {
+    fn consume_request(&mut self, v: &Value, peer: u32) -> Value {
         self.expire();
+        if peer == self.approver_uid {
+            return response_error(
+                "ROLE_SEPARATION_REQUIRED",
+                "approver UID cannot consume requests",
+            );
+        }
+        if peer != self.request_uid {
+            return response_error(
+                "UNAUTHORIZED_REQUESTER",
+                "peer UID is not configured requester",
+            );
+        }
+        let Some(o) = v.as_object() else {
+            return response_error("INVALID_PROTOCOL", "message must be object");
+        };
+        if !only_keys(
+            o,
+            &[
+                "type",
+                "protocol",
+                "broker_instance_id",
+                "challenge_id",
+                "request_digest",
+            ],
+        ) {
+            return response_error("UNKNOWN_FIELD", "unknown consume field");
+        }
+        if o.get("type").and_then(Value::as_str) != Some("CONSUME_APPROVED")
+            || o.get("protocol").and_then(Value::as_i64) != Some(VERSION)
+        {
+            return response_error("INVALID_PROTOCOL", "invalid consume protocol");
+        }
+        let (Some(instance), Some(id), Some(digest)) = (
+            o.get("broker_instance_id").and_then(Value::as_str),
+            o.get("challenge_id").and_then(Value::as_str),
+            o.get("request_digest").and_then(Value::as_str),
+        ) else {
+            return response_error("INVALID_PROTOCOL", "consume identifiers required");
+        };
+        if !valid_hex(Some(&Value::String(instance.to_owned())), 48)
+            || !valid_hex(Some(&Value::String(id.to_owned())), 48)
+            || !valid_hex(Some(&Value::String(digest.to_owned())), 64)
+        {
+            return response_error("INVALID_PROTOCOL", "invalid consume identifiers");
+        }
+        if instance != self.instance {
+            return response_error("BROKER_INSTANCE_MISMATCH", "broker instance mismatch");
+        }
         let Some(r) = self.pending.get_mut(id) else {
             return response_error("CHALLENGE_NOT_FOUND", "challenge unavailable");
         };
+        if r.requester != peer {
+            return response_error(
+                "UNAUTHORIZED_REQUESTER",
+                "consumer UID does not own this request",
+            );
+        }
+        if r.instance != instance || r.challenge != id {
+            return response_error("CHALLENGE_MISMATCH", "challenge binding mismatch");
+        }
         if r.digest != digest {
             return response_error("CHALLENGE_MISMATCH", "digest mismatch");
         }
         match r.state {
             State::Approved => {
-                let _ = transition(&mut r.state, State::Consumed);
+                if transition(&mut r.state, State::Consumed).is_err() {
+                    return response_error(
+                        "INVALID_STATE_TRANSITION",
+                        "consume transition rejected",
+                    );
+                }
                 eprintln!(
                     "event=CONSUMED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={}",
-                    r.instance, r.challenge, r.digest,r.requester,r.target_uid,r.target_gid
+                    r.instance, r.challenge, r.digest, r.requester, r.target_uid, r.target_gid
                 );
-                json!({"ok":true,"status":"CONSUMED","execution":"EXECUTION_DISABLED"})
+                json!({"ok":true,"protocol":VERSION,"status":"CONSUMED","state":"CONSUMED","execution":"EXECUTION_DISABLED","broker_instance_id":r.instance,"challenge_id":r.challenge,"request_digest":r.digest})
             }
             State::Consumed => response_error("ALREADY_CONSUMED", "approval already consumed"),
             State::Expired => response_error("REQUEST_EXPIRED", "challenge expired"),
             _ => response_error("INVALID_STATE_TRANSITION", "request not approved"),
         }
-    }
-    #[cfg(test)]
-    fn consume_for_test(&mut self, id: &str, digest: &str) -> Value {
-        self.consume_approved(id, digest)
     }
 }
 fn read_exact_deadline(s: &mut UnixStream, buf: &mut [u8], deadline: Instant) -> io::Result<()> {
@@ -813,6 +870,159 @@ fn console_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> 
     }
     Ok(v)
 }
+struct TerminalMode {
+    fd: std::os::fd::RawFd,
+    original: libc::termios,
+}
+impl TerminalMode {
+    fn raw(fd: std::os::fd::RawFd) -> io::Result<Self> {
+        let mut original = unsafe { std::mem::zeroed::<libc::termios>() };
+        if unsafe { libc::tcgetattr(fd, &mut original) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut mode = original;
+        mode.c_iflag &= !(libc::IGNCR | libc::INLCR);
+        mode.c_iflag |= libc::ICRNL;
+        mode.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
+        mode.c_cc[libc::VMIN] = 1;
+        mode.c_cc[libc::VTIME] = 0;
+        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &mode) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { fd, original })
+    }
+}
+impl Drop for TerminalMode {
+    fn drop(&mut self) {
+        unsafe {
+            libc::tcsetattr(self.fd, libc::TCSANOW, &self.original);
+            libc::tcflush(self.fd, libc::TCIFLUSH);
+            libc::write(libc::STDOUT_FILENO, b"\n".as_ptr().cast(), 1);
+        }
+    }
+}
+fn poll_input(fd: i32, timeout_ms: i32) -> io::Result<bool> {
+    let mut pfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        let result = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+        if result < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if result == 0 {
+            return Ok(false);
+        }
+        if pfd.revents & libc::POLLIN != 0 {
+            return Ok(true);
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "terminal input closed",
+        ));
+    }
+}
+fn read_tty_frame() -> io::Result<Vec<u8>> {
+    const MAX_INPUT: usize = 64;
+    const QUIET_MS: u64 = 100;
+    let fd = io::stdin().as_raw_fd();
+    let _terminal = TerminalMode::raw(fd)?;
+    let input_deadline = Instant::now() + Duration::from_secs(120);
+    let mut frame = Vec::with_capacity(MAX_INPUT);
+    let mut byte = [0u8; 1];
+    loop {
+        let remaining = input_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "terminal input timed out",
+            ));
+        }
+        let wait_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
+        if !poll_input(fd, wait_ms)? {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "terminal input timed out",
+            ));
+        }
+        let read = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), byte.len()) };
+        if read < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if read != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "terminal closed",
+            ));
+        }
+        if byte[0] == b'\n' || byte[0] == b'\r' {
+            break;
+        }
+        if frame.len() == MAX_INPUT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "decision input too long",
+            ));
+        }
+        frame.push(byte[0]);
+    }
+
+    // A line terminator closes one bounded input frame. Reject and drain any
+    // additional bytes already queued (or arriving during the quiet window).
+    let mut trailing = false;
+    let drain_deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let quiet_left = drain_deadline.saturating_duration_since(Instant::now());
+        if quiet_left.is_zero() {
+            trailing = true;
+            break;
+        }
+        if !poll_input(
+            fd,
+            quiet_left.min(Duration::from_millis(QUIET_MS)).as_millis() as i32,
+        )? {
+            break;
+        }
+        trailing = true;
+        let mut discard = [0u8; 64];
+        let read = unsafe { libc::read(fd, discard.as_mut_ptr().cast(), discard.len()) };
+        if read < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if read == 0 {
+            break;
+        }
+    }
+    if trailing {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "additional terminal input after decision frame",
+        ));
+    }
+    Ok(frame)
+}
+fn parse_decision(frame: &[u8]) -> Option<&'static str> {
+    match frame {
+        b"approve" => Some("APPROVE_CHALLENGE"),
+        b"deny" => Some("DENY_CHALLENGE"),
+        b"explain" => Some("EXPLAIN_CHALLENGE"),
+        _ => None,
+    }
+}
 pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
     if unsafe { libc::geteuid() } == 0
         || unsafe { libc::isatty(libc::STDIN_FILENO) } != 1
@@ -887,11 +1097,11 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
             r["expires_at"]
         )
     }
-    print!("Select request number (or q): ");
+    print!("Select request number (or q; input is not echoed): ");
     io::stdout().flush()?;
-    let mut line = String::new();
-    io::stdin().lock().read_line(&mut line)?;
-    let selection = line.trim_end_matches(&['\r', '\n'][..]);
+    let selection = read_tty_frame()?;
+    let selection = std::str::from_utf8(&selection)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid selection"))?;
     if selection == "q" {
         return Ok(());
     }
@@ -936,23 +1146,11 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
                 .ok_or_else(|| io::Error::other("missing trusted rendering"))?
         )
     );
-    print!("Decision [approve/deny/explain/q]: ");
+    print!("Decision [approve/deny/explain; input is not echoed]: ");
     io::stdout().flush()?;
-    line.clear();
-    io::stdin().lock().read_line(&mut line)?;
-    let decision_text = line.trim_end_matches(&['\r', '\n'][..]);
-    let decision = match decision_text {
-        "approve" => "APPROVE_CHALLENGE",
-        "deny" => "DENY_CHALLENGE",
-        "explain" => "EXPLAIN_CHALLENGE",
-        "q" => return Ok(()),
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid decision",
-            ))
-        }
-    };
+    let frame = read_tty_frame()?;
+    let decision = parse_decision(&frame)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid decision"))?;
     let response = console_call(
         &path,
         broker_uid,
@@ -1012,6 +1210,8 @@ fn handle(mut s: UnixStream, broker: &Arc<Mutex<Broker>>, approval: bool) -> io:
         .map_err(|_| io::Error::other("broker state poisoned"))?;
     let mut r = if approval {
         state.authority(&v, peer)
+    } else if v.get("type").and_then(Value::as_str) == Some("CONSUME_APPROVED") {
+        state.consume_request(&v, peer)
     } else {
         state.propose(&v, peer)
     };
@@ -1183,6 +1383,9 @@ mod tests {
     fn decision(p: &Value, v: &Value, ty: &str) -> Value {
         json!({"type":ty,"protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"],"request_digest":p["request_digest"],"view_id":v["view_id"]})
     }
+    fn consume(p: &Value) -> Value {
+        json!({"type":"CONSUME_APPROVED","protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"],"request_digest":p["request_digest"]})
+    }
     #[test]
     fn proposal_is_pending_and_client_cannot_approve() {
         let mut b = broker();
@@ -1207,23 +1410,15 @@ mod tests {
         let approve = decision(&p, &v, "APPROVE_CHALLENGE");
         assert_eq!(b.authority(&approve, 9001)["status"], "APPROVED");
         assert_eq!(b.authority(&approve, 9001)["code"], "VIEW_ALREADY_USED");
+        let consume = consume(&base);
+        let consumed = b.consume_request(&consume, 1000);
+        assert_eq!(consumed["state"], "CONSUMED");
+        assert_eq!(consumed["execution"], "EXECUTION_DISABLED");
         assert_eq!(
-            b.consume_for_test(
-                base["challenge_id"].as_str().unwrap(),
-                base["request_digest"].as_str().unwrap()
-            )["execution"],
-            "EXECUTION_DISABLED"
-        );
-        assert_eq!(
-            b.consume_for_test(
-                base["challenge_id"].as_str().unwrap(),
-                base["request_digest"].as_str().unwrap()
-            )["code"],
+            b.consume_request(&consume, 1000)["code"],
             "ALREADY_CONSUMED"
         );
-        let mut wire = approve.clone();
-        wire["type"] = Value::String("CONSUME_FOR_TEST".into());
-        assert_eq!(b.authority(&wire, 9001)["code"], "INVALID_MESSAGE_TYPE");
+        assert_eq!(b.authority(&consume, 9001)["code"], "INVALID_MESSAGE_TYPE");
     }
     #[test]
     fn deny_and_explain_cannot_be_approved() {
@@ -1233,6 +1428,10 @@ mod tests {
         let deny = decision(&p, &v, "DENY_CHALLENGE");
         assert_eq!(b.authority(&deny, 9001)["status"], "DENIED");
         assert_eq!(b.authority(&deny, 9001)["code"], "VIEW_ALREADY_USED");
+        assert_eq!(
+            b.consume_request(&consume(&p), 1000)["code"],
+            "INVALID_STATE_TRANSITION"
+        );
         let p = b.propose(&proposal(), 1000);
         let v1 = view(&mut b, &p);
         let explain = decision(&p, &v1, "EXPLAIN_CHALLENGE");
@@ -1247,6 +1446,10 @@ mod tests {
         assert_eq!(
             b.authority(&decision(&p, &v2, "APPROVE_CHALLENGE"), 9001)["status"],
             "APPROVED"
+        );
+        assert_eq!(
+            b.consume_request(&consume(&p), 1000)["execution"],
+            "EXECUTION_DISABLED"
         );
         let mut changed = proposal();
         changed["operations"][0]["path"] = Value::String("/etc/changed".into());
@@ -1425,6 +1628,10 @@ mod tests {
         let mut b = broker();
         assert_ne!(a.instance, b.instance);
         assert_eq!(b.authority(&dec, 9001)["code"], "BROKER_INSTANCE_MISMATCH");
+        assert_eq!(
+            b.consume_request(&consume(&p), 1000)["code"],
+            "BROKER_INSTANCE_MISMATCH"
+        );
     }
     #[test]
     fn challenge_and_digest_substitution_rejected() {
@@ -1461,7 +1668,7 @@ mod tests {
         assert_eq!(b.authority(&approve, 9001)["status"], "APPROVED");
         b.pending.get_mut(&id).unwrap().deadline = Instant::now() - Duration::from_secs(1);
         assert_eq!(
-            b.consume_approved(&id, p["request_digest"].as_str().unwrap())["code"],
+            b.consume_request(&consume(&p), 1000)["code"],
             "REQUEST_EXPIRED"
         );
         let p = b.propose(&proposal(), 1000);
@@ -1478,6 +1685,7 @@ mod tests {
         let p = b.propose(&proposal(), 1000);
         let id = p["challenge_id"].as_str().unwrap().to_owned();
         let dg = p["request_digest"].as_str().unwrap().to_owned();
+        let inst = p["broker_instance_id"].as_str().unwrap().to_owned();
         let v = view(&mut b, &p);
         let dec = decision(&p, &v, "APPROVE_CHALLENGE");
         b.authority(&dec, 9001);
@@ -1487,8 +1695,9 @@ mod tests {
             let b = b.clone();
             let id = id.clone();
             let dg = dg.clone();
+            let inst = inst.clone();
             joins.push(std::thread::spawn(move || {
-                b.lock().unwrap().consume_for_test(&id, &dg)
+                b.lock().unwrap().consume_request(&json!({"type":"CONSUME_APPROVED","protocol":5,"broker_instance_id":inst,"challenge_id":id,"request_digest":dg}),1000)
             }));
         }
         let out: Vec<_> = joins.into_iter().map(|j| j.join().unwrap()).collect();
@@ -1499,6 +1708,76 @@ mod tests {
                 .count(),
             1
         );
+    }
+    #[test]
+    fn console_decision_grammar_is_exact() {
+        assert_eq!(parse_decision(b"approve"), Some("APPROVE_CHALLENGE"));
+        assert_eq!(parse_decision(b"deny"), Some("DENY_CHALLENGE"));
+        assert_eq!(parse_decision(b"explain"), Some("EXPLAIN_CHALLENGE"));
+        for invalid in [
+            b"approve\nextra".as_slice(),
+            b"approve\n",
+            b"approve\n\n",
+            b"approve extra",
+            b" approve",
+            b"approve ",
+            b"approve\t",
+            b"approve\rjunk",
+            "apprové".as_bytes(),
+            "аpprove".as_bytes(),
+            b"",
+        ] {
+            assert_eq!(parse_decision(invalid), None, "accepted {invalid:?}");
+        }
+    }
+    #[test]
+    fn consume_request_is_strict_requester_bound_and_one_shot() {
+        let mut b = broker();
+        let p = b.propose(&proposal(), 1000);
+        let v = view(&mut b, &p);
+        assert_eq!(
+            b.authority(&decision(&p, &v, "APPROVE_CHALLENGE"), 9001)["status"],
+            "APPROVED"
+        );
+        let request = consume(&p);
+        let mut injected = request.clone();
+        injected["path"] = json!("/attacker");
+        assert_eq!(b.consume_request(&injected, 1000)["code"], "UNKNOWN_FIELD");
+        assert_eq!(
+            b.consume_request(&request, 9001)["code"],
+            "ROLE_SEPARATION_REQUIRED"
+        );
+        assert_eq!(
+            b.consume_request(&request, 1001)["code"],
+            "UNAUTHORIZED_REQUESTER"
+        );
+        assert_eq!(b.consume_request(&request, 1000)["state"], "CONSUMED");
+        assert_eq!(
+            b.consume_request(&request, 1000)["code"],
+            "ALREADY_CONSUMED"
+        );
+        let mut wrong_instance = request.clone();
+        wrong_instance["broker_instance_id"] = json!("0".repeat(48));
+        assert_eq!(
+            b.consume_request(&wrong_instance, 1000)["code"],
+            "BROKER_INSTANCE_MISMATCH"
+        );
+        let mut wrong_digest = request.clone();
+        wrong_digest["request_digest"] = json!("0".repeat(64));
+        assert_eq!(
+            b.consume_request(&wrong_digest, 1000)["code"],
+            "CHALLENGE_MISMATCH"
+        );
+    }
+    #[test]
+    fn unsupported_operation_types_never_enter_approval_state() {
+        let mut b = broker();
+        for ty in ["exec", "service_restart", "package_install", "unknown"] {
+            let mut p = proposal();
+            p["operations"][0]["type"] = json!(ty);
+            assert_eq!(b.propose(&p, 1000)["code"], "UNSUPPORTED_OPERATION");
+        }
+        assert!(b.pending.is_empty());
     }
     #[test]
     fn duplicate_json_keys_are_rejected() {

@@ -1,4 +1,4 @@
-# mayi protocol v5 — approval lifecycle foundation
+# mayi protocol v5 — approval and disabled-consume lifecycle
 
 ## Security semantics
 
@@ -30,9 +30,17 @@ Request role:
 
 The client supplies neither request/challenge IDs nor expiry, requester identity, nor decision state. A successful response gives `broker_instance_id`, `challenge_id`, `request_digest`, `PENDING_APPROVAL`, and a human-readable expiry. Rust stores the immutable semantic request before returning that response.
 
+After approval, the original requester may send this exact request-side message:
+
+```json
+{"type":"CONSUME_APPROVED","protocol":5,"broker_instance_id":"…","challenge_id":"…","request_digest":"…"}
+```
+
+No view ID or operation semantics are accepted. Rust authenticates the socket peer with `SO_PEERCRED`, checks that it is the stored requester, verifies instance/challenge/digest and the original monotonic deadline, and atomically transitions only `APPROVED → CONSUMED`. The success response reports `state: CONSUMED` and `execution: EXECUTION_DISABLED`; no executor is called. Replays return `ALREADY_CONSUMED`. DENIED, EXPLAINED-but-not-approved, pending, expired, wrong-role, and wrong-instance requests cannot be consumed.
+
 Approval role supports `LIST_PENDING`, `GET_CHALLENGE`, `APPROVE_CHALLENGE`, `DENY_CHALLENGE`, and `EXPLAIN_CHALLENGE`. Every `GET_CHALLENGE` creates a fresh unpredictable one-shot `view_id` bound in broker memory to broker instance, exact challenge, request digest, approver UID, and monotonic expiry. A new fetch invalidates prior views for that challenge. The returned rendering is generated atomically from the Rust-held immutable request, with terminal/bidi controls escaped. The Rust console verifies broker instance, challenge, digest, pending state, view ID shape, and view expiry, then sends the exact correlated view ID with the chosen decision. Decisions consume the view; approve transitions pending to approved, deny is terminal, and explain leaves the request pending but consumes that view. The view ID is not logged in cleartext (audit logs store its SHA-256 reference). Python changes always require a new proposal/challenge.
 
-Pending and approved validity is measured with Rust `Instant` monotonic time; `expires_at` is informational wall-clock time. Expiry transitions pending/approved requests to expired. Broker memory is ephemeral. A private Rust consume method enforces `APPROVED → CONSUMED` once and returns `EXECUTION_DISABLED`; tests exercise it, and there is no wire-level consume or execution operation.
+Pending and approved validity is measured with Rust `Instant` monotonic time; `expires_at` is informational wall-clock time. Expiry transitions pending/approved requests to expired. Consumption must occur before the original five-minute challenge deadline; an approval does not extend that deadline. Broker memory is ephemeral, so restart invalidates pending, approved, and unconsumed challenge state. Protocol 5 remains unchanged because `CONSUME_APPROVED` is an additive request-role message: existing proposal/approval clients remain safe, while only upgraded request clients can perform the disabled handoff.
 
 ## Digest and renderer
 
@@ -40,6 +48,6 @@ The SHA-256 digest is canonical request integrity only, never proof of approval.
 
 ## Execution boundary
 
-Approval does not enable execution. Every approved request remains non-executable; test consumption reports `EXECUTION_DISABLED`. Filesystem mutation, fake-root mutation, real-root execution, `Exec`, service/package operations, stdio submission, setuid, setgid, sudo, and capabilities remain disabled. Stdio returns `APPROVAL_SOCKET_REQUIRED`; it cannot propose, approve, consume, or mutate.
+Approval does not enable execution. A requester-side wire consume deliberately transitions an approved request to `CONSUMED` and reports `EXECUTION_DISABLED`; this is a temporary pre-execution qualification semantic, not a grant to execute later. Filesystem mutation, fake-root mutation, real-root execution, `Exec`, service/package operations, stdio submission, setuid, setgid, sudo, and capabilities remain disabled. Stdio returns `APPROVAL_SOCKET_REQUIRED`; it cannot propose, approve, consume, or mutate.
 
-The Rust approval console is available via `--approval-console --approval-socket PATH --broker-uid UID`. It requires an unprivileged interactive TTY, authenticates the expected broker UID, validates all challenge/view correlations, displays the broker rendering, and accepts only exact `approve`, `deny`, or `explain` input. This milestone has not completed cross-UID account/socket qualification or independent console/deployment audit. The rootless user-namespace qualification attempt was blocked because `newuidmap` is unavailable; no account or host configuration was changed. Same-UID processes are not isolated by `SO_PEERCRED`; do not use development mode as a production boundary.
+The Rust approval console is available via `--approval-console --approval-socket PATH --broker-uid UID`. It requires an unprivileged interactive TTY, authenticates the expected broker UID, and validates all challenge/view correlations. Decision grammar is exactly lowercase `approve`, `deny`, or `explain`, followed by one line terminator; there are no decision aliases, whitespace trimming, or fuzzy matches. The bounded raw-TTY frame is at most 64 bytes. Input after the terminator during a 100 ms quiet window is rejected and drained; the terminal input queue is flushed and the console exits. A terminal's standalone Enter/CR is translated to LF by the configured line discipline. A pasted CRLF pair produces extra logical input and is rejected. Malformed input sends no approval message; the view remains displayed until expiry or a later GET replaces it. The selection prompt uses the same framed-input boundary, preventing queued decision text from crossing prompts. Input is not echoed. Same-UID processes are not isolated by `SO_PEERCRED`; do not use development mode as a production boundary.

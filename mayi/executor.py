@@ -35,7 +35,7 @@ class DryRunExecutor:
         d=proposal_document(operations,**kwargs)
         return {'ok':True,'validation_only':True,'request':d,'operations':len(operations)}
 class RustExecutorClient:
-    """Can propose requests only; intentionally exposes no approval method."""
+    """Can propose and consume its own approval; exposes no approval method."""
     def __init__(self,executable='mayi-executor',socket_path=None,timeout=5,expected_broker_uid=None):
         self.socket_path=socket_path;self.timeout=timeout;self.executable=executable;self.expected_broker_uid=__import__('os').getuid() if expected_broker_uid is None else expected_broker_uid
     def submit(self,operations,**kwargs):
@@ -48,6 +48,21 @@ class RustExecutorClient:
             raise ExecutorError('response is not correlated protocol-v5 proposal response')
         if result.get('status')!='PENDING_APPROVAL' or not all(isinstance(result.get(k),str) for k in ('broker_instance_id','challenge_id','request_digest')):raise ExecutorError('invalid proposal response')
         if len(result['broker_instance_id'])!=48 or len(result['challenge_id'])!=48 or len(result['request_digest'])!=64 or any(c not in '0123456789abcdef' for c in result['broker_instance_id']+result['challenge_id']+result['request_digest']):raise ExecutorError('invalid proposal correlation identifiers')
+        return result
+    def consume_approved(self,broker_instance_id,challenge_id,request_digest):
+        """Consume this request's approval; the broker deliberately performs no execution."""
+        if not self.socket_path:raise ExecutorError('protocol v5 consumption requires the broker request socket')
+        for value,size in ((broker_instance_id,48),(challenge_id,48),(request_digest,64)):
+            if not isinstance(value,str) or len(value)!=size or any(c not in '0123456789abcdef' for c in value):
+                raise ValueError('invalid consume correlation identifier')
+        doc={'type':'CONSUME_APPROVED','protocol':5,'broker_instance_id':broker_instance_id,'challenge_id':challenge_id,'request_digest':request_digest}
+        result=_exchange(self.socket_path,doc,self.timeout,self.expected_broker_uid)
+        if not isinstance(result,dict) or not isinstance(result.get('ok'),bool) or result.get('protocol')!=5:
+            raise ExecutorError('invalid consume response schema')
+        if not result.get('ok'):
+            raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','rejected')}")
+        if result.get('response_to')!='CONSUME_APPROVED' or result.get('broker_instance_id')!=broker_instance_id or result.get('challenge_id')!=challenge_id or result.get('request_digest')!=request_digest or result.get('status')!='CONSUMED' or result.get('state')!='CONSUMED' or result.get('execution')!='EXECUTION_DISABLED':
+            raise ExecutorError('consume response correlation/status mismatch')
         return result
 class RustApprovalAuthorityClient:
     """Separate approval-role transport; server authenticates SO_PEERCRED UID."""
