@@ -208,6 +208,12 @@ cargo fmt --manifest-path executor/Cargo.toml -- --check
 
 The exact package release/build procedure is documented in the package README; do not rebuild or republish the immutable 0.4.1 artifact as part of documentation maintenance.
 
+## Contact
+
+General project and maintainer contact: [mayi@lupricht.net](mailto:mayi@lupricht.net).
+
+For suspected security vulnerabilities, contact [mayi-security@lupricht.net](mailto:mayi-security@lupricht.net) privately. Do not file exploit details or other sensitive vulnerability information in a public issue. See [`SECURITY.md`](SECURITY.md).
+
 ## License
 
 No `LICENSE` file is currently present in this repository. Do not assume that a particular open-source license or redistribution permission applies; clarify licensing with the project maintainer.
