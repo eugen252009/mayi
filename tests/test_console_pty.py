@@ -173,7 +173,7 @@ def test_console_persists_after_approval_and_shows_exact_argv(tmp_path):
     proc, master, output = _start_console(path)
     try:
         _read_until(master, proc, output, b"[a] allow all")
-        assert b"/usr/bin/true" in output and b'argv[0] "true"' in output
+        assert b"/usr/bin/true" in output and b"[argv0=true]" in output
         os.write(master, b"a\n")
         _read_until(master, proc, output, b"Approved: 0")
         assert proc.poll() is None, "approval console exited after one decision"

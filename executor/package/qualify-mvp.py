@@ -12,17 +12,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 NAME = os.environ.get("MAYI_TEST_CONTAINER")
 MODE = os.environ.get("MAYI_TEST_MODE", "fresh")
-TARGET_VERSION = os.environ.get("MAYI_TARGET_VERSION", "0.3.1")
+TARGET_VERSION = os.environ.get("MAYI_TARGET_VERSION", "0.4.1")
 # Qualification-only random values stay in process memory and disposable containers.
 APPROVER_PASSWORD = secrets.token_urlsafe(32)
 WRONG_PASSWORD = secrets.token_urlsafe(32)
 SYSTEMD_MODE = os.environ.get("MAYI_TEST_SYSTEMD", "0") == "1"
 APT_MODE = os.environ.get("MAYI_TEST_APT", "0") == "1"
 KEEP_PACKAGE = os.environ.get("MAYI_TEST_KEEP_PACKAGE", "0") == "1"
-if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032"}:
-    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031|upgrade032 are required")
-if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0"}:
-    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, 0.3.2, or 0.4.0")
+if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040"}:
+    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031|upgrade032|upgrade040 are required")
+if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1"}:
+    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, 0.3.2, 0.4.0, or 0.4.1")
 
 USERS = {
     "both": (1000, 1000, (23011, 23013)),
@@ -105,11 +105,11 @@ def wait_text(proc, stream, needle, timeout=20):
     raise RuntimeError(f"timed out waiting for {needle!r}; got {data!r}")
 
 
-def approve_actions(actions, identity="both"):
+def approve_actions(actions, identity="both", on_decision=None):
     uid, gid, groups = USERS[identity]
     master, slave = pty.openpty()
     proc = subprocess.Popen(
-        ["docker", "exec", "-it", NAME, *setpriv_args(uid, gid, groups, no_new_privs=TARGET_VERSION != "0.4.0"), "/usr/bin/mayi-approve"],
+        ["docker", "exec", "-it", "--env", "TERM=xterm-256color", NAME, *setpriv_args(uid, gid, groups, no_new_privs=TARGET_VERSION not in {"0.4.0", "0.4.1"}), "/usr/bin/mayi-approve"],
         stdin=slave, stdout=slave, stderr=slave, close_fds=True,
     )
     os.close(slave)
@@ -127,10 +127,9 @@ def approve_actions(actions, identity="both"):
             raise RuntimeError(f"approval console missed {marker!r}: {output.decode(errors='replace')}")
     try:
         controls = acknowledgements = 0
-        if TARGET_VERSION == "0.4.0":
+        if TARGET_VERSION in {"0.4.0", "0.4.1"}:
             wait_marker(b"Password:")
             os.write(master, APPROVER_PASSWORD.encode() + b"\n")
-            wait_marker(b"Authenticated.")
         wait_marker(b"[a] allow all")
         controls = 1
         for action, subset in actions:
@@ -147,6 +146,8 @@ def approve_actions(actions, identity="both"):
                 marker = {"a": b"Approved:", "d": b"Denied:", "f": b"Follow-up requested:"}.get(action, b"Approved:")
                 wait_marker(marker, acknowledgements + 1)
                 acknowledgements += 1
+                if on_decision is not None:
+                    on_decision(acknowledgements - 1)
                 if action != actions[-1][0] and len(actions) > 1:
                     wait_marker(b"[a] allow all", controls + 1)
                     controls += 1
@@ -160,9 +161,12 @@ def approve_actions(actions, identity="both"):
             raise RuntimeError(f"persistent approval console did not quit: {output.decode(errors='replace')}")
         if proc.returncode != 0:
             raise RuntimeError(f"approval console failed: rc={proc.returncode}, output={output.decode(errors='replace')}")
-        if TARGET_VERSION == "0.4.0":
-            assert output.count(b"Password:") == 1 and output.count(b"Authenticated.") == 1, output
+        if TARGET_VERSION in {"0.4.0", "0.4.1"}:
+            assert output.count(b"Password:") == 1 and b"Authenticated." not in output, output
+            assert b"APPROVAL_AUTH_SUCCESS" not in output
             assert APPROVER_PASSWORD.encode() not in output, "PAM password was echoed to the terminal"
+            assert output.count(b"\x1b[2J\x1b[H") == sum(action in {"a", "y", "d", "n", "f", "e"} for action, _ in actions), output
+            assert b"\x1b[3J" not in output, "visible refresh must not erase terminal scrollback"
         while True:
             ready, _, _ = select.select([master], [], [], 0)
             if not ready:
@@ -266,17 +270,9 @@ def approval_console_probe(identity="both", password=APPROVER_PASSWORD, env=None
             while password is not None and sent < prompts:
                 os.write(master, password.encode() + b"\n")
                 sent += 1
-            if b"Authenticated." in output:
-                while b"Waiting for Mayi requests..." not in output and proc.poll() is None:
-                    ready, _, _ = select.select([master], [], [], 0.1)
-                    if ready:
-                        try:
-                            output.extend(os.read(master, 4096))
-                        except OSError:
-                            break
-                if b"Waiting for Mayi requests..." in output:
-                    os.write(master, b"q\n")
-                    proc.wait(timeout=5)
+            if b"Waiting for Mayi requests..." in output or b"[a] allow all" in output:
+                os.write(master, b"q\n")
+                proc.wait(timeout=5)
                 break
             ready, _, _ = select.select([master], [], [], 0.1)
             if ready:
@@ -425,7 +421,7 @@ usermod -aG mayi-approver mayi-approver-only
 ''')
     docker("usermod", "-aG", "mayi-requester", "mayi-primary-requester-user")
     docker("usermod", "-aG", "mayi-approver", "mayi-primary-approver-user")
-    if TARGET_VERSION == "0.4.0":
+    if TARGET_VERSION in {"0.4.0", "0.4.1"}:
         accounts = ("mayi-both", "mayi-approver-only", "mayi-primary-approver-user")
         docker("chpasswd", input="".join(f"{account}:{APPROVER_PASSWORD}\n" for account in accounts).encode())
         docker("chpasswd", input=f"mayi-unrelated:{WRONG_PASSWORD}\n".encode())
@@ -505,8 +501,8 @@ def manpage_qualification():
 
 
 def install_for_mode():
-    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032"}:
-        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1", "upgrade032": "0.3.2"}.get(MODE, "0.2.0")
+    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040"}:
+        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1", "upgrade032": "0.3.2", "upgrade040": "0.4.0"}.get(MODE, "0.2.0")
         install_package(baseline)
         create_human_roles()
         requester_groups = docker("id", "-G", "mayi-both").stdout
@@ -538,13 +534,13 @@ def install_for_mode():
         print(f"UPGRADE {baseline} -> {TARGET_VERSION}; MEMBERSHIPS AND LEGACY ACCOUNTS PRESERVED: PASS")
     else:
         install_package(TARGET_VERSION)
-        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0"}:
+        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1"}:
             assert docker("getent", "passwd", "mayi-requester", check=False).returncode != 0
             assert docker("getent", "passwd", "mayi-approver", check=False).returncode != 0
         create_human_roles()
         method = "APT" if APT_MODE else "dpkg"
         print(f"FRESH INSTALL {TARGET_VERSION} VIA {method}: PASS")
-    if TARGET_VERSION in {"0.3.2", "0.4.0"}:
+    if TARGET_VERSION in {"0.3.2", "0.4.0", "0.4.1"}:
         manpage_qualification()
 
 
@@ -692,6 +688,7 @@ def authentication_qualification():
         docker("sh", "-c", "kill $(cat /tmp/broker.pid); sleep .3; rm -f /run/mayi/request/broker.sock /run/mayi/approval/broker.sock")
     code, output = approval_console_probe(password=WRONG_PASSWORD)
     assert code != 0 and "Password:" in output and "Authenticated." not in output, output
+    assert "APPROVAL_AUTH_SUCCESS" not in output
     assert "Waiting for Mayi requests" not in output and WRONG_PASSWORD not in output
     broker_restart()
 
@@ -726,16 +723,31 @@ def authentication_qualification():
     assert "requester UID: 1001" in display
     assert wait_jobs([pending], identity="requester").returncode == 0
 
-    ids = [queue_command(command_path("true"), identity="both") for _ in range(2)]
+    first_id = queue_command(command_path("true"), identity="both")
     before = execution_request_ids()
-    display = approve_actions([("a", "all"), ("a", "all")], identity="both")
-    assert display.count("Password:") == 1 and display.count("Authenticated.") == 1, display
-    assert set(execution_request_ids()[len(before):]) == {request_id[3:] for request_id in ids}
-    assert wait_jobs(ids).returncode == 0
+    later_ids = []
+    def submit_new_request_after_first_decision(index):
+        if index == 0:
+            later_ids.append(queue_command(command_path("true"), identity="both"))
+    display = approve_actions([("a", "all"), ("d", "all")], identity="both", on_decision=submit_new_request_after_first_decision)
+    assert display.count("Password:") == 1 and "Authenticated." not in display, display
+    assert "APPROVAL_AUTH_SUCCESS" not in display
+    assert display.count("\x1b[2J\x1b[H") == 2 and "\x1b[3J" not in display, display
+    first_clear = display.index("\x1b[2J\x1b[H")
+    first_ack = display.index("Approved:")
+    second_request = display.index("Commands:", first_ack)
+    second_clear = display.index("\x1b[2J\x1b[H", first_clear + 1)
+    deny_ack = display.index("Denied:", second_request)
+    assert first_clear < first_ack < second_request < second_clear < deny_ack, display
+    assert len(later_ids) == 1
+    assert set(execution_request_ids()[len(before):]) == {first_id[3:]}
+    assert wait_jobs([first_id]).returncode == 0
+    assert wait_jobs(later_ids).returncode == 10
 
     separate = queue_command(command_path("true"), identity="requester")
     display = approve("a", identity="approver")
-    assert "requester UID: 1001" in display and "Authenticated." in display
+    assert "requester UID: 1001" in display and "Authenticated." not in display
+    assert "APPROVAL_AUTH_SUCCESS" not in display
     assert wait_jobs([separate], identity="requester").returncode == 0
     if SYSTEMD_MODE:
         auth_log = docker("journalctl", "-u", "mayi-broker.service", "-o", "cat", "--no-pager").stdout
@@ -762,7 +774,7 @@ def run():
     assert code != 0 and "MAYI_UNAUTHORIZED_APPROVER" in error, (code, error)
     assert count_started() == before
     print("REQUESTER/APPROVER GROUP AUTHORIZATION AND CLEAR ERRORS: PASS")
-    if TARGET_VERSION == "0.4.0":
+    if TARGET_VERSION in {"0.4.0", "0.4.1"}:
         authentication_qualification()
 
     # Supplementary requester A and approver B; other members cannot consume A's request.
@@ -799,7 +811,7 @@ def run():
     # Same UID may hold both human roles.
     before = count_started()
     stdout, _, display = run_cli("/usr/bin/id")
-    assert b"uid=0(root)" in stdout and "/usr/bin/id" in display and 'argv[0] "/usr/bin/id"' in display
+    assert b"uid=0(root)" in stdout and "/usr/bin/id" in display and "[argv0=/usr/bin/id]" in display
     assert count_started() == before + 1
     print("SAME USER BOTH ROLES / APPROVE: PASS")
 

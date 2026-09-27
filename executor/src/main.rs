@@ -7,7 +7,7 @@ use std::{
     env,
     ffi::CString,
     fs,
-    io::{self, Read, Write},
+    io::{self, Read},
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -451,23 +451,16 @@ fn approval_console_authenticated(path: PathBuf, broker_uid: u32) -> io::Result<
         ));
     }
 
-    println!("Mayi approval authentication");
-    io::stdout().flush()?;
     let authenticated = pam_auth::authenticate_current("mayi-approve", uid, tty_fd)?;
     if !authenticated {
-        eprintln!("event=APPROVAL_AUTH_FAILURE approver_uid={uid}");
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Authentication failed.",
         ));
     }
     if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
-        eprintln!("event=APPROVAL_AUTH_FAILURE approver_uid={uid} reason=dumpable_lock_failed");
         return Err(io::Error::last_os_error());
     }
-    println!("Authenticated.");
-    io::stdout().flush()?;
-    eprintln!("event=APPROVAL_AUTH_SUCCESS approver_uid={uid}");
     broker::approval_console(path, broker_uid)
 }
 

@@ -46,5 +46,5 @@ for script in postinst prerm postrm; do
   chmod 0755 "$PKGROOT/DEBIAN/$script"
 done
 "$TPA_BIN" build -in="$PKGROOT" \
-  -out="$OUT/mayi_0.4.0_amd64.deb"
-sha256sum "$OUT/mayi_0.4.0_amd64.deb"
+  -out="$OUT/mayi_0.4.1_amd64.deb"
+sha256sum "$OUT/mayi_0.4.1_amd64.deb"

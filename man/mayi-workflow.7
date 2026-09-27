@@ -1,4 +1,4 @@
-.TH MAYI-WORKFLOW 7 "2026-09-27" "Mayi 0.4.0" "Mayi Manual"
+.TH MAYI-WORKFLOW 7 "2026-09-27" "Mayi 0.4.1" "Mayi Manual"
 .SH NAME
 mayi-workflow \- requester and approver guide for Mayi's exact-command approval workflow
 .SH DESCRIPTION
@@ -94,7 +94,7 @@ mayi-approve
 .fi
 .RE
 .PP
-The console stays open. When idle it prints
+The console stays open. Successful authentication is quiet; the console goes directly to the waiting or request display. When idle it prints
 .B "Waiting for Mayi requests..."
 and refreshes for new requests. A requester's
 .B --wait
@@ -102,7 +102,7 @@ may therefore be blocked while the approver console is waiting; this is normal.
 .PP
 For each connected dependency set, inspect every displayed row before deciding:
 .IP \(bu 3
-The numbered executable and its exact argv are what will be run. The executable is run as root; argv is not shell-parsed by Mayi.
+The numbered executable and its exact argv are what will be run. Arguments are shown as separate, shell-quoted display values (the display is not a shell command and nothing is expanded); the actual argv[0] is identified beside the executable. The executable is run as root; argv is not shell-parsed by Mayi.
 .IP \(bu 3
 Check the requester UID, request IDs, state, and dependencies. The displayed executor identity is UID 0 / GID 23012.
 .IP \(bu 3
@@ -138,7 +138,7 @@ The aliases
 .B y , n , e
 mean allow, deny, and follow-up respectively. Deny and follow-up ask for
 .B all
-or indices. If an input is invalid, the console reports the error and continues; inspect the refreshed display before trying again. The console remains open after a decision and returns to waiting for more requests.
+or indices. If an input is invalid, the console reports the error and continues; inspect the refreshed display before trying again. After a successfully applied allow, deny, or follow-up decision, the console clears the visible terminal screen and refreshes the next request; scrollback is preserved. Clearing is used only when stdout is a TTY and TERM indicates a usable terminal. Broker rejection or another decision error leaves the current display in place and shows the error. The console remains open after a decision and returns to waiting for more requests.
 .SH TWO-TERMINAL EXAMPLE
 In terminal T1, start the approver first:
 .PP

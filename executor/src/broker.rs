@@ -1930,8 +1930,96 @@ fn console_signature(rows: &[Value], component: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join("|")
 }
-fn print_console_component(rows: &[Value], component: &[usize]) {
-    println!("\nCommands: {}", component.len());
+fn render_console_arg(arg: &str) -> String {
+    if !arg.is_empty()
+        && arg
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b))
+    {
+        return arg.to_owned();
+    }
+    if arg.chars().all(|c| !c.is_control() && c.is_ascii()) && !arg.contains('\'') {
+        return format!("'{}'", arg);
+    }
+    terminal_safe(&serde_json::to_string(arg).unwrap_or_else(|_| "\"<invalid>\"".into()))
+}
+
+const CLEAR_VISIBLE_SCREEN: &[u8] = b"\x1b[2J\x1b[H";
+
+fn terminal_supports_visible_clear(is_tty: bool, term: Option<&str>) -> bool {
+    let Some(term) = term else {
+        return false;
+    };
+    let ansi_compatible = [
+        "ansi",
+        "linux",
+        "vt100",
+        "vt102",
+        "vt220",
+        "xterm",
+        "screen",
+        "tmux",
+        "rxvt",
+        "alacritty",
+        "kitty",
+        "wezterm",
+        "foot",
+        "konsole",
+        "putty",
+        "cygwin",
+        "st",
+        "Eterm",
+    ]
+    .iter()
+    .any(|prefix| {
+        term == *prefix
+            || term
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('-'))
+    });
+    is_tty && ansi_compatible
+}
+
+fn visible_screen_clear_supported() -> bool {
+    let term = std::env::var("TERM").ok();
+    terminal_supports_visible_clear(
+        unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1,
+        term.as_deref(),
+    )
+}
+
+fn write_console_decision_feedback<W: Write>(
+    output: &mut W,
+    decision: &str,
+    completed: &[usize],
+    any_failed: bool,
+    clear_supported: bool,
+) -> io::Result<()> {
+    if completed.is_empty() {
+        return Ok(());
+    }
+    if !any_failed && clear_supported {
+        let _ = output.write_all(CLEAR_VISIBLE_SCREEN);
+    }
+    writeln!(
+        output,
+        "{}: {}",
+        match decision {
+            "approve" => "Approved",
+            "deny" => "Denied",
+            _ => "Follow-up requested",
+        },
+        completed
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+    )?;
+    output.flush()
+}
+
+fn render_console_component(rows: &[Value], component: &[usize]) -> String {
+    let mut output = format!("\nCommands: {}\n", component.len());
     let mut index_by_id = HashMap::new();
     for (index, row_index) in component.iter().enumerate() {
         if let Some(id) = rows[*row_index]["request_id"].as_str() {
@@ -1953,22 +2041,33 @@ fn print_console_component(rows: &[Value], component: &[usize]) {
     for (index, row_index) in component.iter().enumerate() {
         let row = &rows[*row_index];
         let operation = &row["operations"][0];
-        println!(
-            "[{}] {}  ({})",
+        let executable =
+            render_console_arg(operation["executable"].as_str().unwrap_or("<invalid>"));
+        let argv = operation["argv"].as_array();
+        let argv0 = argv
+            .and_then(|args| args.first())
+            .and_then(Value::as_str)
+            .unwrap_or("<invalid>");
+        output.push_str(&format!(
+            "[{}] {} [argv0={}]  ({})\n",
             index,
-            terminal_safe(operation["executable"].as_str().unwrap_or("<invalid>")),
+            executable,
+            render_console_arg(argv0),
             row["queue_state"].as_str().unwrap_or("UNKNOWN")
-        );
-        if let Some(argv) = operation["argv"].as_array() {
-            for (arg_index, arg) in argv.iter().enumerate() {
-                let rendered = serde_json::to_string(arg.as_str().unwrap_or("<invalid>"))
-                    .unwrap_or_else(|_| "\"<invalid>\"".into());
-                println!("     argv[{}] {}", arg_index, terminal_safe(&rendered));
+        ));
+        if let Some(args) = argv {
+            for arg in args.iter().skip(1) {
+                output.push_str("     ");
+                output.push_str(&render_console_arg(arg.as_str().unwrap_or("<invalid>")));
+                output.push_str(" \\\n");
+            }
+            if args.len() > 1 {
+                output.push('\n');
             }
         }
-        println!("     requester UID: {}", row["requester_uid"]);
+        output.push_str(&format!("     requester UID: {}\n", row["requester_uid"]));
         if let Some(id) = row["request_id"].as_str() {
-            println!("     request ID: {}", terminal_safe(id));
+            output.push_str(&format!("     request ID: {}\n", terminal_safe(id)));
         }
         let dependency_indexes: Vec<String> = row["dependencies"]
             .as_array()
@@ -1977,21 +2076,24 @@ fn print_console_component(rows: &[Value], component: &[usize]) {
             .filter_map(|dep| index_by_id.get(dep.as_str()?).map(ToString::to_string))
             .collect();
         if !dependency_indexes.is_empty() && !linear {
-            println!("     after: {}", dependency_indexes.join(","));
+            output.push_str(&format!("     after: {}\n", dependency_indexes.join(",")));
         }
         if row["queue_state"] == "BLOCKED" {
-            println!(
-                "     blocked by: {}",
+            output.push_str(&format!(
+                "     blocked by: {}\n",
                 terminal_safe(row["blocking_dependency"].as_str().unwrap_or("unknown"))
-            );
+            ));
         }
         if linear && index + 1 < component.len() {
-            println!("     ↓");
+            output.push_str("     ↓\n");
         }
     }
-    println!("Executor: UID 0 / GID 23012");
-    println!("[a] allow all  [s] skip  [d] deny  [f] follow-up  [q] quit");
-    println!("Or approve selected commands by index (e.g. 012).\n>");
+    output.push_str("Executor: UID 0 / GID 23012\n[a] allow all  [s] skip  [d] deny  [f] follow-up  [q] quit\nOr approve selected commands by index (e.g. 012).\n>");
+    output
+}
+
+fn print_console_component(rows: &[Value], component: &[usize]) {
+    print!("{}", render_console_component(rows, component));
     let _ = io::stdout().flush();
 }
 fn parse_console_subset(
@@ -2066,6 +2168,23 @@ fn decide_console_row(
         &json!({"type":message,"protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge,"request_digest":digest,"view_id":view["view_id"]}),
     )?;
     check_authority_response(&result)?;
+    let expected_status = match decision {
+        "approve" => "APPROVED",
+        "deny" => "DENIED",
+        _ => "EXPLAINED",
+    };
+    if result["broker_instance_id"] != instance
+        || result["challenge_id"] != challenge
+        || result["request_digest"] != digest
+        || result["view_id"] != view["view_id"]
+        || result["status"] != expected_status
+        || result["authorized"] != (decision == "approve")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "decision response correlation mismatch",
+        ));
+    }
     Ok(())
 }
 fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()> {
@@ -2177,28 +2296,25 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
                 .collect()
         };
         let mut completed = Vec::new();
+        let mut any_failed = false;
         for index in selected {
             let row = &rows[component[index]];
             match decide_console_row(&path, broker_uid, &instance, row, decision) {
                 Ok(()) => completed.push(index),
-                Err(error) => eprintln!("Mayi decision for [{}] was not applied: {}", index, error),
+                Err(error) => {
+                    any_failed = true;
+                    eprintln!("Mayi decision for [{}] was not applied: {}", index, error);
+                }
             }
         }
-        if !completed.is_empty() {
-            println!(
-                "{}: {}",
-                match decision {
-                    "approve" => "Approved",
-                    "deny" => "Denied",
-                    _ => "Follow-up requested",
-                },
-                completed
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-        }
+        let clear_supported = !any_failed && visible_screen_clear_supported();
+        write_console_decision_feedback(
+            &mut io::stdout().lock(),
+            decision,
+            &completed,
+            any_failed,
+            clear_supported,
+        )?;
     }
 }
 
@@ -3193,6 +3309,82 @@ mod tests {
             assert_eq!(parse_decision(invalid), None, "accepted {invalid:?}");
         }
     }
+    #[test]
+    fn console_commands_use_readable_unambiguous_argv_rendering() {
+        assert_eq!(render_console_arg("systemctl"), "systemctl");
+        assert_eq!(render_console_arg("hello world"), "'hello world'");
+        assert_eq!(render_console_arg("$HOME"), "'$HOME'");
+        assert_eq!(
+            render_console_arg("; touch /tmp/pwned"),
+            "'; touch /tmp/pwned'"
+        );
+        assert_eq!(render_console_arg("C:\\tmp\\x"), "'C:\\tmp\\x'");
+        assert_eq!(render_console_arg("can't"), "\"can't\"");
+        assert_eq!(render_console_arg("line\nfeed"), "\"line\\nfeed\"");
+
+        let rows = vec![json!({
+            "request_id":"request-1", "queue_state":"PENDING_APPROVAL",
+            "requester_uid":1001, "dependencies":[], "operations":[{
+                "type":"exec", "executable":"/usr/bin/foo",
+                "argv":["foo", "hello world", "$HOME", "; touch /tmp/pwned"]
+            }]
+        })];
+        let rendered = render_console_component(&rows, &[0]);
+        assert!(rendered.contains("[0] /usr/bin/foo [argv0=foo]"));
+        assert!(rendered.contains("     'hello world' \\\n"));
+        assert!(rendered.contains("     '$HOME' \\\n"));
+        assert!(rendered.contains("     '; touch /tmp/pwned' \\\n"));
+        assert!(rendered.contains("requester UID: 1001"));
+        assert!(!rendered.contains("argv[1]"));
+        assert!(!rendered.contains("\nfeed"));
+    }
+
+    #[test]
+    fn visible_clear_requires_tty_and_a_usable_terminal_type() {
+        assert!(terminal_supports_visible_clear(
+            true,
+            Some("xterm-256color")
+        ));
+        assert!(!terminal_supports_visible_clear(
+            false,
+            Some("xterm-256color")
+        ));
+        assert!(!terminal_supports_visible_clear(true, None));
+        assert!(!terminal_supports_visible_clear(true, Some("")));
+        assert!(!terminal_supports_visible_clear(true, Some("dumb")));
+        assert!(!terminal_supports_visible_clear(true, Some("unknown")));
+        assert!(!terminal_supports_visible_clear(true, Some("vt52")));
+        assert!(terminal_supports_visible_clear(true, Some("vt100")));
+    }
+
+    #[test]
+    fn successful_decisions_clear_only_the_visible_screen_and_failures_do_not() {
+        for (decision, acknowledgement) in [
+            ("approve", "Approved: 0"),
+            ("deny", "Denied: 0"),
+            ("explain", "Follow-up requested: 0"),
+        ] {
+            let mut output = Vec::new();
+            write_console_decision_feedback(&mut output, decision, &[0], false, true).unwrap();
+            assert!(output.starts_with(CLEAR_VISIBLE_SCREEN));
+            assert!(output.ends_with(format!("{acknowledgement}\n").as_bytes()));
+            assert!(!output.windows(4).any(|window| window == b"\x1b[3J"));
+        }
+        let mut no_decision = Vec::new();
+        write_console_decision_feedback(&mut no_decision, "approve", &[], true, true).unwrap();
+        assert!(no_decision.is_empty());
+        let mut rejected = Vec::new();
+        write_console_decision_feedback(&mut rejected, "approve", &[0], true, true).unwrap();
+        assert!(!rejected
+            .windows(CLEAR_VISIBLE_SCREEN.len())
+            .any(|window| window == CLEAR_VISIBLE_SCREEN));
+        assert!(rejected.ends_with(b"Approved: 0\n"));
+        let mut redirected = Vec::new();
+        write_console_decision_feedback(&mut redirected, "deny", &[0], false, false).unwrap();
+        assert!(!redirected.starts_with(b"\x1b"));
+        assert!(redirected.ends_with(b"Denied: 0\n"));
+    }
+
     #[test]
     fn consume_request_is_strict_requester_bound_and_one_shot() {
         let mut b = broker();
