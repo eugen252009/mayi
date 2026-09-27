@@ -30,7 +30,15 @@ No PAM policy, authentication behavior, role checks, broker authorization/approv
 
 Focused gates verified allow/deny/follow-up clearing only after success, no clear on errors, no scrollback erase, no clear for non-TTY/dumb/unknown terminals, and a newly arriving request rendered after the prior successful decision cleared the old screen. PAM success produced no authentication banner or success event; wrong-password, account/PAM policy, TTY, argv/environment/piped-stdin, and pre-broker visibility restrictions remained passing. Rust tests: 77 + 5; Python tests: 51 passed, 9 skipped; Clippy with warnings denied, formatting, Python syntax, man rendering, and diff checks passed.
 
-No production host was accessed or modified; no deployment or Synology work occurred. Publication/consumer APT verification is recorded after completion below.
+No production host was accessed or modified; no deployment or Synology work occurred.
+
+### TPA.run publication and consumer verification
+
+- Repository: public `bootstrap`, ID `f102d36c2eca9bbaa8ddcff08b3c645f`, canonical URL `https://tpa.run/r/tparun/bootstrap`.
+- `tparun status` was empty before staging. Only `mayi_0.4.1_amd64.deb` was staged; staged package identity and SHA-256 matched the exact qualified artifact.
+- `tparun publish --yes https://tpa.run/r/tparun/bootstrap` completed successfully; one package was published and staging cleared. Post-publication `tparun status` was empty.
+- Refreshed isolated APT state configured with only `bootstrap` advertises `mayi 0.4.1 amd64`. An exact-version `apt-get download mayi=0.4.1` produced SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`, matching the qualified, staged, and published-index SHA-256.
+- Publication is not deployment: no production host was accessed, installed, upgraded, restarted, or modified. No Synology work began.
 
 ## PAM-authenticated approver sessions — package 0.4.0 (2026-09-27)
 
