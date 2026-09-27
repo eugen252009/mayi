@@ -1,7 +1,9 @@
-# openat2 hardening — filesystem executor qualification status
+# Historical openat2 hardening research — filesystem executor
+
+> Archived technical evidence; not a statement that filesystem execution is supported. See [`../../FILESYSTEM_EXECUTOR_STATUS.md`](../../FILESYSTEM_EXECUTOR_STATUS.md) for the current gate.
 
 The new direct core in `executor/src/filesystem.rs` requires Linux `openat2` (no fallback), with `RESOLVE_IN_ROOT`/`RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS`, and `RESOLVE_NO_XDEV`. It pins and locks the root FD, checks parent identity before commit, and on restart recovers reserved FilePatch staging names. The runtime filesystem allowlist is now exact `ext4`, selected by mount ID plus `/proc/self/mountinfo`; other filesystem types fail closed.
 
 The qualification host reported ext4 for the disposable test-root filesystem. All four direct operations, O_TMPFILE staging, FileMove no-replace, and directory fsync paths were exercised there. A real `/proc/self` magic link and `/proc` mount boundary were rejected. Directory and file bind mounts were created only in a private `unshare -Urnm` namespace; the core openat2 resolution primitive returned `MOUNT_CROSSING` for both, and a tmpfs mount was rejected by filesystem admission. This is primitive-level evidence, not an EUID-nonzero `ExecutionContext` mount test. The host mount namespace was not changed. Power-loss durability is not claimed.
 
-This remains **INCOMPLETE**: only ext4 was qualified; kernel-generated failure modes, cleanup-status reporting, stalled-syscall proof, LSM-label/device-node live coverage, and independent review remain open. The direct executor is disconnected from the broker; preserve `EXECUTION_DISABLED`. See `FILESYSTEM_EXECUTOR_REMEDIATION.md` for evidence and limits.
+This remains **INCOMPLETE**: only ext4 was qualified; kernel-generated failure modes, cleanup-status reporting, stalled-syscall proof, LSM-label/device-node live coverage, and independent review remain open. The direct executor is disconnected from the broker; preserve `EXECUTION_DISABLED`. See [`FILESYSTEM_EXECUTOR_REMEDIATION.md`](FILESYSTEM_EXECUTOR_REMEDIATION.md) for the detailed historical evidence and limits.

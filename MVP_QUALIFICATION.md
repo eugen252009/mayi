@@ -1,5 +1,7 @@
 # Mayi package and deployment qualification record
 
+> Release/qualification history, not a step-by-step user guide. The 0.4.1 record at the top is the current stable package baseline; older version sections below are historical and do not describe the current artifact. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
+
 ## Approval-console UX refresh — package 0.4.1 (2026-09-27)
 
 ### Scope
@@ -261,7 +263,7 @@ The requester/approver role authorization change passed Rust, Python, package, a
 
 ### Qualification
 
-`executor/package/qualify-mvp.sh` ran two isolated containers (fresh install and 0.2.0 upgrade). Each had no host mounts, Docker socket, or privileged mode. Networking was disconnected and verified absent before Mayi processes started. Both containers were removed after qualification.
+The historical standalone `qualify-mvp.sh` harness ran two isolated containers (fresh install and 0.2.0 upgrade); that obsolete helper was removed during the 0.4.1 repository cleanup. Each container had no host mounts, Docker socket, or privileged mode. Networking was disconnected and verified absent before Mayi processes started. Both containers were removed after qualification.
 
 | Gate | Result |
 | --- | --- |

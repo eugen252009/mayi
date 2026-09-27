@@ -1,41 +1,213 @@
-# mayi
+# Mayi
 
-`mayi <command> [args...]` submits one exact executable-and-argv request to a Rust-owned Protocol 5 approval broker and waits for a human decision. The synchronous interface is preserved: `y` permits one execution; `n` executes nothing and exits 10; `e` executes nothing and exits 20. For asynchronous jobs, `mayi --queue [--after rq_<id>]... <command> [args...]` returns a broker-generated opaque request ID immediately. `mayi --wait [--fail=N] [--fail-instant] <id>...` observes results and `mayi --status <id>` reports one job. Queue dependencies must reference requests owned by the same authenticated requester UID; only successful dependencies permit execution. The persistent `mayi-approve` console displays exact executable/argv and dependencies, supports `a/s/d/f`, aliases `y/n/e`, and numeric selection. No shell command string, requester-supplied environment, working directory, or file descriptor is sent.
+**May I?** lets an agent or automation request a privileged local operation without giving the requester direct root credentials. The requester submits an executable and its arguments. A human opens the approval console and authenticates separately through PAM. Only a request the human explicitly approves can reach the privileged executor.
 
-```sh
-mayi systemctl reload nginx
-# Or queue a dependent operation and retain its returned rq_<id>:
-mayi --queue --after rq_0123456789abcdef0123456789abcdef /usr/bin/systemctl reload nginx
-mayi --wait --fail=0 rq_0123456789abcdef0123456789abcdef
-# In the human approver's own interactive terminal:
-mayi-approve
-# Authenticate the same Unix account with PAM, then enter a (approve), s (skip), d (deny), f (follow-up), numeric indices, or q.
+```text
+agent / requester
+        ↓ exact executable + argv
+broker-owned immutable request
+        ↓ one-shot view
+human approval console
+        ↓ PAM authentication of the human's Unix account
+one-shot decision
+        ↓ independent broker authorization
+privileged executor
+        ↓ direct execution of exact executable + argv
 ```
 
-Requester and approver authorization uses the root-controlled `mayi-requester` and `mayi-approver` Unix groups. Before opening the approval socket or displaying requests, `mayi-approve` checks the actual calling UID's approver-group membership and authenticates that same NSS account through PAM. This requires a controlling interactive terminal; passwords are entered with echo disabled and are not accepted through argv, environment variables, or piped stdin. Authentication lasts only for the lifetime of that console process; a new process requires a new authentication. A user may belong to both groups for single-account operation, or requester and approver may be separate accounts. The broker independently authenticates requester and approver peer UIDs with `SO_PEERCRED` and repeats its role checks; the executor separately checks that its peer UID is the configured broker UID. `SO_PEERCRED` authenticates a UID, not a particular process or executable. Agents may submit requests but must leave human PAM authentication and approval to the approver.
+## Status
 
-## Execution scope and limits
+**STABLE / MAINTENANCE — Mayi 0.4.1 is the current stable feature baseline.** Mayi is maintained, not abandoned.
 
-This is a broad, human-gated command MVP, **not** a command allowlist or semantic safety filter. Approved commands run with executor identity UID 0 / primary GID 23012. The approval display makes that identity explicit. The executable must resolve to a root-owned, executable, non-group/world-writable file directly under one of `/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`; path components and symlinks are checked independently by CLI, broker, and executor. Arguments are bounded (128 entries, 1,024 UTF-8 bytes each, 2,048 total bytes). The executor clears the environment, sets fixed `PATH`, `LANG`, `LC_ALL`, and `HOME`, uses `/` as cwd and `/dev/null` as stdin, and bounds captured stdout/stderr. A requester can explicitly request a shell executable and its argv; the broker does not interpret a shell string, but the approver must assess the displayed executable and every argument.
+- Feature development is frozen unless driven by a concrete requirement.
+- Bug fixes, security fixes, and documentation fixes remain allowed.
+- New platforms are on demand; breaking changes require explicit justification.
+- Synology DSM is **not supported** and is deferred pending platform/vendor answers.
 
-The executor journals a one-shot request ID before spawning and does not retry ambiguous handoffs. Replayed IDs are not executed; if a result cannot be proven, Mayi reports execution unknown (16). Execution is not a transaction: an approved command may have partially changed system state before it exits or loses its response.
+## Why Mayi exists
 
-The structured filesystem executor remains disconnected and independently **INCOMPLETE**. Existing file operations do not gain a privileged filesystem handoff. This release adds no filesystem execution or mutation; 0.4.1 qualification uses disposable containers only, and must not access or modify the real host.
+An agent can prepare and submit a request without holding root credentials. A human separately reviews and authorizes the exact operation. A typical setup gives a dedicated agent account the `mayi-requester` role and a human account the `mayi-approver` role. The roles can belong to the same Unix account, but the approval console still requires that account's PAM authentication. Separate accounts provide clearer role separation.
 
-## Install and package
+**Shell possession is not approval authority.** Requester identity and role membership do not authenticate a human or authorize a decision. Conversely, PAM authentication does not replace the broker's independent identity and role checks.
 
-Build the Debian package with TPA provenance enabled:
+## Security model
+
+- `mayi` submits an executable and structured argv; it does not send a shell command string, requester environment, working directory, or file descriptors. The command token resolves to a canonical executable in Mayi's fixed trusted system directories. The supplied argv, including argv[0], remains part of the request.
+- The Rust broker authenticates local peer UIDs with `SO_PEERCRED`, checks requester/approver group membership through NSS, and owns the immutable request and approval state. Requester identity is bound to the request; the broker independently checks the approver's peer identity and authorization.
+- Before it connects to the broker or displays requests, `mayi-approve` checks the caller's approver-group membership and authenticates that same account through PAM. It requires an interactive controlling terminal. Passwords are read from the terminal with echo disabled, not from argv, environment variables, or piped stdin. Successful authentication is process-local; starting a new console requires authentication again.
+- An approval is one-shot and applies to broker-owned request state. The renderer displays that state; **renderer output is not execution input**. The executor receives the broker's stored operation, not text copied from the terminal.
+- The separate privileged executor accepts requests only from the configured broker UID, revalidates the operation, and executes the exact executable + argv without shell mediation. Direct executor access is not an authorization path.
+- Mayi runs an approved command as UID 0 / primary GID 23012. It is a broad human-gated command MVP—not a semantic safety analyzer or command allowlist. The approver must assess the executable and every argument. An explicitly requested shell executable can interpret its own arguments.
+
+The display shows the resolved executable and argv[0] separately. For example, invoking `mayi systemctl restart nginx` resolves the executable path but retains `systemctl` as argv[0]. The approval display is human-readable notation, not a shell command to copy or execute.
+
+## Installation
+
+The 0.4.1 Debian package is available from the public TPA.run `bootstrap` APT repository. Package availability is separate from local role configuration: installing Mayi does **not** add users to either role group.
+
+On a supported Debian amd64 system with the signed TPA.run `bootstrap` APT source already configured, refresh package metadata, confirm the exact 0.4.1 candidate, and install that release:
 
 ```sh
-cd ~/projekte/tpa && go build -o /tmp/tpa .
-cd /home/eugen/projekte/mayi
-TPA_BIN=/tmp/tpa ./executor/package/build-deb.sh
+sudo apt update
+apt-cache policy mayi
+sudo apt install mayi=0.4.1
 ```
 
-`build-deb.sh` links native executables against the libc of the environment running Cargo and requires the PAM development linker library (`libpam0g-dev`) there. Do not treat a build on a newer host as a portable release. Mayi 0.4.1 is a console UX-only update: after a successful allow/deny/follow-up decision the console clears only the visible screen (never scrollback), and only on a TTY with a usable `TERM`; failed decisions leave the current display intact. Commands are rendered as readable, unambiguous argv boundaries. Successful authentication no longer prints an `Authenticated.` banner or interactive auth-success event. PAM, authorization, queue, package dependencies, and executor behavior are unchanged. The exact qualified 0.4.1 artifact is `executor/target/debian/mayi_0.4.1_amd64.deb`, SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`. The immutable 0.4.0 artifact remains `executor/target/debian/mayi_0.4.0_amd64.deb`, SHA-256 `d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86`; 0.3.2 remains unchanged. Package 0.4.1 retains the Debian 10 glibc 2.28 / Python 3.7 floor and the 0.4.0 PAM runtime dependencies `libpam0g (>= 1.1.8)` and `libpam-runtime`, with `/etc/pam.d/mayi-approve` as a conffile. It provisions fixed system broker UID 23002 and role/socket groups `mayi-requester` GID 23011, `mayi-broker-socket` GID 23012, and `mayi-approver` GID 23013. The package does not automatically add human users to role groups. Debian 10 is technically compatible but EOL, so Debian 12+ remains the recommended operational baseline. A human member of `mayi-approver` can run `mayi-approve` directly; no sudo or UID switching is required.
+The repository is `https://tpa.run/r/tparun/bootstrap`; its signed [`InRelease`](https://tpa.run/r/tparun/bootstrap/dists/stable/InRelease) metadata is consumer-visible. If the TPA.run archive keyring/source is not configured, use TPA.run's current official bootstrap procedure first. Do not add an unsigned source or bypass APT signature verification. Stop if APT does not offer the expected Mayi 0.4.1 package from the intended repository. The package-install command above is initial bootstrap, before Mayi is available. Installing packages and configuring local accounts require system-administrator authority. After Mayi is installed, use Mayi's approval workflow for privileged operations when it is available; do not use a second escalation path to work around a rejected request. Package publication does not install or deploy Mayi on any host.
 
-## Qualification
+## Initial setup
 
-`executor/package/qualify-systemd.py` is the Debian 10–13 disposable systemd qualification harness. The exact 0.4.1 artifact passed fresh-install and 0.4.0-upgrade qualification on Debian 10–13, including same-account and separate-account approvers, PAM success/failure, TTY/password-channel restrictions, console refresh/argv rendering, PAM conffile lifecycle, installed man pages, runtime/queue regressions, and systemd lifecycle. The qualified package is published to TPA.run `bootstrap` (`https://tpa.run/r/tparun/bootstrap`); isolated APT metadata advertises 0.4.1 and the exact-version download hash matches the qualified artifact. Publication was not deployment: no production host was accessed or modified. No Synology work began. Debian 10 is technically compatible but EOL; Debian 12+ remains the recommended operational baseline.
+The package creates the fixed role groups `mayi-requester` and `mayi-approver`; it deliberately does not choose which human or automation account belongs to them. Have the system administrator grant only the intended memberships using the host's approved account-management procedure:
 
-See the CLI manual [`man/mayi.1`](man/mayi.1) and the operator guide [`man/mayi-workflow.7`](man/mayi-workflow.7). In the repository, render either with `man ./man/mayi.1` or `man ./man/mayi-workflow.7`; after package installation use `man mayi` and `man mayi-workflow`. Also see [PROTOCOL.md](PROTOCOL.md), [SECURITY_BOUNDARY.md](SECURITY_BOUNDARY.md), [executor/package/README.md](executor/package/README.md), [MVP_QUALIFICATION.md](MVP_QUALIFICATION.md), and [FILESYSTEM_EXECUTOR_REMEDIATION.md](FILESYSTEM_EXECUTOR_REMEDIATION.md) for implementation details, evidence, and remaining limits. The earlier qualification in [PRIVILEGED_BOUNDARY_QUALIFICATION.md](PRIVILEGED_BOUNDARY_QUALIFICATION.md) is historical and does not qualify this MVP.
+```sh
+adduser AGENT_LOGIN mayi-requester
+adduser HUMAN_LOGIN mayi-approver
+```
+
+Run account-management commands as an authorized system administrator. For one account in both roles, add that login to both groups.
+
+For a single-account setup, that account may belong to both groups. Group membership alone does not create an authenticated approval session: every new `mayi-approve` process still requires interactive PAM authentication. The package installs the `mayi-approve` PAM service at `/etc/pam.d/mayi-approve`, including the host's common authentication and account policies. Log out and back in (or otherwise refresh the account's supplementary groups) after membership changes, then verify the effective groups before use. Check package group IDs for collisions before deployment. Do not weaken the host's PAM policy to make approval succeed.
+
+## Requester workflow
+
+A synchronous request waits for the human decision and command result:
+
+```sh
+mayi /usr/bin/systemctl reload nginx
+```
+
+The executable must resolve to a root-owned, executable, non-group/world-writable file directly under one of `/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin`, or `/bin`. Absolute paths are clearest; a command name can be resolved through Mayi's fixed search directories. Mayi bounds the full argv to 128 entries, 1,024 UTF-8 bytes per entry, and 2,048 bytes total.
+
+### Processes, not shell strings
+
+Mayi approves processes, not shell command strings. The calling shell performs its normal quoting and expansion before Mayi receives the arguments. Once passed to Mayi, metacharacters have no shell meaning by themselves:
+
+```sh
+mayi /usr/bin/printf '%s\n' 'hello world' '$HOME' '; rm -rf /'
+```
+
+Here `$HOME` and `; rm -rf /` are literal argument values. Mayi does not interpret `;`, `$`, `&&`, `|`, or `>` as shell syntax. A shell is involved only when the explicitly approved executable interprets code, for example:
+
+```sh
+mayi /bin/bash -c 'printf "%s\n" hello'
+```
+
+That is broad shell execution. The human must inspect the shell program and every other argument before approval.
+
+### Queued requests and dependencies
+
+Queueing returns an opaque ID; it is not approval or execution. Each command in a dependency chain needs its own human approval, and a child runs only after it is approved and all dependencies succeed.
+
+```sh
+d1=$(mayi --queue /usr/sbin/nginx -t)
+d2=$(mayi --queue --after "$d1" /usr/bin/systemctl reload nginx)
+d3=$(mayi --queue --after "$d2" /usr/bin/systemctl is-active nginx)
+
+mayi --wait --fail=0 "$d1" "$d2" "$d3"
+```
+
+Use executable paths that exist on the machine; the example assumes nginx is installed and the service is already configured. `--after` must precede the executable and can be repeated. Dependencies must be retained queued requests owned by the same requester UID. Unknown, duplicate, invalid, non-queued, cyclic, and cross-requester dependencies are rejected. A terminal unsuccessful dependency blocks its descendants.
+
+`--wait` observes results only: it does not approve, execute, cancel, or retry requests. Every terminal state other than `SUCCEEDED` consumes one unit of the `--fail=N` failure budget (default `0`). `--fail-instant` returns when observed failures exceed that budget; it does not cancel other requests. `--status ID` reports one job, and a successful status query does not mean the job succeeded. Queued requests are bounded and expire; queue and result persistence across broker restart is **NOT CLAIMED**. In practice, a broker restart loses in-memory queued state and results; no request is replayed.
+
+## Approval workflow
+
+Run one persistent console in the human approver's interactive terminal:
+
+```text
+$ mayi-approve
+Password:
+Waiting for Mayi requests...
+```
+
+Successful authentication proceeds directly to the waiting/request display—there is no `Authenticated.` banner. The console authenticates before connecting to the broker or displaying a request. It presents the resolved executable, argv[0], remaining arguments, requester UID, request IDs, dependencies, and executor identity. For example, a command appears in this form (the state and IDs vary):
+
+```text
+Commands: 1
+[0] /usr/bin/systemctl [argv0=/usr/bin/systemctl] (PENDING_APPROVAL)
+     restart \
+     nginx \
+     requester UID: 1001
+```
+
+The arguments are separate display values, not shell input. Dependency chains are shown in topological order; linear dependencies use a downward arrow and branching dependencies list their prerequisite indices. The renderer does not turn its output back into an execution request.
+
+Controls at the main prompt:
+
+- `a`: allow all pending commands in the displayed connected set.
+- `s`: skip that set for now; this is UI navigation only, not denial, and it may resurface.
+- `d`: deny all or selected pending commands; denied commands do not execute.
+- `f`: request follow-up for all or selected pending commands; no execution occurs and dependents cannot succeed.
+- `y`, `n`, `e`: aliases for allow, deny, and follow-up.
+- Numeric digits: select displayed command indices. **Current limitation:** indices are entered one decimal digit at a time, so numeric selection addresses indices 0–9 only. Use `a` when a displayed set contains higher indices; selecting individual indices above 9 is not supported by the current console.
+- `q`: exit without deciding or cancelling pending requests.
+
+After a fully correlated successful allow, deny, or follow-up decision, the console clears only the visible screen when stdout is a TTY and `TERM` is supported; it never erases scrollback. Failed decisions preserve the display. The console stays open and returns to waiting. See [`mayi-workflow(7)`](man/mayi-workflow.7) for the full operator procedure.
+
+## Results and exit codes
+
+The synchronous `mayi` command returns `0` on success, the approved child's output on the normal output streams, `10` on denial, `20` on follow-up, `11` on request expiry, `14` when the child exits unsuccessfully, `15` on an internal/execution-disabled result, and `16` when execution outcome is ambiguous. Usage/invalid request is `2` or `12`; authorization failure is `13`. `--wait` returns `0` within its failure budget and `1` when that budget is exceeded. See [`mayi(1)`](man/mayi.1) for mode-specific details.
+
+Approved commands run with a cleared environment, fixed `PATH`, `LANG`, `LC_ALL`, and `HOME`, `/` as their working directory, and `/dev/null` as stdin. Captured output is bounded. Execution is at most once, not transactional: a command may partially change system state before it fails, and an ambiguous handoff is not retried. The executor does not impose a child runtime deadline.
+
+## Known limitations and non-goals
+
+- **Queue/result persistence across broker restart: NOT CLAIMED.** Queue state and results are in broker memory and are lost on broker restart.
+- **Filesystem executor: DISCONNECTED / INCOMPLETE.** Structured filesystem operations are not enabled for privileged execution; do not treat filesystem-executor experiments as product functionality.
+- Mayi does not determine whether an arbitrary approved program or its arguments are safe, provide transaction/rollback, or infer approval intent.
+- `SO_PEERCRED` identifies an OS UID, not a process or a human. PAM authenticates the account entering the console; it does not distinguish processes sharing that account.
+- **Synology DSM: NOT SUPPORTED.** The feasibility audit did not produce a port or installation path. Work is deferred pending target details and Synology's platform/security guidance.
+
+## Supported systems
+
+| Qualification | Result |
+|---|---|
+| Debian 10, 11, 12, 13 | Exact 0.4.1 amd64 artifact qualified in disposable systemd environments |
+| Released architecture | `amd64` only |
+| Recommended operational baseline | Debian 12 or newer; Debian 10 is technically qualified but end-of-life, and Debian 11 is also end-of-life |
+| Ubuntu, Arch, Fedora, ARM/ARM64, Synology DSM, other systems | Not currently qualified; this is not a claim of incompatibility |
+
+Qualification evidence concerns the exact 0.4.1 package, not every locally rebuilt binary or host configuration. The package's technical libc/Python floors and lifecycle caveats are in [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md).
+
+## Stable release and maintenance
+
+- Stable feature baseline: **0.4.1**, release tag `v0.4.1`, release commit `9b3c69a292a36155d5994fa8b55da5cdc7f67ac4`.
+- Qualified artifact: `executor/target/debian/mayi_0.4.1_amd64.deb`, SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`.
+- Distribution: public TPA.run `bootstrap` repository through APT (see its signed [`InRelease`](https://tpa.run/r/tparun/bootstrap/dists/stable/InRelease) metadata).
+- Publication is not deployment. The exact qualified artifact was published and its consumer-visible APT download hash was verified; publication did not install Mayi on a production host.
+- This documentation freeze does not create a 0.4.2 release, rebuild the package, or change runtime behavior.
+
+Release workflow at a high level: source → build on a portable baseline → qualify the exact `.deb` → record its SHA-256 → commit/tag → publish those exact bytes → verify an isolated APT consumer download. Detailed release and qualification records are in [`MVP_QUALIFICATION.md`](MVP_QUALIFICATION.md) and [`executor/package/README.md`](executor/package/README.md).
+
+## Documentation
+
+- [`man/mayi.1`](man/mayi.1): concise command reference.
+- [`man/mayi-workflow.7`](man/mayi-workflow.7): requester/approver workflow and security expectations.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): current component and trust-boundary overview.
+- [`PROTOCOL.md`](PROTOCOL.md): current Protocol 5 message and lifecycle details.
+- [`SECURITY_BOUNDARY.md`](SECURITY_BOUNDARY.md): current guarantees, trust assumptions, and non-goals.
+- [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md): OS compatibility and release qualification history.
+- [`MVP_QUALIFICATION.md`](MVP_QUALIFICATION.md): immutable-version artifact, test, publication, and APT-consumer evidence.
+- [`executor/package/README.md`](executor/package/README.md): package-specific operations, build inputs, and qualification harness.
+- [`docs/FILESYSTEM_EXECUTOR_STATUS.md`](docs/FILESYSTEM_EXECUTOR_STATUS.md): current disabled/incomplete status; detailed historical research is indexed in [`docs/history/README.md`](docs/history/README.md).
+
+## Development and maintenance
+
+Feature development is paused. For a concrete bug or security report, include the affected version, reproduction steps, and whether the issue changes a documented guarantee. Runtime and packaging changes require explicit justification and appropriate requalification; a documentation-only cleanup must not be presented as a new feature release.
+
+`pyproject.toml`, `mayi.__version__`, and `executor/Cargo.toml` describe internal Python/Rust source components; their component versions and development dependency requirements are not Mayi's Debian release version or runtime dependency floor. The Debian package metadata in `executor/package/tpa.json` and the qualified `.deb` define the released product.
+
+Useful source checks (they do not build or publish a Debian package):
+
+```sh
+python3 -m pytest -q
+cargo test --manifest-path executor/Cargo.toml --locked
+cargo clippy --manifest-path executor/Cargo.toml --all-targets --all-features -- -D warnings
+cargo fmt --manifest-path executor/Cargo.toml -- --check
+```
+
+The exact package release/build procedure is documented in the package README; do not rebuild or republish the immutable 0.4.1 artifact as part of documentation maintenance.
+
+## License
+
+No `LICENSE` file is currently present in this repository. Do not assume that a particular open-source license or redistribution permission applies; clarify licensing with the project maintainer.

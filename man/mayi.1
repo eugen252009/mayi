@@ -1,10 +1,10 @@
 .TH MAYI 1 "2026-09-27" "Mayi 0.4.1" "User Commands"
 .SH NAME
-mayi \- submit an exact command for human approval or manage queued requests
+mayi \- request exact-command execution or observe queued requests
 .SH SYNOPSIS
 .nf
-mayi COMMAND [ARG ...]
-mayi --queue [--after REQUEST_ID]... COMMAND [ARG ...]
+mayi EXECUTABLE [ARG ...]
+mayi --queue [--after REQUEST_ID]... EXECUTABLE [ARG ...]
 mayi --wait [--fail=N] [--fail-instant] REQUEST_ID ...
 mayi --status REQUEST_ID
 mayi --help
@@ -13,133 +13,120 @@ mayi -u USER inspect|check COMMAND_TEXT
 .fi
 .SH DESCRIPTION
 .B mayi
-submits a command as a structured executable and argument vector (argv). It does not implicitly invoke a shell, expand variables, or interpret shell metacharacters. By default, the requester waits for human approval and for the command result. Queued requests return immediately but still require explicit human approval.
+submits one executable and structured argument vector (argv) to the local broker. It does not implicitly invoke a shell, expand variables, or interpret shell metacharacters. A synchronous request waits for a human decision and the execution result. A queued request returns an opaque ID before approval or execution; it still requires explicit approval.
 .PP
-Approved commands run with root privileges through the separate Mayi executor. Review the exact executable and every argument before approving. The persistent interactive approval console is the
+The persistent human approval console is
+.BR mayi-approve .
+The requester and approver roles are independently checked by the broker. Before it connects to the broker or displays requests,
 .B mayi-approve
-command. Detailed requester and approver procedures are in
-.BR mayi-workflow (7).
+checks the calling UID's approver-group membership and authenticates that same account through PAM. Authentication requires an interactive controlling terminal.
+.PP
+Mayi is broad human-gated root execution, not a command-safety analyzer or semantic allowlist. The approver must assess the resolved executable and every argument. An explicitly requested shell executable can interpret its own arguments.
 .SH COMMAND MODES
 .TP
-.B "mayi command [arguments ...]"
-Submit one synchronous request. The command waits for an approver, then executes the stored executable/argv at most once if approved. Child stdout and stderr are returned to the requester.
+.B "mayi EXECUTABLE [ARG ...]"
+Submit one synchronous request. The requester waits for a human decision, then for execution if approved. The stored executable and argv are executed at most once when authorized.
 .TP
-.B "mayi --queue [--after request-id]... command [arguments ...]"
-Submit one queued request. On successful submission, print its broker-generated request ID to standard output and exit without waiting for approval or execution. All
+.B "mayi --queue [--after REQUEST_ID]... EXECUTABLE [ARG ...]"
+Submit one queued request. Each
 .B --after
-options must appear before the command.
+must precede the executable. On successful submission, print the broker-generated request ID and exit without waiting for approval or execution.
 .TP
-.B "mayi --wait [options] request-id..."
-Observe one or more queued requests until they are terminal, or until
-.B --fail-instant
-exceeds the failure budget. This mode does not approve, execute, cancel, or retry jobs.
+.B "mayi --wait [--fail=N] [--fail-instant] REQUEST_ID ..."
+Observe one or more queued requests. This mode does not approve, execute, cancel, or retry jobs.
 .TP
-.B "mayi --status request-id"
-Print the current state/result metadata for one queued request. A successful status query does not mean that the request itself succeeded.
+.B "mayi --status REQUEST_ID"
+Print current status/result metadata for one queued request. A successful status query does not mean that the job succeeded.
 .TP
-.B "mayi inspect command-text"
-Analyze the legacy restricted command-text format and print modeled operations. This is analysis only; it does not submit or execute commands.
+.B "mayi inspect COMMAND_TEXT"
+Analyze the legacy restricted command-text format and print modeled operations. This is compatibility analysis only; it does not submit a request or authorize the executor.
 .TP
-.B "mayi check command-text"
-Evaluate the legacy restricted command-text format with the advisory policy and print the result. This is analysis only; it does not execute commands or authorize the privileged executor.
+.B "mayi check COMMAND_TEXT"
+Evaluate the legacy command-text format with advisory policy and print the result. This does not execute commands or authorize the privileged executor.
 .PP
-The legacy analysis mode also accepts
+The legacy analysis modes also accept
 .B -u USER
 before
 .B inspect
 or
 .B check
-to display the resolved target identity. It does not change execution identity or grant authority.
+to display the resolved target identity. This does not change execution identity or grant authority.
 .SH OPTIONS
 .TP
 .B --queue
-Select asynchronous submission. A successful invocation prints exactly one broker-generated ID of the form
-.B rq_<32 lowercase hexadecimal characters> .
-No ID is printed when submission fails. Every queued request still requires approval.
+Select asynchronous submission. A successful invocation prints one broker-generated ID beginning with
+.B rq_
+followed by 32 lowercase hexadecimal characters. Submission is not approval or execution.
 .TP
 .B --after REQUEST_ID
-Add a dependency to the queued request. Repeat this option before the command to require multiple dependencies. It is valid only with
-.B --queue .
+Make a queued request depend on another retained queued request. Repeat before the executable to require multiple dependencies. Dependencies must belong to the same authenticated requester UID.
 .TP
 .B --wait
-Wait for and report the supplied queued request IDs. IDs must be unique and in the broker-generated format.
+Observe the supplied queued request IDs until terminal, or until
+.B --fail-instant
+exceeds the failure budget. This option does not cancel requests.
 .TP
 .B --fail=N
-Set the nonnegative failure budget for
+Set a nonnegative failure budget for
 .BR --wait .
-Each terminal request whose state is not
+Each terminal state other than
 .B SUCCEEDED
-uses one unit of the budget. The default is zero. For example,
-.B --fail=0
-allows zero unsuccessful requests; it does not set or compare a child exit status.
+consumes one unit. The default is zero. This counts unsuccessful job states, not the child's numeric exit status.
 .TP
 .B --fail-instant
-Return as soon as the number of observed terminal unsuccessful requests exceeds the
+Return once observed unsuccessful terminal requests exceed the
 .B --fail=N
-budget. Other jobs continue; this option does not cancel them. IDs not observed before the early return may be printed as
+budget. Other jobs continue; they are not cancelled. IDs not observed before this early return may be printed as
 .BR NOT_OBSERVED .
 .TP
 .B --status REQUEST_ID
-Query one queued request and print its current status/result line.
+Query one queued request. This reports job state/result metadata; the command exits successfully when the query succeeds even if the job failed or was denied.
 .TP
 .B -h , --help
 Print the command usage summary and exit successfully.
 .TP
 .B --
-End Mayi's leading command-mode parsing and submit the following executable and arguments synchronously.
-.SH QUEUED EXECUTION
-A successful
-.B --queue
-submission stores an immutable exact executable/argv operation in the broker and returns its ID. Submission is not execution and does not grant approval. Each queued operation requires explicit human approval.
+End leading command-mode parsing and submit the following executable and arguments synchronously.
+.SH EXACT EXECUTABLE AND ARGV
+The executable may be an absolute path or a command name resolved through Mayi's fixed trusted system directories. Relative executable paths are rejected. The resolved file must be root-owned, executable, not group/world-writable, and directly under one of
+.IR /usr/local/sbin ,
+.IR /usr/local/bin ,
+.IR /usr/sbin ,
+.IR /usr/bin ,
+.IR /sbin ,
+or
+.IR /bin ;
+path components are also checked.
 .PP
-For example:
+Mayi stores the canonical executable path separately from argv. The first command token supplied by the requester is retained as argv[0]. For example, a request using the command name
+.B systemctl
+resolves the executable path but retains the supplied token as argv[0]. The approval console shows both. The complete argv, including argv[0], is bounded to 128 entries, 1,024 UTF-8 bytes per entry, and 2,048 bytes total.
 .PP
-.nf
-.RS
-mayi --queue /usr/bin/printf '%s\\n' 'hello'
-.fi
-.RE
+The caller's shell processes quoting before Mayi receives the arguments. After that, values such as
+.BR ; ,
+.BR $ ,
+.BR && ,
+.BR | ,
+and
+.B >
+are literal argv data to Mayi. They acquire shell meaning only if the approved executable itself is a shell or another interpreter that processes them.
+.SH QUEUED EXECUTION AND DEPENDENCIES
+A queued submission stores immutable executable/argv data in the broker and returns an opaque request ID. Each operation requires its own human approval. An approved child is dispatched only after every dependency has succeeded; any terminal unsuccessful dependency blocks descendants. Dependencies are bound to the authenticated requester UID. Unknown, duplicate, invalid, non-queued, cyclic, or cross-requester dependencies are rejected.
 .PP
-Mayi passes the format string and the word
-.B hello
-as arguments to
-.BR /usr/bin/printf ;
-the metacharacters are not interpreted by Mayi. By contrast,
-.PP
-.nf
-.RS
-mayi /bin/sh -c 'some shell program'
-.fi
-.RE
-.PP
-explicitly requests a shell executable and gives it a shell program as an argument. This is broad shell execution, not ordinary argv interpreted by Mayi. The approver must inspect the exact executable and every argument.
-.PP
-The command may be given by absolute path or resolved by name through Mayi's fixed trusted system directories. Relative executable paths and untrusted executable locations are rejected. The complete argv, including the executable as argv[0], is bounded to 128 entries, 1,024 UTF-8 bytes per entry, and 2,048 bytes total.
-.SH DEPENDENCIES
-Use the ID printed by one queue submission as a later request's dependency:
+Example:
 .PP
 .nf
 .RS
  d1=$(mayi --queue /usr/bin/true)
  d2=$(mayi --queue --after "$d1" /usr/bin/id)
+ d3=$(mayi --queue --after "$d2" /usr/bin/true)
+ mayi --wait --fail=0 "$d1" "$d2" "$d3"
 .fi
 .RE
 .PP
-Dependencies must identify retained queued requests owned by the same authenticated requester UID. Unknown, duplicate, invalid, non-queued, cyclic, or cross-requester dependencies are rejected. Every dependent command requires its own human approval. An approved command executes only when all its dependencies have succeeded. If a dependency ends unsuccessfully, descendants are blocked and do not execute.
+Queued requests are bounded (128 retained records globally and at most eight active requests per requester); non-running queued requests expire after 24 hours. Mayi makes no durability claim for queue state/results across a broker restart. The broker holds this state in memory and loses it on restart; requests are not replayed.
 .SH WAITING FOR RESULTS
-Use
-.B --wait
-to observe the chain:
-.PP
-.nf
-.RS
-d1=$(mayi --queue /usr/bin/true)
-d2=$(mayi --queue --after "$d1" /usr/bin/id)
-mayi --wait --fail=0 "$d1" "$d2"
-.fi
-.RE
-.PP
-The wait may remain blocked while approval is pending. A successful result line has the form:
+A successful result line resembles:
 .PP
 .nf
 .RS
@@ -147,111 +134,100 @@ rq_<id> SUCCEEDED mayi=0 child=0
 .fi
 .RE
 .PP
-The request state describes the queued job lifecycle. The
+The state describes the queued job. The
 .B mayi=
-value is Mayi's result code for that job; the
+field is that job's Mayi result code; the
 .B child=
-value is the child process exit status when available, otherwise
+field is the child exit status when available, otherwise
 .BR - .
-For example,
-.B FAILED mayi=14 child=1
-means the approved command failed with child exit status 1. A
-.B BLOCKED
-line may include the dependency that prevented execution. A
-.B DENIED
-or
-.B EXPLAIN_REQUESTED
-request did not execute. These per-request result codes are distinct from the process exit status of the
-.B mayi --wait
-command.
+A blocked result may name its failed dependency. These per-job values are distinct from the process exit status of
+.BR mayi --wait .
 .PP
 Without
-.B --fail-instant ,
+.BR --fail-instant ,
 .B --wait
-waits until all requested IDs are terminal, prints a result line for each, and exits 1 if unsuccessful terminal requests exceed the budget; otherwise it exits 0. With
-.B --fail-instant ,
-it can return before every ID is observed. It never cancels the remaining work. Use
-.B mayi --status REQUEST_ID
-to query one ID; that command returns zero when the status query succeeds, even when the reported job state is unsuccessful.
-.SH QUEUE LIFETIME
-Queued requests and their stored results are broker-memory state, not durable storage. A broker restart invalidates pending queued approvals and loses retained queue results; Mayi does not restore or replay those requests. Restart-safe queue persistence is not implemented or claimed. The broker retains at most 128 request records globally and allows at most eight active requests per requester. Non-running queued requests expire after 24 hours.
+waits until every supplied ID is terminal, prints a line per ID, and exits 1 if unsuccessful terminal requests exceed the budget; otherwise it exits 0. With
+.BR --fail-instant ,
+it may return before every ID is observed and never cancels remaining work. Use
+.B --status REQUEST_ID
+to query one ID.
 .SH EXIT STATUS
+The synchronous CLI and option modes use these principal process exit statuses:
 .TP
 .B 0
-Synchronous command succeeded; queue submission succeeded; help or analysis completed; a status query succeeded; or
+Synchronous command succeeded; queue submission succeeded; help or legacy analysis completed; status query succeeded; or
 .B --wait
 finished within its failure budget.
 .TP
 .B 1
 .B --wait
-observed more unsuccessful terminal requests than the configured failure budget.
+observed more unsuccessful terminal requests than its failure budget.
 .TP
 .B 2
-No command was supplied, or legacy analysis input/usage was invalid.
+Usage, legacy-analysis input, or option invocation was invalid, or no synchronous command was supplied.
 .TP
 .B 10
-A synchronous request was denied by the approver. The command was not executed.
+Synchronous request denied. The child was not executed.
 .TP
 .B 11
-The synchronous approval request expired.
+Synchronous request expired.
 .TP
 .B 12
-The request or queue options were malformed, unsupported, or outside documented bounds.
+Request or queue options were malformed, unsupported, or outside documented bounds.
 .TP
 .B 13
 Authorization or role checks failed.
 .TP
 .B 14
-The approved synchronous child command failed. The child exit status is not returned as Mayi's process exit status.
+The approved synchronous child command failed. The child's exit status is not returned as Mayi's process exit status.
 .TP
 .B 15
-A broker or executor internal error occurred, or execution was disabled.
+A broker/executor internal error occurred, or execution was disabled.
 .TP
 .B 16
 Execution outcome is unknown/ambiguous, or queued status could not be reliably obtained.
 .TP
 .B 20
-The approver requested follow-up. The command was not executed.
+The approver requested follow-up. The child was not executed.
 .PP
 For queued jobs, the per-request
 .B mayi=
-field reports that job's Mayi result code. The exit status of
+field reports that job's Mayi result code. The process exit status of
 .B --wait
-is separately determined by the failure budget.
+is independently determined by its failure budget.
 .SH SECURITY MODEL
-Mayi preserves the executable and argv as structured data; it does not reinterpret a command as shell text. An explicitly supplied shell, such as
-.B /bin/sh -c ... ,
-will run as that shell if an approver authorizes it. The approver must assess the displayed command, arguments, requester UID, and dependency relationships.
-.PP
-Requester and approver roles are authorized through NSS-backed groups. Before opening the broker connection or displaying requests,
+The broker owns the immutable request, approval state, and one-shot lifecycle. The console renderer is presentation only; it is not parsed or used as execution input. The broker independently checks peer UIDs and NSS requester/approver roles with
+.BR SO_PEERCRED .
+Before connecting to the broker or displaying requests,
 .B mayi-approve
-requires the actual calling UID to belong to the configured approver group and authenticates that UID through PAM service
+checks the actual calling UID's approver-group membership and authenticates that same Unix account through PAM service
 .BR mayi-approve .
-Authentication requires a controlling interactive terminal and is valid only while that console process remains alive. The PAM conversation reads responses directly from the terminal with echo disabled; passwords are not accepted through command-line options, environment variables, or piped standard input. A failed or unavailable PAM policy fails closed. Membership in both requester and approver groups is supported.
+PAM requires a controlling interactive terminal; the password is read from the terminal with echo disabled. It is not accepted through argv, environment variables, or piped stdin. Successful authentication lasts only for that console process.
 .PP
-The broker independently authenticates peer UIDs with
-.BR SO_PEERCRED ;
-the privileged executor separately requires the exact configured broker UID. The executor revalidates the executable/argv and runs with a cleared, fixed environment. Mayi is human-gated root execution, not a command-safety analyzer or semantic allowlist.
+Each approval is one-shot and bound to broker-owned request/view state and the actual approver UID. The executor accepts only the configured broker UID, independently validates executable/argv, clears the environment, and executes directly without shell mediation. The executor runs approved commands as UID 0 / primary GID 23012. Requester or approver access to an executor socket is not an authorization path.
 .PP
-Execution is at most once, not transactional: a command can partially change system state before failing or returning an ambiguous result. Mayi does not retry ambiguous execution. Filesystem operations remain disconnected from the privileged executor.
+.B SO_PEERCRED
+identifies an operating-system UID, not a particular process or human. PAM adds account authentication at the console; it does not replace broker peer checks or group authorization. Processes sharing an account are not distinguished. Mayi does not prove that an approved program is safe. Execution is at most once, not transactional; a command may partially alter state before failure, and Mayi provides no rollback. The child has no runtime deadline.
+.PP
+Structured filesystem operations remain disconnected from the privileged executor and return
+.BR EXECUTION_DISABLED .
+The filesystem executor remains disconnected and incomplete; it is not production functionality.
 .SH APPROVER AUTHENTICATION
 .B mayi-approve
-accepts no command-line options. It first checks the calling user's NSS-backed approver-group membership, then authenticates that same Unix account using the host's PAM policy configured by
+accepts no command-line options. It checks the caller's NSS-backed approver-group membership, then authenticates the same Unix account using the host PAM policy configured by
 .IR /etc/pam.d/mayi-approve .
-Only after successful PAM authentication does it connect to the broker or display pending requests. A password is entered at the controlling terminal and is not echoed. Non-interactive invocation, authentication failure, account denial, or PAM failure does not fall back to broker-only authorization.
-.PP
-Authentication state is held only by the running console process. Multiple approval decisions in that process use the same successful authentication; exiting or restarting the console requires authenticating again. The broker's peer-UID, approver-group, request-view, and one-shot decision checks remain independently enforced.
+Only after successful PAM authentication does it connect to the broker or display requests. Authentication failure, PAM/account denial, or a missing/unusable controlling terminal fails closed. Multiple decisions in one live process reuse the successful authentication; exiting or restarting the console requires authenticating again. The broker's peer-UID, approver-group, request-view, and one-shot decision checks remain independent.
 .SH FILES
 .TP
 .I /run/mayi/request/broker.sock
 Requester/broker Unix-domain socket.
 .TP
 .I /run/mayi/approval/broker.sock
-Approver/broker Unix-domain socket used by
+Approval-console/broker Unix-domain socket used by
 .BR mayi-approve .
 .TP
 .I /etc/pam.d/mayi-approve
-PAM service configuration includes the host's common authentication and account policy.
+PAM service configuration, installed as a package conffile and including the host's common authentication and account policy.
 .TP
 .I /usr/libexec/mayi/privileged-executor
 Separate privileged command executor managed by systemd.
@@ -260,8 +236,6 @@ The package enables
 .B mayi-broker.service
 and
 .BR mayi-privileged-executor.service .
-The interactive approval console is provided by
-.BR mayi-approve .
 .SH EXAMPLES
 Submit a synchronous request:
 .PP
@@ -271,7 +245,7 @@ mayi /usr/bin/id
 .fi
 .RE
 .PP
-Print literal shell metacharacters without invoking a shell:
+Pass literal shell metacharacters as argv data, without invoking a shell:
 .PP
 .nf
 .RS
@@ -287,21 +261,13 @@ mayi /bin/sh -c 'printf "%s\\n" hello'
 .fi
 .RE
 .PP
-Queue a command and wait for successful completion:
+Queue dependent requests and observe the results:
 .PP
 .nf
 .RS
 d1=$(mayi --queue /usr/bin/true)
 d2=$(mayi --queue --after "$d1" /usr/bin/id)
 mayi --wait --fail=0 "$d1" "$d2"
-.fi
-.RE
-.PP
-Allow one unsuccessful request while waiting for three jobs:
-.PP
-.nf
-.RS
-mayi --wait --fail=1 "$id1" "$id2" "$id3"
 .fi
 .RE
 .SH SEE ALSO

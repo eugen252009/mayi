@@ -1,10 +1,12 @@
-# MAYI filesystem executor final qualification — INCOMPLETE
+# Historical filesystem-executor qualification record — INCOMPLETE
+
+> Archived engineering evidence, not current user documentation. The current product status is summarized in [`../../FILESYSTEM_EXECUTOR_STATUS.md`](../../FILESYSTEM_EXECUTOR_STATUS.md). This record describes the historical qualification snapshot, not the current Git working tree.
 
 ## Decision and preserved boundary
 
 **Do not integrate or enable the filesystem executor.** New qualification closes several prior gaps (private bind-mount tests, real ext4 ACL/capability fixtures, concurrent race stress, RSS sampling), but the syscall failure matrix is still partial, cleanup failure is not reported structurally, and device-node/LSM-label gates are unavailable. Independent security audit remains required.
 
-- Base/HEAD: `a593e6920551b52e9eef4565e1752c1c8f6593e6`; current tree is uncommitted/dirty.
+- Qualification snapshot base/HEAD: `a593e6920551b52e9eef4565e1752c1c8f6593e6`; that historical snapshot was uncommitted/dirty.
 - The Protocol 5 broker now has a separate exact-command MVP path. Structured filesystem operations remain disconnected and their consume path returns `CONSUMED / EXECUTION_DISABLED`; no production caller reaches `ExecutionContext::execute`. The retired protocol-v4 socket service fails before bind.
 - Core: direct test-only qualification path; disconnected from broker. EUID 0 is refused by `ExecutionContext::open`. No real-root or live fake-root execution was enabled.
 - Qualified support: **ext4 only**. Runtime admission combines ext superblock magic with the filesystem type for the pinned mount ID in `/proc/self/mountinfo`; a disposable tmpfs mount was observed and rejected by the admission function. No broader filesystem claim.

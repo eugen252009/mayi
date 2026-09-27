@@ -33,7 +33,7 @@ mayi-approve
 
 Before opening the broker connection or displaying any request, it verifies the actual calling UID's NSS-backed approver-group membership and authenticates that same account with PAM service `mayi-approve`, passing the controlling terminal path as `PAM_TTY`. It requires an interactive controlling terminal; password prompts are read from `/dev/tty` with echo disabled. PAM-supplied terminal control characters are escaped; catchable termination signals restore terminal settings before authentication fails. It accepts no options and does not read credentials from argv, environment variables, or piped stdin. PAM/account failure fails closed. Authentication exists only in the running console process; exit or restart requires fresh authentication. The package installs `/etc/pam.d/mayi-approve` as a conffile including the host's `common-auth` and `common-account` policies. The broker independently retains all peer-UID, approver-group, and one-shot view authorization checks.
 
-After quiet successful authentication (no `Authenticated.` banner or interactive auth-success event), it groups connected dependency DAGs and prints topological command indices, exact executable/argv, requester UID, request ID, and explicit executor identity UID 0 / GID 23012. Arguments use separate shell-quoted display values, with the actual argv[0] shown next to the executable; this is display notation, not shell input. After an accepted allow/deny/follow-up decision, the console clears only the visible screen when stdout is a TTY and `TERM` is usable, preserving scrollback; broker rejection/errors do not clear the request display. It refreshes and prints arrivals while waiting. `a` approves all pending commands in the displayed connected set; `s` skips it without changing authority; `d` denies selected/all pending commands; `f` requests follow-up; numeric indices approve a subset in display order, regardless of typed order; `q` exits. Aliases `y/n/e` remain available. Decisions use fresh one-shot broker views bound to the actual approver UID.
+After quiet successful authentication (no `Authenticated.` banner or interactive auth-success event), it groups connected dependency DAGs and prints topological command indices, exact executable/argv, requester UID, request ID, and explicit executor identity UID 0 / GID 23012. Arguments use separate shell-quoted display values, with the actual argv[0] shown next to the executable; this is display notation, not shell input. After an accepted allow/deny/follow-up decision, the console clears only the visible screen when stdout is a TTY and `TERM` is usable, preserving scrollback; broker rejection/errors do not clear the request display. It refreshes and prints arrivals while waiting. `a` approves all pending commands in the displayed connected set; `s` skips it without changing authority; `d` denies selected/all pending commands; `f` requests follow-up; numeric digits approve a subset in display order, regardless of typed order. Numeric selection accepts one digit per index and currently addresses indices 0–9 only; use `a` when a set includes higher indices. `q` exits. Aliases `y/n/e` remain available. Decisions use fresh one-shot broker views bound to the actual approver UID.
 
 ## Execution and security boundary
 
@@ -49,9 +49,13 @@ On systemd systems, postinst reloads units and makes the notify-ready executor a
 
 ## Build artifact and provenance
 
+The release build uses the TPA CLI and `executor/package/build-deb.sh`. From a TPA source checkout, build the CLI, then run the Mayi script from the Mayi repository root:
+
 ```sh
-cd ~/projekte/tpa && go build -o /tmp/tpa .
-cd /home/eugen/projekte/mayi
+# In a TPA source checkout:
+go build -o /tmp/tpa .
+
+# In the Mayi source checkout root:
 TPA_BIN=/tmp/tpa ./executor/package/build-deb.sh
 ```
 
@@ -65,7 +69,7 @@ The package installs `man/mayi.1` as `/usr/share/man/man1/mayi.1.gz` and `man/ma
 
 `python3 executor/package/qualify-systemd.py` qualified the exact 0.4.1 artifact on disposable Debian 10–13 containers, using fresh installs and upgrades from 0.4.0. It covers PAM success/failure through a disposable TTY, denial before broker access, same-account and separate requester/approver accounts, rejected non-interactive/argv/environment paths, process-local authentication, console refresh/argv rendering, PAM conffile remove/reinstall/preserve/purge, installed man pages, runtime/queue regressions, and systemd lifecycle. No production host was accessed or modified, and no deployment or Synology work occurred. TPA.run publication and consumer APT verification are recorded in the release qualification record. The filesystem executor remains **INCOMPLETE**.
 
-The detailed record is in `MVP_QUALIFICATION.md`. The filesystem executor remains **INCOMPLETE**.
+The detailed release, qualification, publication, and APT-consumer record is in [`../../MVP_QUALIFICATION.md`](../../MVP_QUALIFICATION.md). The current filesystem-executor gate is summarized in [`../../docs/FILESYSTEM_EXECUTOR_STATUS.md`](../../docs/FILESYSTEM_EXECUTOR_STATUS.md); filesystem execution remains **DISCONNECTED / INCOMPLETE**.
 
 ## Socket restart and stale-entry handling
 
