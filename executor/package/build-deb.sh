@@ -14,6 +14,7 @@ rm -rf -- "$PKGROOT"
 )
 rm -rf -- "$PKGROOT/usr/local"
 mkdir -p "$PKGROOT/usr/bin" "$PKGROOT/usr/libexec/mayi" \
+  "$PKGROOT/usr/share/doc/mayi" \
   "$PKGROOT/usr/lib/python3/dist-packages" \
   "$PKGROOT/usr/lib/systemd/system" "$PKGROOT/usr/lib/tmpfiles.d" \
   "$PKGROOT/usr/share/man/man1" "$PKGROOT/usr/share/man/man7" \
@@ -33,6 +34,8 @@ cp "$ROOT/executor/package/usr/lib/systemd/system/mayi-broker.service" \
   "$PKGROOT/usr/lib/systemd/system/mayi-broker.service"
 cp "$ROOT/executor/package/usr/lib/tmpfiles.d/mayi.conf" "$PKGROOT/usr/lib/tmpfiles.d/mayi.conf"
 install -m 0644 "$ROOT/executor/package/etc/pam.d/mayi-approve" "$PKGROOT/etc/pam.d/mayi-approve"
+install -m 0644 "$ROOT/executor/package/usr/share/doc/mayi/copyright" \
+  "$PKGROOT/usr/share/doc/mayi/copyright"
 printf '%s\n' /etc/pam.d/mayi-approve > "$PKGROOT/DEBIAN/conffiles"
 chmod 0644 "$PKGROOT/DEBIAN/conffiles"
 install -m 0644 "$ROOT/man/mayi.1" "$PKGROOT/usr/share/man/man1/mayi.1"
@@ -46,5 +49,5 @@ for script in postinst prerm postrm; do
   chmod 0755 "$PKGROOT/DEBIAN/$script"
 done
 "$TPA_BIN" build -in="$PKGROOT" \
-  -out="$OUT/mayi_0.4.1_amd64.deb"
-sha256sum "$OUT/mayi_0.4.1_amd64.deb"
+  -out="$OUT/mayi_0.4.1-1_amd64.deb"
+sha256sum "$OUT/mayi_0.4.1-1_amd64.deb"

@@ -1,6 +1,41 @@
 # Mayi package and deployment qualification record
 
-> Release/qualification history, not a step-by-step user guide. The 0.4.1 record at the top is the current stable package baseline; older version sections below are historical and do not describe the current artifact. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
+> Release/qualification history, not a step-by-step user guide. Mayi's stable runtime baseline is 0.4.1; Debian package revision 0.4.1-1 is the qualified next package revision, pending TPA.run publication. Older version sections are historical. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
+
+## MIT/contact metadata packaging revision — 0.4.1-1 (2026-09-27)
+
+### Scope
+
+The Mayi runtime/upstream version remains 0.4.1. Debian package revision 0.4.1-1 corrects the package maintainer, adds standard Debian MIT copyright documentation, and carries the current project man pages. It makes no intended runtime change. Runtime source files under `executor/src/`, `mayi/`, and `please/`, PAM policy, package maintainer scripts, systemd units, dependencies, and authorization configuration are unchanged from the 0.4.1 baseline. `Cargo.toml` and Python project metadata declare MIT; the package installs `/usr/share/doc/mayi/copyright`.
+
+### Exact artifact and metadata
+
+- Package: `executor/target/debian/mayi_0.4.1-1_amd64.deb` (`mayi 0.4.1-1 amd64`)
+- SHA-256: `665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8`
+- Maintainer: `Eugen Lupricht <mayi@lupricht.net>`
+- License: MIT; package copyright file, Cargo metadata, and Python project metadata agree.
+- Debian version comparison confirms `0.4.1-1` is newer than `0.4.1`.
+- Original `mayi 0.4.1 amd64` artifact SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0` remains unchanged.
+- Built inside disposable Debian 10 (Buster), glibc 2.28, with Rust/Cargo 1.95.0 and GCC 8.3.0. Both executables require at most `GLIBC_2.28`.
+
+The payload adds the Debian copyright file; package version and maintainer fields change as intended. Current man-page text also differs from the original 0.4.1 artifact due to the separately committed documentation consolidation. These are package/documentation changes, not runtime changes. Rebuilt native executable bytes differ from the historical artifact; runtime source and locked dependencies are unchanged, and byte-identical binaries are not claimed.
+
+### Exact-artifact qualification
+
+`executor/package/qualify-systemd.py` pinned and checked the candidate SHA-256. Debian 10–13 disposable systemd environments each passed fresh install, 0.4.0 upgrade, and 0.4.1 → 0.4.1-1 upgrade, plus mandatory-setup failure handling. Bookworm fresh install used the local package through APT. Each fresh/upgrade environment passed PAM authentication and pre-auth visibility gates; allow, deny, follow-up; same/separate accounts; peer-UID and broker/executor authorization; exact argv and one-shot checks; queue/dependency execution; installed man pages and package metadata; service lifecycle and restarts; and PAM conffile remove/reinstall/preserve/purge. Each lifecycle environment passed 100 executor and 100 broker restarts.
+
+| Debian | Result |
+| --- | --- |
+| 10 Buster | Fresh, 0.4.0 upgrade, 0.4.1 upgrade, package metadata, PAM, queue, man pages and systemd lifecycle PASS. |
+| 11 Bullseye | Fresh, 0.4.0 upgrade, 0.4.1 upgrade, package metadata, PAM, queue, man pages and systemd lifecycle PASS. |
+| 12 Bookworm | Fresh local-APT install, 0.4.0 upgrade, 0.4.1 upgrade, package metadata, PAM, queue, man pages and systemd lifecycle PASS. |
+| 13 Trixie | Fresh, 0.4.0 upgrade, 0.4.1 upgrade, package metadata, PAM, queue, man pages and systemd lifecycle PASS. |
+
+Queue/result persistence across broker restart remains **NOT CLAIMED**. The filesystem executor remains **DISCONNECTED / INCOMPLETE**. No deployment or production-host access occurred.
+
+### TPA.run publication and APT consumer verification
+
+Publication and consumer evidence remain pending. TPA staging was not empty: it contained 104 unrelated staged SSH test packages. To avoid publishing or disturbing unrelated packages, no Mayi package was staged and no publication was attempted. Before publication, clear/resolve that unrelated workspace, reconfirm this package identity is absent, stage only the exact qualified artifact, then record its upload and isolated APT-consumer evidence here.
 
 ## Approval-console UX refresh — package 0.4.1 (2026-09-27)
 

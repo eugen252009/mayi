@@ -21,6 +21,7 @@ PACKAGES = {
     "0.3.2": PACKAGE_DIR / "mayi_0.3.2_amd64.deb",
     "0.4.0": PACKAGE_DIR / "mayi_0.4.0_amd64.deb",
     "0.4.1": PACKAGE_DIR / "mayi_0.4.1_amd64.deb",
+    "0.4.1-1": PACKAGE_DIR / "mayi_0.4.1-1_amd64.deb",
 }
 UNIT_EXECUTOR = "mayi-privileged-executor.service"
 UNIT_BROKER = "mayi-broker.service"
@@ -477,7 +478,7 @@ def restart_qualification(name):
 def install_failure_gate(name):
     # Wrong pre-existing group GID simulates a mandatory package-account setup failure.
     dexec(name, "groupadd", "-g", "23010", "mayi-requester")
-    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.4.1'].name}", check=False, timeout=120)
+    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.4.1-1'].name}", check=False, timeout=120)
     if result.returncode == 0:
         raise AssertionError("mandatory account setup conflict incorrectly configured package")
     status = dexec(name, "dpkg-query", "-W", "-f=${db:Status-Status}", "mayi", check=False)
@@ -491,7 +492,7 @@ def install_failure_gate(name):
 
 def pam_conffile_lifecycle(name):
     config = "/etc/pam.d/mayi-approve"
-    package = f"/root/{PACKAGES['0.4.1'].name}"
+    package = f"/root/{PACKAGES['0.4.1-1'].name}"
     original = dexec(name, "cat", config).stdout
     if "@include common-auth" not in original or "@include common-account" not in original:
         raise AssertionError(f"unexpected installed PAM policy: {original!r}")
@@ -518,7 +519,7 @@ def qualify_environment(name, mode):
     env.update({
         "MAYI_TEST_CONTAINER": name,
         "MAYI_TEST_MODE": mode,
-        "MAYI_TARGET_VERSION": "0.4.1",
+        "MAYI_TARGET_VERSION": "0.4.1-1",
         "MAYI_TEST_SYSTEMD": "1",
         "MAYI_TEST_APT": "1" if SUITE == "bookworm" and mode == "fresh" else "0",
         "MAYI_TEST_KEEP_PACKAGE": "1",
@@ -552,12 +553,13 @@ def main():
     expected_032 = "f5e81423e198cb386584de5a5060d429733b9205499ca73f5a76a512729159b1"
     expected_040 = "d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86"
     expected_041 = "22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0"
-    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032), ("0.4.0", expected_040), ("0.4.1", expected_041)):
+    expected_041_1 = "665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8"
+    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032), ("0.4.0", expected_040), ("0.4.1", expected_041), ("0.4.1-1", expected_041_1)):
         actual = subprocess.check_output(["sha256sum", str(PACKAGES[version])], text=True).split()[0]
         if actual != expected:
             raise SystemExit(f"{version} package hash mismatch: {actual}")
     run(["docker", "build", "--build-arg", f"DEBIAN_SUITE={SUITE}", "-t", IMAGE, SYSTEMD_IMAGE], timeout=900, capture=False)
-    modes = ("fresh", "upgrade040")
+    modes = ("fresh", "upgrade040", "upgrade041")
     suffixes = (*modes, "failure")
     names = [f"mayi-systemd-{SUITE}-{os.getpid()}-{suffix}" for suffix in suffixes]
     passed = False

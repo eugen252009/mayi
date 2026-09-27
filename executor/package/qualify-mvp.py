@@ -19,10 +19,10 @@ WRONG_PASSWORD = secrets.token_urlsafe(32)
 SYSTEMD_MODE = os.environ.get("MAYI_TEST_SYSTEMD", "0") == "1"
 APT_MODE = os.environ.get("MAYI_TEST_APT", "0") == "1"
 KEEP_PACKAGE = os.environ.get("MAYI_TEST_KEEP_PACKAGE", "0") == "1"
-if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040"}:
-    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031|upgrade032|upgrade040 are required")
-if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1"}:
-    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, 0.3.2, 0.4.0, or 0.4.1")
+if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040", "upgrade041"}:
+    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031|upgrade032|upgrade040|upgrade041 are required")
+if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1", "0.4.1-1"}:
+    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, 0.3.2, 0.4.0, 0.4.1, or 0.4.1-1")
 
 USERS = {
     "both": (1000, 1000, (23011, 23013)),
@@ -109,7 +109,7 @@ def approve_actions(actions, identity="both", on_decision=None):
     uid, gid, groups = USERS[identity]
     master, slave = pty.openpty()
     proc = subprocess.Popen(
-        ["docker", "exec", "-it", "--env", "TERM=xterm-256color", NAME, *setpriv_args(uid, gid, groups, no_new_privs=TARGET_VERSION not in {"0.4.0", "0.4.1"}), "/usr/bin/mayi-approve"],
+        ["docker", "exec", "-it", "--env", "TERM=xterm-256color", NAME, *setpriv_args(uid, gid, groups, no_new_privs=TARGET_VERSION not in {"0.4.0", "0.4.1", "0.4.1-1"}), "/usr/bin/mayi-approve"],
         stdin=slave, stdout=slave, stderr=slave, close_fds=True,
     )
     os.close(slave)
@@ -128,7 +128,7 @@ def approve_actions(actions, identity="both", on_decision=None):
     try:
         controls = 0
         acknowledgements = {}
-        if TARGET_VERSION in {"0.4.0", "0.4.1"}:
+        if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
             wait_marker(b"Password:")
             os.write(master, APPROVER_PASSWORD.encode() + b"\n")
         wait_marker(b"[a] allow all")
@@ -162,7 +162,7 @@ def approve_actions(actions, identity="both", on_decision=None):
             raise RuntimeError(f"persistent approval console did not quit: {output.decode(errors='replace')}")
         if proc.returncode != 0:
             raise RuntimeError(f"approval console failed: rc={proc.returncode}, output={output.decode(errors='replace')}")
-        if TARGET_VERSION in {"0.4.0", "0.4.1"}:
+        if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
             assert output.count(b"Password:") == 1 and b"Authenticated." not in output, output
             assert b"APPROVAL_AUTH_SUCCESS" not in output
             assert APPROVER_PASSWORD.encode() not in output, "PAM password was echoed to the terminal"
@@ -422,7 +422,7 @@ usermod -aG mayi-approver mayi-approver-only
 ''')
     docker("usermod", "-aG", "mayi-requester", "mayi-primary-requester-user")
     docker("usermod", "-aG", "mayi-approver", "mayi-primary-approver-user")
-    if TARGET_VERSION in {"0.4.0", "0.4.1"}:
+    if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
         accounts = ("mayi-both", "mayi-approver-only", "mayi-primary-approver-user")
         docker("chpasswd", input="".join(f"{account}:{APPROVER_PASSWORD}\n" for account in accounts).encode())
         docker("chpasswd", input=f"mayi-unrelated:{WRONG_PASSWORD}\n".encode())
@@ -493,7 +493,7 @@ def manpage_qualification():
         (("man", "mayi"), ("NAME", "SYNOPSIS", "SEE ALSO", "mayi-workflow")),
         (("man", "1", "mayi"), ("NAME", "SYNOPSIS")),
         (("man", "mayi-workflow"), ("NAME", "REQUESTER WORKFLOW", "APPROVER WORKFLOW")),
-        (("man", "7", "mayi-workflow"), ("NAME", "TWO-TERMINAL EXAMPLE")),
+        (("man", "7", "mayi-workflow"), ("NAME", "REQUESTER WORKFLOW", "RESULTS AND LIMITS")),
     ):
         rendered = docker("env", "MANPAGER=cat", *args).stdout.decode(errors="replace")
         for section in required:
@@ -502,8 +502,8 @@ def manpage_qualification():
 
 
 def install_for_mode():
-    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040"}:
-        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1", "upgrade032": "0.3.2", "upgrade040": "0.4.0"}.get(MODE, "0.2.0")
+    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040", "upgrade041"}:
+        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1", "upgrade032": "0.3.2", "upgrade040": "0.4.0", "upgrade041": "0.4.1"}.get(MODE, "0.2.0")
         install_package(baseline)
         create_human_roles()
         requester_groups = docker("id", "-G", "mayi-both").stdout
@@ -535,14 +535,22 @@ def install_for_mode():
         print(f"UPGRADE {baseline} -> {TARGET_VERSION}; MEMBERSHIPS AND LEGACY ACCOUNTS PRESERVED: PASS")
     else:
         install_package(TARGET_VERSION)
-        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1"}:
+        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1", "0.4.1-1"}:
             assert docker("getent", "passwd", "mayi-requester", check=False).returncode != 0
             assert docker("getent", "passwd", "mayi-approver", check=False).returncode != 0
         create_human_roles()
         method = "APT" if APT_MODE else "dpkg"
         print(f"FRESH INSTALL {TARGET_VERSION} VIA {method}: PASS")
-    if TARGET_VERSION in {"0.3.2", "0.4.0", "0.4.1"}:
+    if TARGET_VERSION in {"0.3.2", "0.4.0", "0.4.1", "0.4.1-1"}:
         manpage_qualification()
+    if TARGET_VERSION == "0.4.1-1":
+        version = docker("dpkg-query", "-W", "-f=${Version}", "mayi").stdout.decode().strip()
+        maintainer = docker("dpkg-deb", "-f", package_path(TARGET_VERSION), "Maintainer").stdout.decode().strip()
+        copyright = docker("cat", "/usr/share/doc/mayi/copyright").stdout.decode()
+        assert version == TARGET_VERSION, version
+        assert maintainer == "Eugen Lupricht <mayi@lupricht.net>", maintainer
+        assert "License: MIT" in copyright and "Copyright: 2026 Eugen Lupricht" in copyright
+        print("PACKAGE VERSION/MAINTAINER/MIT COPYRIGHT METADATA: PASS")
 
 
 def queue_qualification():
@@ -776,7 +784,7 @@ def run():
     assert code != 0 and "MAYI_UNAUTHORIZED_APPROVER" in error, (code, error)
     assert count_started() == before
     print("REQUESTER/APPROVER GROUP AUTHORIZATION AND CLEAR ERRORS: PASS")
-    if TARGET_VERSION in {"0.4.0", "0.4.1"}:
+    if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
         authentication_qualification()
 
     # Supplementary requester A and approver B; other members cannot consume A's request.

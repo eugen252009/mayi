@@ -1,6 +1,6 @@
 # Debian compatibility and qualification record — Mayi
 
-The current stable feature baseline is 0.4.1. The exact 0.4.1 amd64 package is technically qualified on Debian 10–13; Debian 12+ is the recommended operational baseline. This page preserves compatibility and release evidence across versions, so sections for older artifacts are historical—not current installation recommendations.
+The stable runtime baseline is 0.4.1. Original package 0.4.1 and metadata/documentation package revision 0.4.1-1 are qualified on Debian 10–13; revision 0.4.1-1 is the qualified next package candidate and its TPA.run publication is pending. Debian 12+ is the recommended operational baseline. This page preserves compatibility and release evidence across versions, so older artifact sections are historical—not current installation recommendations.
 
 ## Mayi 0.4.1 approval-console UX qualification (2026-09-27)
 

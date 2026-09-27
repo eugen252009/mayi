@@ -3,3 +3,22 @@ __pycache__/
 .pytest_cache/
 **/target/
 .cocoindex_code/
+
+# Local credentials and key material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
+auth-local*
+
+# Local runtime and test scratch state
+.mayi-local/
+.test-scratch/
+test-results/
+*.sock
+*.pid

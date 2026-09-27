@@ -17,7 +17,7 @@ privileged executor
 
 ## Status
 
-**STABLE / MAINTENANCE — Mayi 0.4.1 is the current stable feature baseline.** Mayi is maintained, not abandoned.
+**STABLE / MAINTENANCE — Mayi 0.4.1 is the current stable feature baseline.** The qualified Debian package revision 0.4.1-1 corrects maintainer/license metadata and carries the current documentation; it does not claim a runtime feature change. Its TPA.run publication is pending. Mayi is maintained, not abandoned.
 
 - Feature development is frozen unless driven by a concrete requirement.
 - Bug fixes, security fixes, and documentation fixes remain allowed.
@@ -43,7 +43,7 @@ The display shows the resolved executable and argv[0] separately. For example, i
 
 ## Installation
 
-The 0.4.1 Debian package is available from the public TPA.run `bootstrap` APT repository. Package availability is separate from local role configuration: installing Mayi does **not** add users to either role group.
+The original 0.4.1 Debian package is available from the public TPA.run `bootstrap` APT repository. Package revision 0.4.1-1 is qualified but not yet published; use 0.4.1 until APT advertises the new revision. Package availability is separate from local role configuration: installing Mayi does **not** add users to either role group.
 
 On a supported Debian amd64 system with the signed TPA.run `bootstrap` APT source already configured, refresh package metadata, confirm the exact 0.4.1 candidate, and install that release:
 
@@ -162,20 +162,20 @@ Approved commands run with a cleared environment, fixed `PATH`, `LANG`, `LC_ALL`
 
 | Qualification | Result |
 |---|---|
-| Debian 10, 11, 12, 13 | Exact 0.4.1 amd64 artifact qualified in disposable systemd environments |
+| Debian 10, 11, 12, 13 | Package revision 0.4.1-1 qualified in disposable systemd environments; runtime baseline 0.4.1 |
 | Released architecture | `amd64` only |
 | Recommended operational baseline | Debian 12 or newer; Debian 10 is technically qualified but end-of-life, and Debian 11 is also end-of-life |
 | Ubuntu, Arch, Fedora, ARM/ARM64, Synology DSM, other systems | Not currently qualified; this is not a claim of incompatibility |
 
-Qualification evidence concerns the exact 0.4.1 package, not every locally rebuilt binary or host configuration. The package's technical libc/Python floors and lifecycle caveats are in [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md).
+Qualification evidence concerns the exact 0.4.1-1 package, not every locally rebuilt binary or host configuration. The package's technical libc/Python floors and lifecycle caveats are in [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md).
 
 ## Stable release and maintenance
 
 - Stable feature baseline: **0.4.1**, release tag `v0.4.1`, release commit `9b3c69a292a36155d5994fa8b55da5cdc7f67ac4`.
-- Qualified artifact: `executor/target/debian/mayi_0.4.1_amd64.deb`, SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`.
-- Distribution: public TPA.run `bootstrap` repository through APT (see its signed [`InRelease`](https://tpa.run/r/tparun/bootstrap/dists/stable/InRelease) metadata).
-- Publication is not deployment. The exact qualified artifact was published and its consumer-visible APT download hash was verified; publication did not install Mayi on a production host.
-- This documentation freeze does not create a 0.4.2 release, rebuild the package, or change runtime behavior.
+- Qualified next package revision: **0.4.1-1**, a packaging/documentation correction to maintainer/license metadata; the application/runtime remains 0.4.1. TPA.run publication is pending.
+- Qualified package: `executor/target/debian/mayi_0.4.1-1_amd64.deb`, SHA-256 `665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8`.
+- The original qualified 0.4.1 package remains unchanged at `executor/target/debian/mayi_0.4.1_amd64.deb`, SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`.
+- Distribution: public TPA.run `bootstrap` repository through APT (see its signed [`InRelease`](https://tpa.run/r/tparun/bootstrap/dists/stable/InRelease) metadata). Publication is not deployment.
 
 Release workflow at a high level: source → build on a portable baseline → qualify the exact `.deb` → record its SHA-256 → commit/tag → publish those exact bytes → verify an isolated APT consumer download. Detailed release and qualification records are in [`MVP_QUALIFICATION.md`](MVP_QUALIFICATION.md) and [`executor/package/README.md`](executor/package/README.md).
 
@@ -206,7 +206,7 @@ cargo clippy --manifest-path executor/Cargo.toml --all-targets --all-features --
 cargo fmt --manifest-path executor/Cargo.toml -- --check
 ```
 
-The exact package release/build procedure is documented in the package README; do not rebuild or republish the immutable 0.4.1 artifact as part of documentation maintenance.
+The exact package build and qualification procedure is documented in the package README. Do not rebuild or republish either immutable package identity after qualification.
 
 ## Contact
 
@@ -216,4 +216,4 @@ For suspected security vulnerabilities, contact [mayi-security@lupricht.net](mai
 
 ## License
 
-No `LICENSE` file is currently present in this repository. Do not assume that a particular open-source license or redistribution permission applies; clarify licensing with the project maintainer.
+Mayi is licensed under the [MIT License](LICENSE).
