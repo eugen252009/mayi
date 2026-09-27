@@ -2,6 +2,14 @@
 
 This page preserves the original 0.3.1 artifact qualification record and subsequent package qualification records.
 
+## Mayi 0.4.1 approval-console UX qualification (2026-09-27)
+
+The exact `mayi 0.4.1 amd64` artifact, SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`, passed fresh-install and 0.4.0-upgrade qualification in disposable Debian 10–13 systemd environments. Bookworm fresh installation used APT on the exact local package. Each environment passed full PAM/auth-before-broker, runtime/queue, installed man-page, conffile, socket, and systemd checks, including 100 executor and 100 broker restarts.
+
+The UX change clears only the visible screen after a fully correlated successful allow/deny/follow-up acknowledgment, and only when stdout is a TTY and `TERM` identifies a supported ANSI-compatible terminal. It does not erase scrollback; failures preserve the request display and report the error. Commands display the actual argv[0] and use separate shell-quoted argument display values. Successful PAM authentication has no interactive success banner/event. PAM behavior, authorization, queue, package dependencies, executor, and filesystem boundaries are unchanged.
+
+The artifact was built with TPA 0.4.0 metadata (`Created-At: 2026-09-27T14:06:03Z`, provenance enabled) from clean source revision `7e7636838507b0399d914741935e9673ed09e710` in disposable Debian 10.13 (glibc 2.28-10+deb10u3, GCC 8.3.0, Rust/Cargo 1.95.0). Both native executables require at most `GLIBC_2.28`. The artifact was not rebuilt after qualification. The 0.4.0 and 0.3.2 artifacts remain byte-for-byte unchanged. No production host access or modification, deployment, or Synology work occurred. Queue persistence remains unclaimed across broker restart; filesystem execution remains disconnected and **INCOMPLETE**. See [MVP_QUALIFICATION.md](MVP_QUALIFICATION.md) for detailed gates and consumer verification.
+
 ## Mayi 0.4.0 PAM-authenticated approval qualification (2026-09-27)
 
 The exact `mayi 0.4.0 amd64` artifact, SHA-256 `d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86`, passed disposable Debian 10–13 systemd qualification. It retains the Debian 10 glibc 2.28 / Python 3.7 floor and adds `libpam0g (>= 1.1.8)` plus `libpam-runtime`. Native executables require at most `GLIBC_2.28`.

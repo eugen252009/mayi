@@ -126,13 +126,14 @@ def approve_actions(actions, identity="both", on_decision=None):
         if output.count(marker) < count:
             raise RuntimeError(f"approval console missed {marker!r}: {output.decode(errors='replace')}")
     try:
-        controls = acknowledgements = 0
+        controls = 0
+        acknowledgements = {}
         if TARGET_VERSION in {"0.4.0", "0.4.1"}:
             wait_marker(b"Password:")
             os.write(master, APPROVER_PASSWORD.encode() + b"\n")
         wait_marker(b"[a] allow all")
         controls = 1
-        for action, subset in actions:
+        for action_index, (action, subset) in enumerate(actions):
             action = {"y": "a", "n": "d", "e": "f"}.get(action, action)
             os.write(master, action.encode() + b"\n")
             if action in {"d", "f"}:
@@ -144,10 +145,10 @@ def approve_actions(actions, identity="both", on_decision=None):
                 controls += 1
             else:
                 marker = {"a": b"Approved:", "d": b"Denied:", "f": b"Follow-up requested:"}.get(action, b"Approved:")
-                wait_marker(marker, acknowledgements + 1)
-                acknowledgements += 1
+                acknowledgements[marker] = acknowledgements.get(marker, 0) + 1
+                wait_marker(marker, acknowledgements[marker])
                 if on_decision is not None:
-                    on_decision(acknowledgements - 1)
+                    on_decision(action_index)
                 if action != actions[-1][0] and len(actions) > 1:
                     wait_marker(b"[a] allow all", controls + 1)
                     controls += 1
@@ -165,7 +166,7 @@ def approve_actions(actions, identity="both", on_decision=None):
             assert output.count(b"Password:") == 1 and b"Authenticated." not in output, output
             assert b"APPROVAL_AUTH_SUCCESS" not in output
             assert APPROVER_PASSWORD.encode() not in output, "PAM password was echoed to the terminal"
-            assert output.count(b"\x1b[2J\x1b[H") == sum(action in {"a", "y", "d", "n", "f", "e"} for action, _ in actions), output
+            assert output.count(b"\x1b[2J\x1b[H") == sum(action != "s" for action, _ in actions), output
             assert b"\x1b[3J" not in output, "visible refresh must not erase terminal scrollback"
         while True:
             ready, _, _ = select.select([master], [], [], 0)
@@ -742,7 +743,8 @@ def authentication_qualification():
     assert len(later_ids) == 1
     assert set(execution_request_ids()[len(before):]) == {first_id[3:]}
     assert wait_jobs([first_id]).returncode == 0
-    assert wait_jobs(later_ids).returncode == 10
+    denied_result = wait_jobs(later_ids)
+    assert denied_result.returncode == 1 and b"DENIED" in denied_result.stdout, denied_result
 
     separate = queue_command(command_path("true"), identity="requester")
     display = approve("a", identity="approver")

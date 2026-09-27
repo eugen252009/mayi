@@ -1,5 +1,37 @@
 # Mayi package and deployment qualification record
 
+## Approval-console UX refresh — package 0.4.1 (2026-09-27)
+
+### Scope
+
+Mayi 0.4.1 is a console-only presentation update. After a fully correlated broker acknowledgment for allow, deny, or follow-up, `mayi-approve` clears the visible screen using ANSI clear-display/home sequences only when stdout is a TTY and `TERM` identifies a supported ANSI-compatible terminal; it never sends the scrollback erase sequence. Rejected or errored decisions preserve the current display and report the error. The console renders the executable and actual argv[0] on the command line, then each remaining argument on its own shell-quoted display line, with JSON escaping for values that cannot be represented safely as a compact literal. This is display notation, not shell input. Successful authentication proceeds directly to the console without an `Authenticated.` banner or auth-success event in interactive output.
+
+No PAM policy, authentication behavior, role checks, broker authorization/approval semantics, queue behavior, package dependencies, executor behavior, or filesystem boundary changed. Queue/results persistence across broker restart remains **NOT CLAIMED**. The filesystem executor remains **DISCONNECTED / INCOMPLETE**.
+
+### Exact artifact and build provenance
+
+- Package: `executor/target/debian/mayi_0.4.1_amd64.deb` (`mayi 0.4.1 amd64`)
+- SHA-256: `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`
+- Dependencies: unchanged from 0.4.0, including `libpam0g (>= 1.1.8)` and `libpam-runtime`.
+- TPA metadata: version 0.4.0, `Created-At: 2026-09-27T14:06:03Z`; provenance enabled.
+- Built in disposable Debian 10.13 (Buster), glibc `2.28-10+deb10u3`, GCC 8.3.0, Rust/Cargo 1.95.0; both native executables require at most `GLIBC_2.28`.
+- Builder source revision: `7e7636838507b0399d914741935e9673ed09e710`; source was clean. The artifact was not rebuilt after qualification. 0.4.0 (`d0a28d1e…`) and 0.3.2 (`f5e81423…`) artifacts remain unchanged.
+
+### Exact-artifact qualification
+
+`executor/package/qualify-systemd.py` pinned the package SHA-256 before each disposable Debian suite. Fresh installs and upgrades from 0.4.0 passed on Debian 10–13. Bookworm fresh installation used `apt-get install` on the exact local `.deb`. Each fresh/upgrade lifecycle environment passed the installed-man-page, PAM, auth-before-broker, runtime/queue, socket, conffile, and systemd checks, including 100 executor and 100 broker restarts.
+
+| Debian | Result |
+| --- | --- |
+| 10 Buster | Fresh 0.4.1 install and 0.4.0 upgrade; full PAM, runtime/queue, man-page, conffile, socket, and systemd qualification PASS. |
+| 11 Bullseye | Fresh 0.4.1 install and 0.4.0 upgrade; all qualification gates PASS. |
+| 12 Bookworm | Fresh APT install of local 0.4.1 and 0.4.0 upgrade; all gates PASS. |
+| 13 Trixie | Fresh 0.4.1 install and 0.4.0 upgrade; all gates PASS. |
+
+Focused gates verified allow/deny/follow-up clearing only after success, no clear on errors, no scrollback erase, no clear for non-TTY/dumb/unknown terminals, and a newly arriving request rendered after the prior successful decision cleared the old screen. PAM success produced no authentication banner or success event; wrong-password, account/PAM policy, TTY, argv/environment/piped-stdin, and pre-broker visibility restrictions remained passing. Rust tests: 77 + 5; Python tests: 51 passed, 9 skipped; Clippy with warnings denied, formatting, Python syntax, man rendering, and diff checks passed.
+
+No production host was accessed or modified; no deployment or Synology work occurred. Publication/consumer APT verification is recorded after completion below.
+
 ## PAM-authenticated approver sessions — package 0.4.0 (2026-09-27)
 
 ### Scope and security outcome

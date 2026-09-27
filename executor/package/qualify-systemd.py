@@ -551,7 +551,7 @@ def main():
     expected_031 = "9162530d3052389f5b84edef2680e379350bbd79a0981e247628d08a1df1b57e"
     expected_032 = "f5e81423e198cb386584de5a5060d429733b9205499ca73f5a76a512729159b1"
     expected_040 = "d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86"
-    expected_041 = "TO_BE_FILLED_AFTER_BUILD"
+    expected_041 = "22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0"
     for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032), ("0.4.0", expected_040), ("0.4.1", expected_041)):
         actual = subprocess.check_output(["sha256sum", str(PACKAGES[version])], text=True).split()[0]
         if actual != expected:
