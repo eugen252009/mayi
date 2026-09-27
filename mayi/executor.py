@@ -49,6 +49,24 @@ class RustExecutorClient:
         if result.get('status')!='PENDING_APPROVAL' or not all(isinstance(result.get(k),str) for k in ('broker_instance_id','challenge_id','request_digest')):raise ExecutorError('invalid proposal response')
         if len(result['broker_instance_id'])!=48 or len(result['challenge_id'])!=48 or len(result['request_digest'])!=64 or any(c not in '0123456789abcdef' for c in result['broker_instance_id']+result['challenge_id']+result['request_digest']):raise ExecutorError('invalid proposal correlation identifiers')
         return result
+    def queue(self, operations, dependencies=(), **kwargs):
+        if not self.socket_path: raise ExecutorError('protocol v5 queue requires the broker request socket')
+        doc=proposal_document(operations,target_uid=kwargs.get('target_uid'),target_gid=kwargs.get('target_gid'))
+        doc['type']='QUEUE_REQUEST';doc['dependencies']=list(dependencies)
+        result=_exchange(self.socket_path,doc,self.timeout,self.expected_broker_uid)
+        if not isinstance(result,dict) or result.get('ok') is not True or result.get('protocol')!=5 or result.get('type')!='QUEUE_RESPONSE' or result.get('response_to')!='QUEUE_REQUEST':
+            raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','invalid queue response')}" if isinstance(result,dict) else 'invalid queue response')
+        request_id=result.get('request_id')
+        if not isinstance(request_id,str) or len(request_id)!=35 or not request_id.startswith('rq_') or any(c not in '0123456789abcdef' for c in request_id[3:]):raise ExecutorError('invalid broker request ID')
+        return result
+    def queue_status(self,request_id):
+        if not self.socket_path: raise ExecutorError('protocol v5 status requires the broker request socket')
+        if not isinstance(request_id,str) or len(request_id)!=35 or not request_id.startswith('rq_') or any(c not in '0123456789abcdef' for c in request_id[3:]):raise ValueError('invalid request ID')
+        result=_exchange(self.socket_path,{'type':'GET_QUEUE_STATUS','protocol':5,'request_id':request_id},self.timeout,self.expected_broker_uid)
+        if not isinstance(result,dict) or result.get('ok') is not True or result.get('protocol')!=5 or result.get('response_to')!='GET_QUEUE_STATUS':
+            raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','invalid queue status')}" if isinstance(result,dict) else 'invalid queue status')
+        if result.get('request_id')!=request_id or result.get('state') not in {'PENDING_APPROVAL','APPROVED','WAITING_DEPENDENCY','READY','RUNNING','SUCCEEDED','FAILED','DENIED','EXPLAIN_REQUESTED','EXPIRED','EXECUTION_UNKNOWN','BLOCKED'}:raise ExecutorError('invalid queue status response')
+        return result
     def consume_approved(self,broker_instance_id,challenge_id,request_digest):
         """Consume this request's approval; the broker deliberately performs no execution."""
         if not self.socket_path:raise ExecutorError('protocol v5 consumption requires the broker request socket')
@@ -61,8 +79,17 @@ class RustExecutorClient:
             raise ExecutorError('invalid consume response schema')
         if not result.get('ok'):
             raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','rejected')}")
-        if result.get('response_to')!='CONSUME_APPROVED' or result.get('broker_instance_id')!=broker_instance_id or result.get('challenge_id')!=challenge_id or result.get('request_digest')!=request_digest or result.get('status')!='CONSUMED' or result.get('state')!='CONSUMED' or result.get('execution')!='EXECUTION_DISABLED':
+        if result.get('response_to')!='CONSUME_APPROVED' or result.get('broker_instance_id')!=broker_instance_id or result.get('challenge_id')!=challenge_id or result.get('request_digest')!=request_digest or result.get('status')!='CONSUMED' or result.get('state')!='CONSUMED' or result.get('execution') not in {'SUCCEEDED','FAILED','UNKNOWN','INTERNAL_ERROR','EXECUTION_DISABLED'}:
             raise ExecutorError('consume response correlation/status mismatch')
+        return result
+    def request_status(self,broker_instance_id,challenge_id,request_digest):
+        if not self.socket_path:raise ExecutorError('protocol v5 status requires the broker request socket')
+        doc={'type':'GET_REQUEST_STATUS','protocol':5,'broker_instance_id':broker_instance_id,'challenge_id':challenge_id,'request_digest':request_digest}
+        result=_exchange(self.socket_path,doc,self.timeout,self.expected_broker_uid)
+        if not isinstance(result,dict) or result.get('ok') is not True or result.get('protocol')!=5 or result.get('response_to')!='GET_REQUEST_STATUS':
+            raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','invalid request status')}" if isinstance(result,dict) else 'invalid request status')
+        if result.get('broker_instance_id')!=broker_instance_id or result.get('challenge_id')!=challenge_id or result.get('request_digest')!=request_digest or result.get('status') not in {'PENDING','APPROVED','DENIED','EXPLAINED','EXPIRED','CONSUMED'}:
+            raise ExecutorError('request status correlation mismatch')
         return result
 class RustApprovalAuthorityClient:
     """Separate approval-role transport; server authenticates SO_PEERCRED UID."""

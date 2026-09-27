@@ -1,33 +1,43 @@
 # mayi
 
-`mayi` is an unprivileged proposal/inspection prototype. Protocol 5 establishes a Rust-owned request/challenge/approval and requester-side consume lifecycle. The focused distinct-UID, PTY, and wire qualification passed; **filesystem execution remains disabled**, and the authorization plane awaits a targeted independent re-audit before it is frozen.
-
-## Inspect
+`mayi <command> [args...]` submits one exact executable-and-argv request to a Rust-owned Protocol 5 approval broker and waits for a human decision. The synchronous interface is preserved: `y` permits one execution; `n` executes nothing and exits 10; `e` executes nothing and exits 20. For asynchronous jobs, `mayi --queue [--after rq_<id>]... <command> [args...]` returns a broker-generated opaque request ID immediately. `mayi --wait [--fail=N] [--fail-instant] <id>...` observes results and `mayi --status <id>` reports one job. Queue dependencies must reference requests owned by the same authenticated requester UID; only successful dependencies permit execution. The persistent `mayi-approve` console displays exact executable/argv and dependencies, supports `a/s/d/f`, aliases `y/n/e`, and numeric selection. No shell command string, requester-supplied environment, working directory, or file descriptor is sent.
 
 ```sh
-python -m mayi.cli inspect 'echo hello > /etc/example.conf'
-python -m mayi.cli check 'echo hello > /etc/example.conf'
+mayi systemctl reload nginx
+# Or queue a dependent operation and retain its returned rq_<id>:
+mayi --queue --after rq_0123456789abcdef0123456789abcdef /usr/bin/systemctl reload nginx
+mayi --wait --fail=0 rq_0123456789abcdef0123456789abcdef
+# In a persistent approver terminal/session:
+mayi-approve
+# Enter a (approve), s (skip), d (deny), f (follow-up), numeric indices, or q.
 ```
 
-Python parsing, adapters and policy are advisory. A Python client may propose one modeled filesystem operation to the Rust request socket; it cannot supply an approval, choose a challenge ID, or modify a request after storage. Client SHA-256 values are never authorization.
+Requester and approver authorization uses the root-controlled `mayi-requester` and `mayi-approver` Unix groups. A user may belong to both for single-user operation; the kernel-authenticated UID still identifies each request and approval. The broker and privileged executor are separate processes. The broker authenticates requester and approver UIDs with `SO_PEERCRED`; the executor separately checks that its peer UID is the configured broker UID. `SO_PEERCRED` authenticates a UID, not a particular process, executable, or human.
 
-## Protocol-v5 broker
+## Execution scope and limits
 
-The broker requires separate requester, broker, and approver UIDs plus separate request/approval socket groups:
+This is a broad, human-gated command MVP, **not** a command allowlist or semantic safety filter. Approved commands run with executor identity UID 0 / primary GID 23012. The approval display makes that identity explicit. The executable must resolve to a root-owned, executable, non-group/world-writable file directly under one of `/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`; path components and symlinks are checked independently by CLI, broker, and executor. Arguments are bounded (128 entries, 1,024 UTF-8 bytes each, 2,048 total bytes). The executor clears the environment, sets fixed `PATH`, `LANG`, `LC_ALL`, and `HOME`, uses `/` as cwd and `/dev/null` as stdin, and bounds captured stdout/stderr. A requester can explicitly request a shell executable and its argv; the broker does not interpret a shell string, but the approver must assess the displayed executable and every argument.
+
+The executor journals a one-shot request ID before spawning and does not retry ambiguous handoffs. Replayed IDs are not executed; if a result cannot be proven, Mayi reports execution unknown (16). Execution is not a transaction: an approved command may have partially changed system state before it exits or loses its response.
+
+The structured filesystem executor remains disconnected and independently **INCOMPLETE**. Existing file operations do not gain a privileged filesystem handoff. No filesystem command, live file mutation, or host service action was performed during development or qualification.
+
+## Install and package
+
+Build the Debian package with TPA provenance enabled:
 
 ```sh
-mayi-executor --request-socket /run/mayi/request.sock \
-  --request-uid REQUEST_UID --request-gid REQUEST_GID \
-  --approval-socket /run/mayi/approval.sock \
-  --approval-uid APPROVER_UID --approval-gid APPROVAL_GID
+cd ~/projekte/tpa && go build -o /tmp/tpa .
+cd /home/eugen/projekte/mayi
+TPA_BIN=/tmp/tpa ./executor/package/build-deb.sh
 ```
 
-The broker refuses EUID 0, requires requester/broker/approver UIDs and production socket groups to be distinct, and rejects a same-UID requester unless `--development-same-uid` is explicitly selected. Socket files are broker-owned, mode 0660, and assigned to their configured role groups. Socket parent directories must be broker-owned and non-writable by group/other; ancestors must be root/broker-owned and non-writable, except root-owned sticky directories such as `/tmp`. Production provisioning must ensure only the intended requester/approver is in each role group. The Rust console is launched with `--approval-console --approval-socket PATH --broker-uid BROKER_UID`; it requires an interactive unprivileged TTY and checks broker/request/challenge/digest/view correlations before displaying or deciding.
+`build-deb.sh` links native executables against the libc of the environment running Cargo. Do not treat a build on a newer host as a portable release. The 0.3.1 release artifact below was built in the Debian 10 baseline environment.
 
-Each fetch creates a fresh broker-generated, single-use view bound to the broker instance, exact challenge, request digest, approver UID, and expiry. A later fetch replaces the earlier view; approve, deny, and explain consume it. The view ID is sent only over the approval socket; audit logs contain its SHA-256 reference, not the ID. The console accepts exactly one `approve`, `deny`, or `explain` frame and rejects trailing buffered input. The requester may send only broker instance, challenge, and digest to `CONSUME_APPROVED` on the request socket; Rust consumes the stored approval once and returns `EXECUTION_DISABLED`. No operation data is accepted on consume and no executor is called. The server uses separate bounded request/approval worker pools (8 connections each), a five-second transaction deadline, and rejects excess connections rather than queueing without bound. Same-UID development mode does not provide OS process isolation.
+Artifact: `executor/target/debian/mayi_0.3.1_amd64.deb` (SHA-256 `9162530d3052389f5b84edef2680e379350bbd79a0981e247628d08a1df1b57e`). Built with TPA provenance on Debian 10 (Buster); package dependencies are `libc6 (>= 2.28)` and `python3 (>= 3.7)`. Its native executables require at most `GLIBC_2.28`. Disposable systemd qualification passed on Debian 10 through 13. Debian 10 is technically compatible but has been EOL since June 2024; see [DEBIAN_COMPATIBILITY.md](DEBIAN_COMPATIBILITY.md) for the supported-version distinction, evidence, and limitations. The previous 0.3.0 artifact is preserved unchanged. It provisions fixed system broker UID 23002 and role/socket groups `mayi-requester` GID 23011, `mayi-broker-socket` GID 23012, and `mayi-approver` GID 23013. Any actual user can be added to the role groups; inspect IDs before deployment. The package installs systemd units and enables the broker/executor on systemd systems. A human operator in `mayi-approver` can run `mayi-approve` directly; no sudo or UID switching is required. The package's broker/service accounts remain separate system identities.
 
-Rust generates a 192-bit random broker ID and unique unpredictable challenge IDs, stores immutable requests in bounded ephemeral memory, renders challenges from broker-held data, and owns expiry/decisions. Restart invalidates all challenges. Protocol 4 client approval fields are rejected. Stdio is validation-only and cannot create challenges or approval state.
+## Qualification
 
-The consume transition is a temporary authorization-to-execution handoff only: it returns `CONSUMED / EXECUTION_DISABLED`. FilePatch/FileCreate/FileDelete/FileMove cannot mutate. Exec, service/package operations, fake-root and real-root execution remain disabled. No sudo, setuid, capabilities, or host-file changes are part of this project state.
+`executor/package/qualify-systemd.py` remains the Debian 13 release gate, including fresh install, upgrades from 0.2.0–0.3.0, command/queue flows, package failure handling, socket recovery, and 100 executor plus 100 broker restarts. The 0.3.1 portable artifact was additionally qualified unchanged on Debian 10, 11, and 12 with the same installed flows and lifecycle gates. The release-gate qualification used disposable environments. The administrator subsequently reported manual deployment and smoke testing on the real Debian 12.15 host; this repository consolidation has not accessed or modified that host.
 
-See `PROTOCOL.md`, `SECURITY_BOUNDARY.md`, and `ARCHITECTURE.md` for qualification status and remaining gates. The dormant filesystem executor has separate unresolved race and topology findings; do not remediate or re-enable it as part of approval-plane work.
+See the operator manual [`man/mayi-workflow.7`](man/mayi-workflow.7) for the requester/approver workflow, including the two-terminal queue example (`man ./man/mayi-workflow.7`). Also see [PROTOCOL.md](PROTOCOL.md), [SECURITY_BOUNDARY.md](SECURITY_BOUNDARY.md), [executor/package/README.md](executor/package/README.md), [MVP_QUALIFICATION.md](MVP_QUALIFICATION.md), and [FILESYSTEM_EXECUTOR_REMEDIATION.md](FILESYSTEM_EXECUTOR_REMEDIATION.md) for implementation details, evidence, and remaining limits. The earlier qualification in [PRIVILEGED_BOUNDARY_QUALIFICATION.md](PRIVILEGED_BOUNDARY_QUALIFICATION.md) is historical and does not qualify this MVP.

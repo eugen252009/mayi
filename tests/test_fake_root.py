@@ -5,7 +5,7 @@ from mayi.executor import RustExecutorClient
 def test_filesystem_mutation_remains_disabled_after_proposal(tmp_path):
     root=tmp_path/'fake-root';target=root/'etc/config';target.parent.mkdir(parents=True);target.write_text('A')
     request=tmp_path/'request.sock';approval=tmp_path/'approval.sock'
-    proc=subprocess.Popen(['executor/target/debug/mayi-executor','--request-socket',str(request),'--approval-socket',str(approval),'--request-uid',str(os.getuid()),'--request-gid',str(os.getgid()),'--approval-uid',str(os.getuid()+1),'--approval-gid',str(os.getgid()),'--development-same-uid'])
+    proc=subprocess.Popen(['executor/target/debug/mayi-executor','--request-socket',str(request),'--approval-socket',str(approval),'--request-gid',str(os.getgid()),'--approval-gid',str(os.getgid()),'--development-same-uid'])
     try:
         for _ in range(200):
             if request.exists():break

@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" = purge ]; then
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+        deb-systemd-helper purge mayi-broker.service mayi-privileged-executor.service >/dev/null || true
+    fi
+    rm -rf -- /var/lib/mayi-privileged-executor
+    for user in mayi-requester mayi-broker mayi-approver; do
+        if getent passwd "$user" >/dev/null; then deluser --quiet "$user" || true; fi
+    done
+    for group in mayi-requester mayi-broker-socket mayi-approver; do
+        if getent group "$group" >/dev/null; then delgroup --quiet "$group" || true; fi
+    done
+fi
+rmdir /run/mayi/request /run/mayi/approval /run/mayi/executor /run/mayi 2>/dev/null || true
+exit 0

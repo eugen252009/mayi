@@ -13,6 +13,7 @@ test = ["pytest>=8"]
 
 [project.scripts]
 mayi = "mayi.cli:main"
+mayi-approve = "mayi.approval_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

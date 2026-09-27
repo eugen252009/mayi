@@ -1,0 +1,23 @@
+{
+  "control": {
+    "name": "mayi",
+    "version": "0.3.1",
+    "architecture": "amd64",
+    "maintainer": "Mayi Qualification <security@example.invalid>",
+    "description": "Human-approved exact-command privilege broker",
+    "depends": "adduser, init-system-helpers, libc6 (>= 2.28), python3 (>= 3.7)",
+    "section": "admin",
+    "priority": "optional"
+  },
+  "provenance": true,
+  "repo": {
+    "origin": "Mayi Qualification",
+    "label": "Mayi Boundary Qualification",
+    "suite": "stable",
+    "components": "main",
+    "codename": "stable",
+    "description": "Local qualification artifacts"
+  },
+  "indir": "executor/package",
+  "outdir": "executor/target/debian/package-root"
+}

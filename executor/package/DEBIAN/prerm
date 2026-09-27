@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+case "$1" in
+    remove|deconfigure)
+        if [ -d /run/systemd/system ] && command -v deb-systemd-invoke >/dev/null 2>&1; then
+            deb-systemd-invoke stop mayi-broker.service mayi-privileged-executor.service
+        fi
+        ;;
+    upgrade|failed-upgrade)
+        # Keep active services alive until the new package has been unpacked;
+        # postinst reloads units and performs a safe, ordered restart.
+        ;;
+esac
+exit 0

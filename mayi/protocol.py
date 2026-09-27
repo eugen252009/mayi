@@ -12,7 +12,7 @@ def _path(p):
 
 def _op(o):
     k=o.kind
-    if k is Kind.EXEC: return {'args':list(o.args),'executable':o.target,'type':'exec'}
+    if k is Kind.EXEC: return {'argv':list(o.args),'executable':o.target,'type':'exec'}
     if k is Kind.FILE_PATCH:
         if o.mode or o.owner: raise ValueError('FilePatch metadata is unsupported')
         return {'expected_base_sha256':o.expected_base_sha256,'expected_result_sha256':o.expected_result_sha256,'patch':[dict(x) for x in o.patch],'path':_path(o.target),'type':'file_patch'}

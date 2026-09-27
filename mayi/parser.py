@@ -1,4 +1,6 @@
 """Restricted shell lexer: analysis only; unsupported syntax fails closed."""
+from __future__ import annotations
+
 from dataclasses import dataclass
 class ShellSyntaxError(ValueError): pass
 @dataclass

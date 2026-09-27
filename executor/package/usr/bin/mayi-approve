@@ -1,0 +1,3 @@
+#!/usr/bin/python3
+from mayi.approval_cli import main
+main()

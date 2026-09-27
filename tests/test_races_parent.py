@@ -3,4 +3,4 @@ def test_parent_move_cannot_reach_mutation_without_approval_authority():
     # until a separate authority exists, so no filesystem path reaches commit.
     from pathlib import Path
     source=Path('executor/src/main.rs').read_text()
-    assert 'APPROVAL_AUTHORITY_UNAVAILABLE' in source
+    assert 'protocol-v4 single-socket service is disabled' in source

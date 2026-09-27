@@ -66,6 +66,36 @@ def test_consume_client_sends_only_broker_correlation(tmp_path):
     }]
 
 
+def test_queue_client_sends_dependencies_and_accepts_only_broker_request_id(tmp_path):
+    request_id = "rq_" + "a" * 32
+    response = {"ok": True, "protocol": 5, "response_to": "QUEUE_REQUEST", "type": "QUEUE_RESPONSE", "request_id": request_id}
+    received = []
+    path = tmp_path / "broker.sock"
+    thread = _server(path, response, received)
+    from mayi.operations import Kind, Operation
+    operation = Operation(Kind.EXEC, "/usr/bin/true", ("true",))
+    result = RustExecutorClient(socket_path=str(path), expected_broker_uid=os.getuid()).queue([operation], ["rq_" + "b" * 32])
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert result["request_id"] == request_id
+    assert received[0]["type"] == "QUEUE_REQUEST"
+    assert received[0]["dependencies"] == ["rq_" + "b" * 32]
+    assert received[0]["operations"] == [{"type": "exec", "executable": "/usr/bin/true", "argv": ["true"]}]
+
+
+def test_queue_status_client_validates_request_and_state(tmp_path):
+    request_id = "rq_" + "c" * 32
+    response = {"ok": True, "protocol": 5, "response_to": "GET_QUEUE_STATUS", "request_id": request_id, "state": "SUCCEEDED", "mayi_result": 0, "child_exit_status": 0}
+    received = []
+    path = tmp_path / "broker.sock"
+    thread = _server(path, response, received)
+    result = RustExecutorClient(socket_path=str(path), expected_broker_uid=os.getuid()).queue_status(request_id)
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert result["state"] == "SUCCEEDED"
+    assert received == [{"type": "GET_QUEUE_STATUS", "protocol": 5, "request_id": request_id}]
+
+
 def test_consume_client_rejects_mismatched_result(tmp_path):
     instance, challenge, digest = "a" * 48, "b" * 48, "c" * 64
     response = {

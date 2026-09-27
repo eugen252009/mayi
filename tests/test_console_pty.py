@@ -10,11 +10,7 @@ from pathlib import Path
 
 import pytest
 
-
 BROKER = "a" * 48
-CHALLENGE = "b" * 48
-DIGEST = "c" * 64
-VIEW = "d" * 48
 BINARY = Path(os.environ.get("MAYI_EXECUTOR_BIN", "executor/target/debug/mayi-executor"))
 
 
@@ -28,92 +24,86 @@ def _read_exact(conn, size):
     return bytes(data)
 
 
-def _fake_authority(path, count):
+def _row(index, dependency=None):
+    request_id = "rq_" + format(index + 1, "032x")
+    challenge = format(index + 1, "048x")
+    digest = format(index + 1, "064x")
+    return {
+        "request_id": request_id,
+        "challenge_id": challenge,
+        "request_digest": digest,
+        "requester_uid": 1001,
+        "expires_at": int(time.time()) + 1000,
+        "queue_state": "PENDING_APPROVAL",
+        "dependencies": [] if dependency is None else ["rq_" + format(i + 1, "032x") for i in (dependency if isinstance(dependency, list) else [dependency])],
+        "operations": [{"type": "exec", "executable": "/usr/bin/true", "argv": ["true"]}],
+        "blocking_dependency": None,
+    }
+
+
+def _fake_authority(path, rows):
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(str(path))
     listener.listen()
-    listener.settimeout(10)
+    listener.settimeout(0.2)
+    pending = [dict(row) for row in rows]
     messages = []
     errors = []
+    stopped = threading.Event()
 
     def serve():
         try:
-            for _ in range(count):
-                conn, _ = listener.accept()
+            while not stopped.is_set():
+                try:
+                    conn, _ = listener.accept()
+                except socket.timeout:
+                    continue
                 with conn:
                     size = int.from_bytes(_read_exact(conn, 4), "big")
                     msg = json.loads(_read_exact(conn, size))
                     messages.append(msg)
                     ty = msg["type"]
                     if ty == "LIST_PENDING":
-                        response = {
-                            "ok": True,
-                            "protocol": 5,
-                            "response_to": ty,
-                            "broker_instance_id": BROKER,
-                            "pending": [{
-                                "challenge_id": CHALLENGE,
-                                "request_digest": DIGEST,
-                                "requester_uid": os.getuid(),
-                                "expires_at": int(time.time()) + 200,
-                            }],
-                        }
+                        active = [row for row in pending if row["queue_state"] == "PENDING_APPROVAL"]
+                        response = {"ok": True, "protocol": 5, "response_to": ty,
+                                    "broker_instance_id": BROKER, "pending": pending if active else []}
                     elif ty == "GET_CHALLENGE":
-                        response = {
-                            "ok": True,
-                            "protocol": 5,
-                            "response_to": ty,
-                            "type": "CHALLENGE_VIEW",
-                            "status": "DISPLAYED",
-                            "state": "PENDING_APPROVAL",
-                            "broker_instance_id": BROKER,
-                            "challenge_id": CHALLENGE,
-                            "request_digest": DIGEST,
-                            "view_id": VIEW,
-                            "view_expires_at": int(time.time()) + 50,
-                            "rendered": "TEST APPROVAL VIEW",
-                        }
+                        response = {"ok": True, "protocol": 5, "response_to": ty,
+                                    "type": "CHALLENGE_VIEW", "status": "DISPLAYED",
+                                    "state": "PENDING_APPROVAL", "broker_instance_id": BROKER,
+                                    "challenge_id": msg["challenge_id"],
+                                    "request_digest": next(r["request_digest"] for r in pending if r["challenge_id"] == msg["challenge_id"]),
+                                    "view_id": format(len(messages), "048x"),
+                                    "view_expires_at": int(time.time()) + 50,
+                                    "rendered": "not displayed by queue console"}
                     else:
-                        status = {
-                            "APPROVE_CHALLENGE": "APPROVED",
-                            "DENY_CHALLENGE": "DENIED",
-                            "EXPLAIN_CHALLENGE": "EXPLAINED",
-                        }[ty]
-                        response = {
-                            "ok": True,
-                            "protocol": 5,
-                            "response_to": ty,
-                            "status": status,
-                            "authorized": ty == "APPROVE_CHALLENGE",
-                            "broker_instance_id": BROKER,
-                            "challenge_id": CHALLENGE,
-                            "request_digest": DIGEST,
-                            "view_id": VIEW,
-                        }
+                        status, state = {"APPROVE_CHALLENGE": ("APPROVED", "WAITING_DEPENDENCY"),
+                                         "DENY_CHALLENGE": ("DENIED", "DENIED"),
+                                         "EXPLAIN_CHALLENGE": ("EXPLAINED", "EXPLAIN_REQUESTED")}[ty]
+                        for row in pending:
+                            if row["challenge_id"] == msg["challenge_id"]:
+                                row["queue_state"] = state
+                        response = {"ok": True, "protocol": 5, "response_to": ty,
+                                    "status": status, "authorized": ty == "APPROVE_CHALLENGE",
+                                    "broker_instance_id": BROKER,
+                                    "challenge_id": msg["challenge_id"],
+                                    "request_digest": msg["request_digest"],
+                                    "view_id": msg["view_id"]}
                     payload = json.dumps(response, separators=(",", ":")).encode()
                     conn.sendall(len(payload).to_bytes(4, "big") + payload)
-        except Exception as exc:  # surfaced in the test thread
-            errors.append(exc)
+        except Exception as exc:
+            if not stopped.is_set():
+                errors.append(exc)
         finally:
             listener.close()
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    return messages, errors, thread
+    return messages, pending, errors, stopped, thread
 
 
-def _console(binary, socket_path, master, slave, selection, decision, require_decision=True):
-    proc = subprocess.Popen(
-        [str(binary), "--approval-console", "--approval-socket", str(socket_path), "--broker-uid", str(os.getuid())],
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        close_fds=True,
-    )
-    output = bytearray()
-    selected = False
-    decided = False
-    deadline = time.monotonic() + 10
+def _read_until(master, proc, output, needle, timeout=10):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         ready, _, _ = select.select([master], [], [], 0.05)
         if ready:
@@ -123,106 +113,222 @@ def _console(binary, socket_path, master, slave, selection, decision, require_de
                 chunk = b""
             if chunk:
                 output.extend(chunk)
-                if b"Select request number" in output and not selected:
-                    os.write(master, selection)
-                    selected = True
-                if b"Decision [approve/deny/explain" in output and not decided:
-                    if decision is not None:
-                        os.write(master, decision)
-                    decided = True
+                if needle in output:
+                    return
         if proc.poll() is not None:
             break
-    if proc.poll() is None:
-        proc.kill()
-        proc.wait()
-        raise AssertionError("approval console did not terminate")
-    assert selected and (decided or not require_decision)
-    return proc.returncode, bytes(output), selected, decided
+    raise AssertionError(f"did not see {needle!r}; output={bytes(output)!r}; rc={proc.poll()}")
 
 
-@pytest.mark.parametrize("input_bytes, expected", [
-    (b"approve\n", "APPROVE_CHALLENGE"),
-    (b"deny\n", "DENY_CHALLENGE"),
-    (b"explain\n", "EXPLAIN_CHALLENGE"),
-    (b"approve\nextra\n", None),
-    (b"approve\n\n", None),
-    (b"approve\r\n", None),
-    (b"approve extra\n", None),
-    (b" approve\n", None),
-    (b"approve \n", None),
-    (b"approve\t\n", None),
-    (b"approve\rjunk\n", None),
-    ("apprové\n".encode(), None),
-    ("аpprove\n".encode(), None),
-    (b"\n", None),
-])
-def test_console_decision_frame_is_exact_and_live(input_bytes, expected, tmp_path):
-    binary = BINARY
-    if not binary.exists():
-        pytest.skip("build mayi-executor first")
-    path = tmp_path / "approval.sock"
-    messages, errors, server = _fake_authority(path, 2 if expected is None else 3)
+def _read_until_count(master, proc, output, needle, count, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and output.count(needle) < count:
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if ready:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                chunk = b""
+            if chunk:
+                output.extend(chunk)
+        if proc.poll() is not None:
+            break
+    assert output.count(needle) >= count, f"did not see {needle!r} {count} times; output={bytes(output)!r}; rc={proc.poll()}"
+
+
+def _start_console(path):
     master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        [str(BINARY), "--approval-console", "--approval-socket", str(path), "--broker-uid", str(os.getuid())],
+        stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    )
+    os.close(slave)
+    return proc, master, bytearray()
+
+
+def _finish(proc, master, output):
+    if proc.poll() is None:
+        os.write(master, b"q\n")
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            proc.wait(timeout=5)
+    assert proc.returncode == 0, bytes(output).decode("utf-8", "replace")
+
+
+@pytest.fixture(autouse=True)
+def require_binary():
+    if not BINARY.exists():
+        pytest.skip("build mayi-executor first")
+
+
+def test_console_persists_after_approval_and_shows_exact_argv(tmp_path):
+    path = tmp_path / "approval.sock"
+    messages, pending, errors, stopped, server = _fake_authority(path, [_row(0)])
+    proc, master, output = _start_console(path)
     try:
-        rc, output, selected, decided = _console(binary, path, master, slave, b"0\n", input_bytes)
-        if expected is None:
-            assert rc != 0
-            assert [m["type"] for m in messages] == ["LIST_PENDING", "GET_CHALLENGE"]
-        else:
-            assert rc == 0
-            assert messages[-1]["type"] == expected
-            display = {"APPROVE_CHALLENGE": "APPROVED", "DENY_CHALLENGE": "DENIED", "EXPLAIN_CHALLENGE": "EXPLAINED"}[expected]
-            assert display in output.decode("utf-8", "replace")
-        server.join(timeout=10)
-        assert not server.is_alive()
+        _read_until(master, proc, output, b"[a] allow all")
+        assert b"/usr/bin/true" in output and b'argv[0] "true"' in output
+        os.write(master, b"a\n")
+        _read_until(master, proc, output, b"Approved: 0")
+        assert proc.poll() is None, "approval console exited after one decision"
+        _read_until(master, proc, output, b"Waiting for Mayi requests...")
+        _finish(proc, master, output)
+        assert [msg["type"] for msg in messages if msg["type"] != "LIST_PENDING"] == ["GET_CHALLENGE", "APPROVE_CHALLENGE"]
         assert not errors
     finally:
+        stopped.set()
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
         os.close(master)
-        os.close(slave)
+        server.join(timeout=2)
 
 
-def test_rejected_multiline_input_does_not_leak_to_next_console(tmp_path):
-    if not BINARY.exists():
-        pytest.skip("build mayi-executor first")
+@pytest.mark.parametrize(("input_frame", "selection", "decision_type"), [
+    (b"0\n", None, "APPROVE_CHALLENGE"),
+    (b"d\n", b"all\n", "DENY_CHALLENGE"),
+    (b"f\n", b"all\n", "EXPLAIN_CHALLENGE"),
+])
+def test_asdf_and_numeric_controls_are_one_shot(input_frame, selection, decision_type, tmp_path):
     path = tmp_path / "approval.sock"
-    messages, errors, server = _fake_authority(path, 5)
-    master, slave = pty.openpty()
+    messages, _, errors, stopped, server = _fake_authority(path, [_row(0)])
+    proc, master, output = _start_console(path)
     try:
-        rc, _, selected, decided = _console(BINARY, path, master, slave, b"0\n", b"approve\nextra\n")
-        assert rc != 0 and selected and decided
-        assert [m["type"] for m in messages] == ["LIST_PENDING", "GET_CHALLENGE"]
-        # The first invocation flushed its input queue and exited. A new invocation
-        # needs a fresh selection and cannot consume the old trailing bytes.
-        rc, output, selected, decided = _console(BINARY, path, master, slave, b"0\n", b"approve\n")
-        assert rc == 0 and selected and decided
-        assert [m["type"] for m in messages] == [
-            "LIST_PENDING", "GET_CHALLENGE", "LIST_PENDING", "GET_CHALLENGE", "APPROVE_CHALLENGE"
-        ]
-        assert b"APPROVED" in output
-        server.join(timeout=10)
-        assert not server.is_alive() and not errors
+        _read_until(master, proc, output, b"[a] allow all")
+        os.write(master, input_frame)
+        if selection:
+            prompt = b"Deny [all or indices]:" if decision_type == "DENY_CHALLENGE" else b"Follow up on [all or indices]:"
+            _read_until(master, proc, output, prompt)
+            os.write(master, selection)
+        acknowledgement = {"APPROVE_CHALLENGE": b"Approved: 0", "DENY_CHALLENGE": b"Denied: 0", "EXPLAIN_CHALLENGE": b"Follow-up requested: 0"}[decision_type]
+        _read_until(master, proc, output, acknowledgement)
+        _finish(proc, master, output)
+        assert [m["type"] for m in messages if m["type"] in {"APPROVE_CHALLENGE", "DENY_CHALLENGE", "EXPLAIN_CHALLENGE"}] == [decision_type]
+        assert not errors
     finally:
+        stopped.set()
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
         os.close(master)
-        os.close(slave)
+        server.join(timeout=2)
 
 
-def test_selection_frame_rejects_prequeued_decision_and_flushes(tmp_path):
-    if not BINARY.exists():
-        pytest.skip("build mayi-executor first")
+def test_dependency_graph_partial_and_order_independent_approval(tmp_path):
     path = tmp_path / "approval.sock"
-    messages, errors, server = _fake_authority(path, 4)
-    master, slave = pty.openpty()
+    rows = [_row(0), _row(1, 0), _row(2, 1)]
+    messages, pending, errors, stopped, server = _fake_authority(path, rows)
+    proc, master, output = _start_console(path)
     try:
-        rc, _, selected, decided = _console(BINARY, path, master, slave, b"0\napprove\n", None, require_decision=False)
-        assert rc != 0 and selected and not decided
-        assert [m["type"] for m in messages] == ["LIST_PENDING"]
-        rc, output, selected, decided = _console(BINARY, path, master, slave, b"0\n", b"approve\n")
-        assert rc == 0 and selected and decided and b"APPROVED" in output
-        assert [m["type"] for m in messages] == [
-            "LIST_PENDING", "LIST_PENDING", "GET_CHALLENGE", "APPROVE_CHALLENGE"
-        ]
-        server.join(timeout=10)
-        assert not server.is_alive() and not errors
+        _read_until(master, proc, output, b"[a] allow all")
+        assert output.count(b"     \xe2\x86\x93") >= 2
+        os.write(master, b"210\n")
+        _read_until(master, proc, output, b"Approved: 0 1 2")
+        decisions = [m["challenge_id"] for m in messages if m["type"] == "APPROVE_CHALLENGE"]
+        assert decisions == [rows[i]["challenge_id"] for i in (0, 1, 2)]
+        _finish(proc, master, output)
+        assert not errors
     finally:
+        stopped.set()
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
         os.close(master)
-        os.close(slave)
+        server.join(timeout=2)
+
+
+def test_branching_dag_displays_both_dependencies_in_topological_order(tmp_path):
+    path = tmp_path / "approval.sock"
+    rows = [_row(0), _row(1), _row(2, [0, 1])]
+    messages, _, errors, stopped, server = _fake_authority(path, rows)
+    proc, master, output = _start_console(path)
+    try:
+        _read_until(master, proc, output, b"[a] allow all")
+        assert b"Commands: 3" in output and b"after: 0,1" in output
+        os.write(master, b"210\n")
+        _read_until(master, proc, output, b"Approved: 0 1 2")
+        decisions = [m["challenge_id"] for m in messages if m["type"] == "APPROVE_CHALLENGE"]
+        assert decisions == [rows[i]["challenge_id"] for i in (0, 1, 2)]
+        _finish(proc, master, output)
+        assert not errors
+    finally:
+        stopped.set()
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
+        os.close(master)
+        server.join(timeout=2)
+
+
+def test_partial_approval_selects_only_pending_commands(tmp_path):
+    path = tmp_path / "approval.sock"
+    rows = [_row(0), _row(1, 0), _row(2, 1)]
+    messages, pending, errors, stopped, server = _fake_authority(path, rows)
+    proc, master, output = _start_console(path)
+    try:
+        _read_until(master, proc, output, b"[a] allow all")
+        os.write(master, b"0\n")
+        _read_until(master, proc, output, b"Approved: 0")
+        pending[0]["queue_state"] = "SUCCEEDED"
+        _read_until_count(master, proc, output, b"Commands: 3", 2)
+        os.write(master, b"1\n")
+        _read_until(master, proc, output, b"Approved: 1")
+        assert [m["challenge_id"] for m in messages if m["type"] == "APPROVE_CHALLENGE"] == [rows[0]["challenge_id"], rows[1]["challenge_id"]]
+        _finish(proc, master, output)
+        assert not errors
+    finally:
+        stopped.set()
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
+        os.close(master)
+        server.join(timeout=2)
+
+
+def test_skip_other_set_then_skipped_set_resurfaces(tmp_path):
+    path = tmp_path / "approval.sock"
+    rows = [_row(0), _row(1)]
+    messages, _, errors, stopped, server = _fake_authority(path, rows)
+    proc, master, output = _start_console(path)
+    try:
+        _read_until(master, proc, output, b"[a] allow all")
+        os.write(master, b"s\n")
+        _read_until_count(master, proc, output, b"[a] allow all", 2)
+        os.write(master, b"a\n")
+        _read_until_count(master, proc, output, b"Approved: 0", 1)
+        _read_until_count(master, proc, output, b"[a] allow all", 3)
+        os.write(master, b"a\n")
+        _read_until_count(master, proc, output, b"Approved: 0", 2)
+        decisions = [m["challenge_id"] for m in messages if m["type"] == "APPROVE_CHALLENGE"]
+        assert sorted(decisions) == sorted(row["challenge_id"] for row in rows)
+        _finish(proc, master, output)
+        assert not errors
+    finally:
+        stopped.set()
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
+        os.close(master)
+        server.join(timeout=2)
+
+
+def test_new_request_arrival_is_printed_while_console_waits(tmp_path):
+    path = tmp_path / "approval.sock"
+    rows = [_row(0)]
+    messages, pending, errors, stopped, server = _fake_authority(path, rows)
+    proc, master, output = _start_console(path)
+    try:
+        _read_until(master, proc, output, b"request ID: rq_" + format(1, "032x").encode())
+        pending.append(_row(1))
+        _read_until(master, proc, output, b"request ID: rq_" + format(2, "032x").encode())
+        os.write(master, b"a\n")
+        _read_until_count(master, proc, output, b"Approved: 0", 1)
+        _read_until_count(master, proc, output, b"[a] allow all", 3)
+        os.write(master, b"a\n")
+        _read_until_count(master, proc, output, b"Approved: 0", 2)
+        decisions = [m["challenge_id"] for m in messages if m["type"] == "APPROVE_CHALLENGE"]
+        assert sorted(decisions) == sorted(row["challenge_id"] for row in pending)
+        _finish(proc, master, output)
+        assert not errors
+    finally:
+        stopped.set()
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
+        os.close(master)
+        server.join(timeout=2)

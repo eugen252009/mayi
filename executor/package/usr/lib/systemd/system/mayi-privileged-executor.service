@@ -1,0 +1,23 @@
+[Unit]
+Description=Mayi privileged command executor
+After=local-fs.target
+StartLimitIntervalSec=60s
+StartLimitBurst=300
+
+[Service]
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30s
+User=root
+Group=mayi-broker-socket
+ExecStart=/usr/libexec/mayi/privileged-executor
+Restart=on-failure
+RestartSec=1s
+UMask=0077
+NoNewPrivileges=yes
+StateDirectory=mayi-privileged-executor
+StateDirectoryMode=0700
+ReadWritePaths=/run/mayi/executor
+
+[Install]
+WantedBy=multi-user.target

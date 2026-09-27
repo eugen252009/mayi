@@ -1,7 +1,9 @@
-# Race qualification status — superseded
+# Race hardening — filesystem executor qualification status
 
-This document records the earlier fake-root implementation and tests. The adversarial audit subsequently reproduced stale FilePatch overwrite, changed-content FileDelete/FileMove, temp pathname substitution, parent-directory movement outside the fake root, commit after expiry, restart replay, special-file blocking, and FD leaks.
+The Protocol 5 broker now also supports the separate exact-command MVP. Typed filesystem operations still consume as `CONSUMED / EXECUTION_DISABLED`; the filesystem core remains disconnected.
 
-Protocol 5 now places proposals in a Rust-owned approval lifecycle; even an approved request can only be internally consumed as `EXECUTION_DISABLED`. The old single-socket path is disabled. Regression tests verify proposal/authorization behavior and that fixture files remain unchanged. This is **not** a proof that the dormant filesystem implementation is race-safe. Do not reconnect it or describe fake-root mutation as qualified.
+Concurrent channel-coordinated stress now runs FilePatch same-inode changes (10,000) and FileMove destination appearance (10,000), with the racer on another thread at the precommit boundary. Existing deterministic interleavings include FilePatch pathname/symlink swaps, FileDelete changes/replacements, FileMove source changes/replacements, hardlink insertion, and parent movement (100 each); staging substitution ran 50 regular-file and 50 symlink attempts. Remaining classes are not all 10,000-iteration concurrent stress.
 
-No hostile-writer commit contract has yet been established. The old code's `openat2` lookup constraints do not protect a commit pathname from replacement and do not ensure a retained directory FD remains beneath the root after a rename.
+Test-only failure points and process `_exit` cases cover selected pre/post-commit boundaries. Patch can leave a reserved, hidden staging name after a process crash between staging-link and replacement; startup recovery reaps it under the root lock. The process-crash test is not power-loss qualification. Cleanup errors are not separately exposed; syscall-generated EINTR/ENOSPC/EDQUOT, full commit-stage injection, stalled regular-syscall bounds, and independent review remain incomplete. Private-namespace bind tests cover the openat2 primitive, not an EUID-nonzero `ExecutionContext`.
+
+**Do not connect or enable filesystem execution.** The separate exact-command MVP does not qualify the filesystem core. See `FILESYSTEM_EXECUTOR_REMEDIATION.md` for matrices, trust limitations, and blockers.

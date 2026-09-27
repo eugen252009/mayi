@@ -1,36 +1,158 @@
 //! mayi executor. Protocol-v5 broker holds approval state; mutation remains disabled.
 mod broker;
+mod filesystem;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashSet},
     env,
     ffi::CString,
     fs,
-    io::{self, Read, Write},
+    io::{self, Read},
     os::unix::{
         ffi::OsStrExt,
-        fs::{FileTypeExt, MetadataExt, PermissionsExt},
-        io::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
-        net::{UnixListener, UnixStream},
+        fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+        io::AsRawFd,
+        net::UnixStream,
     },
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
 };
-const VERSION: i64 = 5;
-const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
-const RESOLVE_NO_SYMLINKS: u64 = 0x04;
-const RESOLVE_BENEATH: u64 = 0x08;
-const RESOLVE_IN_ROOT: u64 = 0x10;
-const MAX_LIFETIME: i64 = 600;
 const MAX_MESSAGE: usize = 512 * 1024;
-const IO_TIMEOUT: u64 = 5;
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
+static BROKER_SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn request_broker_shutdown(_: libc::c_int) {
+    BROKER_SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+fn install_broker_shutdown_handlers() {
+    BROKER_SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+    unsafe {
+        libc::signal(
+            libc::SIGTERM,
+            request_broker_shutdown as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            request_broker_shutdown as *const () as libc::sighandler_t,
+        );
+    }
+}
+
+fn broker_shutdown_requested() -> bool {
+    BROKER_SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
+}
+
+fn broker_instance_lock(request_path: &std::path::Path) -> io::Result<fs::File> {
+    let socket = secure_socket_path(request_path)?;
+    let path = socket
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "socket parent missing"))?
+        .join(".mayi-broker.lock");
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o777 != 0o600
+        || metadata.nlink() != 1
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unsafe broker instance lock",
+        ));
+    }
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::AddrInUse,
+            "broker already active",
+        ));
+    }
+    Ok(file)
+}
+
+fn safe_socket_metadata(metadata: &fs::Metadata, uid: u32, gid: u32) -> bool {
+    metadata.file_type().is_socket()
+        && metadata.uid() == uid
+        && metadata.gid() == gid
+        && metadata.permissions().mode() & 0o777 == 0o660
+        && metadata.nlink() == 1
+}
+
+fn probe_broker_listener(path: &std::path::Path) -> io::Result<bool> {
+    let path_bytes = path.as_os_str().as_encoded_bytes();
+    let template: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if path_bytes.is_empty()
+        || path_bytes.len() >= template.sun_path.len()
+        || path_bytes.contains(&0)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid Unix socket path",
+        ));
+    }
+    let fd = unsafe {
+        libc::socket(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut address = template;
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (dst, src) in address.sun_path.iter_mut().zip(path_bytes) {
+        *dst = *src as libc::c_char;
+    }
+    let address_len =
+        (std::mem::size_of::<libc::sa_family_t>() + path_bytes.len() + 1) as libc::socklen_t;
+    let result = unsafe {
+        libc::connect(
+            fd,
+            (&address as *const libc::sockaddr_un).cast(),
+            address_len,
+        )
+    };
+    let error = if result < 0 {
+        Some(io::Error::last_os_error())
+    } else {
+        None
+    };
+    unsafe { libc::close(fd) };
+    match error {
+        None => Ok(true),
+        Some(error) if error.raw_os_error() == Some(libc::ECONNREFUSED) => Ok(false),
+        Some(error) => Err(error),
+    }
+}
+
+fn remove_broker_socket_if_same(
+    path: &std::path::Path,
+    expected: &fs::Metadata,
+    uid: u32,
+    gid: u32,
+) -> io::Result<()> {
+    let current = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !safe_socket_metadata(&current, uid, gid)
+        || current.dev() != expected.dev()
+        || current.ino() != expected.ino()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "broker socket entry changed; refusing to unlink",
+        ));
+    }
+    fs::remove_file(path)
 }
 fn err(code: &str, msg: &str, id: Option<&str>) -> String {
     let mut m = serde_json::Map::new();
@@ -41,25 +163,6 @@ fn err(code: &str, msg: &str, id: Option<&str>) -> String {
     m.insert("code".into(), Value::String(code.into()));
     m.insert("message".into(), Value::String(msg.into()));
     Value::Object(m).to_string()
-}
-fn canonical(v: &Value) -> String {
-    match v {
-        Value::Object(m) => {
-            let s: BTreeMap<_, _> = m.iter().collect();
-            format!(
-                "{{{}}}",
-                s.iter()
-                    .map(|(k, v)| format!("{}:{}", serde_json::to_string(k).unwrap(), canonical(v)))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        }
-        Value::Array(a) => format!(
-            "[{}]",
-            a.iter().map(canonical).collect::<Vec<_>>().join(",")
-        ),
-        _ => serde_json::to_string(v).unwrap(),
-    }
 }
 fn mode_ok(v: Option<&Value>) -> bool {
     v.and_then(Value::as_str).is_some_and(|s| {
@@ -94,7 +197,7 @@ fn validate_op(v: &Value) -> Result<(), &'static str> {
             if o.get("executable")
                 .and_then(Value::as_str)
                 .is_none_or(str::is_empty)
-                || !o.get("args").is_some_and(Value::is_array)
+                || !o.get("argv").is_some_and(Value::is_array)
             {
                 return Err("invalid exec");
             }
@@ -105,13 +208,13 @@ fn validate_op(v: &Value) -> Result<(), &'static str> {
                 || !hash_ok(o.get("expected_result_sha256"))
             {
                 return Err("invalid patch hashes");
-            };
+            }
             let Some(a) = o.get("patch").and_then(Value::as_array) else {
                 return Err("patch must be an array");
             };
             if a.is_empty() {
                 return Err("empty patch");
-            };
+            }
             for e in a {
                 if e.get("old").and_then(Value::as_str).is_none()
                     || e.get("new").and_then(Value::as_str).is_none()
@@ -189,594 +292,8 @@ fn peer_uid(s: &UnixStream) -> Result<u32, String> {
         Ok(c.uid)
     }
 }
-struct Root {
-    fd: RawFd,
-}
-impl Drop for Root {
-    fn drop(&mut self) {
-        unsafe {
-            libc::close(self.fd);
-        }
-    }
-}
-#[repr(C)]
-struct OpenHow {
-    flags: u64,
-    mode: u64,
-    resolve: u64,
-}
-fn openat2_fd(dir: RawFd, path: &CString, flags: i32, resolve: u64) -> Result<RawFd, String> {
-    let how = OpenHow {
-        flags: flags as u64,
-        mode: 0,
-        resolve,
-    };
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            dir,
-            path.as_ptr(),
-            &how,
-            std::mem::size_of::<OpenHow>(),
-        )
-    };
-    if fd < 0 {
-        let e = io::Error::last_os_error();
-        if e.raw_os_error() == Some(libc::ENOSYS) {
-            Err("OPENAT2_UNAVAILABLE".into())
-        } else {
-            Err(e.to_string())
-        }
-    } else {
-        Ok(fd as RawFd)
-    }
-}
-fn open_root(p: &Path) -> Result<Root, String> {
-    let c = CString::new(p.as_os_str().as_bytes()).map_err(|_| "invalid fake root")?;
-    let f = unsafe {
-        libc::open(
-            c.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-        )
-    };
-    if f < 0 {
-        return Err(io::Error::last_os_error().to_string());
-    }
-    let probe = CString::new(".").unwrap();
-    match openat2_fd(
-        f,
-        &probe,
-        libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
-        RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS,
-    ) {
-        Ok(x) => unsafe {
-            libc::close(x);
-        },
-        Err(e) => {
-            unsafe { libc::close(f) };
-            return Err(e);
-        }
-    }
-    Ok(Root { fd: f })
-}
-fn cs(s: &str) -> Result<CString, String> {
-    CString::new(s).map_err(|_| "NUL in path".into())
-}
-fn logical_parts(p: &str) -> Result<(&str, &str), String> {
-    if !p.starts_with('/') || p.ends_with('/') || p.contains('\0') {
-        return Err("PATH_INVALID".into());
-    }
-    let trimmed = p.trim_start_matches('/');
-    if trimmed.is_empty()
-        || trimmed
-            .split('/')
-            .any(|x| x == "." || x == ".." || x.is_empty())
-    {
-        return Err("PATH_ESCAPE".into());
-    }
-    match trimmed.rfind('/') {
-        Some(i) => Ok((&p[..p.len() - trimmed.len() + i + 1], &trimmed[i + 1..])),
-        None => Ok(("/", trimmed)),
-    }
-}
-fn parent(r: &Root, p: &str) -> Result<(RawFd, CString), String> {
-    let (parent_path, name) = logical_parts(p)?;
-    let d = openat2_fd(
-        r.fd,
-        &cs(parent_path)?,
-        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-        RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS,
-    )?;
-    Ok((d, cs(name)?))
-}
-fn open_target(fd: RawFd, n: &CString, flags: i32) -> Result<RawFd, String> {
-    openat2_fd(
-        fd,
-        n,
-        flags | libc::O_CLOEXEC,
-        RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS,
-    )
-}
-fn read_fd(fd: RawFd) -> Result<Vec<u8>, String> {
-    let mut f = unsafe { fs::File::from_raw_fd(fd) };
-    let mut b = Vec::new();
-    f.read_to_end(&mut b).map_err(|e| e.to_string())?;
-    let _ = f.into_raw_fd();
-    Ok(b)
-}
-fn hash(b: &[u8]) -> String {
-    let mut h = Sha256::new();
-    h.update(b);
-    hex::encode(h.finalize())
-}
-fn write_fd(fd: RawFd, b: &[u8]) -> Result<(), String> {
-    let mut f = unsafe { fs::File::from_raw_fd(fd) };
-    f.write_all(b).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    let _ = f.into_raw_fd();
-    Ok(())
-}
-fn stat_meta(fd: RawFd) -> Result<(u32, u32, u32), String> {
-    let mut s: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(fd, &mut s) } < 0 {
-        Err(io::Error::last_os_error().to_string())
-    } else {
-        Ok((s.st_mode & 0o7777, s.st_uid, s.st_gid))
-    }
-}
-fn rename_at(
-    a: RawFd,
-    an: &CString,
-    b: RawFd,
-    bn: &CString,
-    noreplace: bool,
-) -> Result<(), String> {
-    let x = if noreplace {
-        unsafe {
-            libc::syscall(
-                libc::SYS_renameat2,
-                a,
-                an.as_ptr(),
-                b,
-                bn.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        }
-    } else {
-        unsafe { libc::renameat(a, an.as_ptr(), b, bn.as_ptr()) as libc::c_long }
-    };
-    if x < 0 {
-        Err(io::Error::last_os_error().to_string())
-    } else {
-        Ok(())
-    }
-}
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-fn temp() -> CString {
-    CString::new(format!(
-        ".mayi-tmp-{}-{}-{}",
-        std::process::id(),
-        now(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ))
-    .unwrap()
-}
-fn replace_at(
-    d: RawFd,
-    n: &CString,
-    data: &[u8],
-    meta: (u32, u32, u32),
-    create: bool,
-) -> Result<(), String> {
-    let t = temp();
-    let f = unsafe {
-        libc::openat(
-            d,
-            t.as_ptr(),
-            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            0o600,
-        )
-    };
-    if f < 0 {
-        return Err("TEMPFILE_ERROR".into());
-    }
-    let result = (|| {
-        write_fd(f, data)?;
-        if unsafe { libc::fchmod(f, meta.0 as libc::mode_t) } < 0 {
-            return Err("mode preservation failed".into());
-        }
-        if unsafe { libc::fchown(f, meta.1, meta.2) } < 0 {
-            return Err("ownership preservation failed".into());
-        }
-        unsafe {
-            libc::close(f);
-        }
-        rename_at(d, &t, d, n, create)?;
-        if unsafe { libc::fsync(d) } < 0 {
-            return Err("ATOMIC_COMMIT_FAILED".into());
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        unsafe {
-            libc::close(f);
-            libc::unlinkat(d, t.as_ptr(), 0);
-        }
-    }
-    result
-}
-fn target_identity(fd: RawFd) -> Result<(libc::dev_t, libc::ino_t), String> {
-    let mut s: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(fd, &mut s) } < 0 {
-        Err(io::Error::last_os_error().to_string())
-    } else {
-        Ok((s.st_dev, s.st_ino))
-    }
-}
-fn path_identity(d: RawFd, n: &CString) -> Result<(libc::dev_t, libc::ino_t), String> {
-    let mut s: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstatat(d, n.as_ptr(), &mut s, libc::AT_SYMLINK_NOFOLLOW) } < 0 {
-        Err(io::Error::last_os_error().to_string())
-    } else {
-        Ok((s.st_dev, s.st_ino))
-    }
-}
-fn execute_one(r: &Root, o: &Value) -> Result<(), String> {
-    match o["type"].as_str().unwrap() {
-        "file_patch" => {
-            let p = o["path"].as_str().unwrap();
-            let (d, n) = parent(r, p)?;
-            let f = open_target(d, &n, libc::O_RDONLY)?;
-            let m = stat_meta(f)?;
-            let b = read_fd(f)?;
-            let identity = target_identity(f)?;
-            unsafe {
-                libc::close(f);
-            }
-            if hash(&b) != o["expected_base_sha256"] {
-                unsafe {
-                    libc::close(d);
-                };
-                return Err("FILE_CHANGED".into());
-            }
-            let mut s = String::from_utf8(b).map_err(|_| "PATCH_TEXT_REQUIRED".to_string())?;
-            for e in o["patch"].as_array().unwrap() {
-                let old = e["old"].as_str().unwrap();
-                let new = e["new"].as_str().unwrap();
-                if old.is_empty() || s.matches(old).count() != 1 {
-                    return Err("PATCH_DOES_NOT_APPLY".into());
-                }
-                s = s.replacen(old, new, 1)
-            }
-            let out = s.into_bytes();
-            if hash(&out) != o["expected_result_sha256"] {
-                unsafe {
-                    libc::close(d);
-                };
-                return Err("RESULT_HASH_MISMATCH".into());
-            }
-            if path_identity(d, &n).ok() != Some(identity) {
-                unsafe {
-                    libc::close(d);
-                }
-                return Err("PATH_RACE_DETECTED".into());
-            }
-            let current_fd =
-                open_target(d, &n, libc::O_RDONLY).map_err(|_| "PATH_RACE_DETECTED".to_string())?;
-            let current = read_fd(current_fd)?;
-            unsafe {
-                libc::close(current_fd);
-            }
-            if hash(&current) != o["expected_base_sha256"] {
-                unsafe {
-                    libc::close(d);
-                };
-                return Err("FILE_CHANGED".into());
-            }
-            let result = replace_at(d, &n, &out, m, false);
-            unsafe {
-                libc::close(d);
-            };
-            result
-        }
-        "file_create" => {
-            let p = o["path"].as_str().unwrap();
-            let (d, n) = parent(r, p)?;
-            let exists = match open_target(d, &n, libc::O_RDONLY) {
-                Ok(fd) => {
-                    unsafe {
-                        libc::close(fd);
-                    };
-                    true
-                }
-                Err(_) => false,
-            };
-            if exists {
-                unsafe {
-                    libc::close(d);
-                };
-                return Err("FILE_EXISTS".into());
-            }
-            let data = o["content"].as_str().unwrap().as_bytes();
-            if hash(data) != o["expected_result_sha256"] {
-                return Err("RESULT_HASH_MISMATCH".into());
-            }
-            let mode =
-                u32::from_str_radix(o["mode"].as_str().unwrap(), 8).map_err(|_| "invalid mode")?;
-            let result = replace_at(
-                d,
-                &n,
-                data,
-                (mode, unsafe { libc::geteuid() }, unsafe { libc::getegid() }),
-                true,
-            );
-            unsafe {
-                libc::close(d);
-            };
-            result
-        }
-        "file_delete" => {
-            let (d, n) = parent(r, o["path"].as_str().unwrap())?;
-            let f = open_target(d, &n, libc::O_RDONLY)?;
-            let b = read_fd(f)?;
-            let identity = target_identity(f)?;
-            unsafe {
-                libc::close(f);
-            }
-            if hash(&b) != o["expected_sha256"] {
-                unsafe {
-                    libc::close(d);
-                };
-                return Err("FILE_CHANGED".into());
-            }
-            if path_identity(d, &n).ok() != Some(identity) {
-                unsafe {
-                    libc::close(d);
-                };
-                return Err("PATH_RACE_DETECTED".into());
-            }
-            if unsafe { libc::unlinkat(d, n.as_ptr(), 0) } < 0 {
-                unsafe {
-                    libc::close(d);
-                };
-                return Err(io::Error::last_os_error().to_string());
-            }
-            unsafe {
-                libc::close(d);
-            };
-            Ok(())
-        }
-        "file_move" => {
-            let (sd, sn) = parent(r, o["source"].as_str().unwrap())?;
-            let f = open_target(sd, &sn, libc::O_RDONLY)?;
-            let b = read_fd(f)?;
-            let identity = target_identity(f)?;
-            unsafe {
-                libc::close(f);
-            }
-            if hash(&b) != o["expected_source_sha256"] {
-                unsafe {
-                    libc::close(sd);
-                };
-                return Err("FILE_CHANGED".into());
-            }
-            let (dd, dn) = parent(r, o["destination"].as_str().unwrap())?;
-            if let Ok(fd) = open_target(dd, &dn, libc::O_RDONLY) {
-                unsafe {
-                    libc::close(fd);
-                    libc::close(sd);
-                    libc::close(dd);
-                };
-                return Err("FILE_EXISTS".into());
-            }
-            if path_identity(sd, &sn).ok() != Some(identity) {
-                unsafe {
-                    libc::close(sd);
-                    libc::close(dd);
-                };
-                return Err("PATH_RACE_DETECTED".into());
-            }
-            rename_at(sd, &sn, dd, &dn, true)?;
-            unsafe {
-                libc::fsync(dd);
-                libc::close(sd);
-                libc::close(dd);
-            };
-            Ok(())
-        }
-        _ => Err("UNSUPPORTED_EXECUTION".into()),
-    }
-}
-fn execute(r: &Root, ops: &[Value]) -> Result<(), String> {
-    for o in ops {
-        if matches!(
-            o["type"].as_str(),
-            Some("file_patch" | "file_create" | "file_delete" | "file_move")
-        ) {
-            execute_one(r, o)?
-        }
-    }
-    Ok(())
-}
-fn process(
-    doc: Value,
-    kuid: Option<u32>,
-    replay: &mut HashSet<String>,
-    fake: Option<&Path>,
-) -> String {
-    let Some(root) = doc.as_object() else {
-        return err("INVALID_PROTOCOL", "request must be object", None);
-    };
-    let id = root.get("request_id").and_then(Value::as_str);
-    if ["approval", "approved", "scope", "decision", "consumed"]
-        .iter()
-        .any(|k| root.contains_key(*k))
-    {
-        return err(
-            "LEGACY_AUTHORITY_FIELD_REMOVED",
-            "client-supplied approval state is forbidden",
-            id,
-        );
-    }
-    if root.get("protocol").and_then(Value::as_i64) != Some(VERSION) {
-        return err("UNSUPPORTED_PROTOCOL_VERSION", "unsupported protocol", id);
-    }
-    if id.is_none_or(|x| x.is_empty() || x.len() > 128) {
-        return err("INVALID_PROTOCOL", "invalid request id", id);
-    }
-    let Some(nonce) = root.get("nonce").and_then(Value::as_str) else {
-        return err("INVALID_NONCE", "nonce required", id);
-    };
-    if nonce.len() < 16 || nonce.len() > 128 || nonce.chars().any(char::is_whitespace) {
-        return err("INVALID_NONCE", "invalid nonce", id);
-    }
-    let Some(exp) = root.get("expires_at").and_then(Value::as_i64) else {
-        return err("INVALID_PROTOCOL", "invalid expiry", id);
-    };
-    if exp <= now() {
-        return err("REQUEST_EXPIRED", "request expired", id);
-    }
-    if exp > now() + MAX_LIFETIME {
-        return err("EXPIRY_TOO_LONG", "expiry too long", id);
-    }
-    let Some(uid) = root
-        .get("requester")
-        .and_then(|x| x.get("uid"))
-        .and_then(Value::as_u64)
-    else {
-        return err("INVALID_PROTOCOL", "requester uid required", id);
-    };
-    if uid > u32::MAX as u64 || kuid.is_some_and(|x| x != uid as u32) {
-        return err("CALLER_MISMATCH", "requester mismatch", id);
-    }
-    let Some(tuid) = root
-        .get("target")
-        .and_then(|x| x.get("uid"))
-        .and_then(Value::as_u64)
-    else {
-        return err("INVALID_PROTOCOL", "target uid required", id);
-    };
-    let Some(tgid) = root
-        .get("target")
-        .and_then(|x| x.get("gid"))
-        .and_then(Value::as_u64)
-    else {
-        return err("INVALID_PROTOCOL", "target gid required", id);
-    };
-    if tuid > u32::MAX as u64 || tgid > u32::MAX as u64 {
-        return err("INVALID_PROTOCOL", "identity out of range", id);
-    }
-    let Some(ops) = root.get("operations").and_then(Value::as_array) else {
-        return err("INVALID_PROTOCOL", "operations required", id);
-    };
-    if ops.len() != 1 {
-        return err(
-            "INVALID_OPERATION_COUNT",
-            "exactly one operation is required",
-            id,
-        );
-    }
-    for o in ops {
-        if let Err(x) = validate_op(o) {
-            return err(
-                if x == "unknown operation type" {
-                    "UNSUPPORTED_OPERATION"
-                } else {
-                    "INVALID_OPERATION"
-                },
-                x,
-                id,
-            );
-        }
-        if !matches!(
-            o.get("type").and_then(Value::as_str),
-            Some("file_patch" | "file_create" | "file_delete" | "file_move")
-        ) {
-            return err("UNSUPPORTED_OPERATION", "operation is not executable", id);
-        }
-    }
-    let material = serde_json::json!({"expires_at":exp,"nonce":nonce,"operations":ops,"protocol":VERSION,"request_id":id.unwrap(),"requester_uid":uid,"target_gid":tgid,"target_uid":tuid});
-    let mut h = Sha256::new();
-    h.update(canonical(&material).as_bytes());
-    let actual = hex::encode(h.finalize());
-    let Some(ap) = root.get("approval").and_then(Value::as_object) else {
-        return err("APPROVAL_MISSING", "approval required", id);
-    };
-    if ap.get("scope").and_then(Value::as_str) != Some("once") {
-        return err("APPROVAL_INVALID", "only once supported", id);
-    }
-    if ap.get("digest").and_then(Value::as_str) != Some(actual.as_str()) {
-        return err("DIGEST_MISMATCH", "approval mismatch", id);
-    }
-    if replay.contains(nonce) {
-        return err("REPLAY_DETECTED", "nonce consumed", id);
-    }
-    replay.insert(nonce.into());
-    if fake.is_some() {
-        // A client-generated digest is not evidence of human approval.
-        return err(
-            "APPROVAL_AUTHORITY_UNAVAILABLE",
-            "filesystem execution is disabled without independent approval",
-            id,
-        );
-    }
-    if let Some(p) = fake {
-        let r = match open_root(p) {
-            Ok(x) => x,
-            Err(x) => {
-                let code = match x.as_str() {
-                    "OPENAT2_UNAVAILABLE" => "OPENAT2_UNAVAILABLE",
-                    "PATH_ESCAPE" => "PATH_ESCAPE",
-                    _ => "PATH_RESOLUTION_FAILED",
-                };
-                return err(code, &x, id);
-            }
-        };
-        if let Err(x) = execute(&r, ops) {
-            let code = match x.as_str() {
-                "FILE_CHANGED"
-                | "FILE_EXISTS"
-                | "PATCH_DOES_NOT_APPLY"
-                | "RESULT_HASH_MISMATCH"
-                | "PATCH_TEXT_REQUIRED"
-                | "PATH_RACE_DETECTED"
-                | "TEMPFILE_ERROR"
-                | "ATOMIC_COMMIT_FAILED" => x.as_str(),
-                "UNSUPPORTED_EXECUTION" => "UNSUPPORTED_OPERATION",
-                _ => "PATH_INVALID",
-            };
-            return err(code, &x, id);
-        }
-    }
-    let status = if kuid == Some(tuid as u32) {
-        "validated"
-    } else {
-        "IDENTITY_SIMULATED"
-    };
-    serde_json::json!({"ok":true,"request_id":id,"status":status,"digest":actual,"operations":ops.len()}).to_string()
-}
-fn read_frame(s: &mut UnixStream) -> io::Result<Vec<u8>> {
-    let mut h = [0; 4];
-    s.read_exact(&mut h)?;
-    let n = u32::from_be_bytes(h) as usize;
-    if n > MAX_MESSAGE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "message too large",
-        ));
-    }
-    let mut b = vec![0; n];
-    s.read_exact(&mut b)?;
-    Ok(b)
-}
-fn write_frame(s: &mut UnixStream, b: &[u8]) -> io::Result<()> {
-    s.write_all(&(b.len() as u32).to_be_bytes())?;
-    s.write_all(b)
-}
-fn listener(p: &Path) -> io::Result<UnixListener> {
-    listener_for(p, unsafe { libc::getegid() })
-}
-fn secure_socket_path(p: &Path) -> io::Result<PathBuf> {
+
+fn secure_socket_path(p: &std::path::Path) -> io::Result<PathBuf> {
     let name = p.file_name().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -786,7 +303,7 @@ fn secure_socket_path(p: &Path) -> io::Result<PathBuf> {
     let parent_arg = p
         .parent()
         .filter(|x| !x.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+        .unwrap_or(std::path::Path::new("."));
     let parent = fs::canonicalize(parent_arg)?;
     let mut cur = PathBuf::from("/");
     let broker_uid = unsafe { libc::geteuid() };
@@ -822,90 +339,77 @@ fn secure_socket_path(p: &Path) -> io::Result<PathBuf> {
     }
     Ok(parent.join(name))
 }
-fn listener_for(p: &Path, gid: u32) -> io::Result<UnixListener> {
+fn listener_for(
+    p: &std::path::Path,
+    gid: u32,
+) -> io::Result<(std::os::unix::net::UnixListener, fs::Metadata)> {
     let socket_path = secure_socket_path(p)?;
-    if let Ok(existing) = fs::symlink_metadata(&socket_path) {
-        if existing.file_type().is_symlink()
-            || !existing.file_type().is_socket()
-            || existing.uid() != unsafe { libc::geteuid() }
-            || existing.gid() != gid
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "unsafe socket path",
-            ));
+    let uid = unsafe { libc::geteuid() };
+    match fs::symlink_metadata(&socket_path) {
+        Ok(existing) => {
+            if !safe_socket_metadata(&existing, uid, gid) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "unsafe existing socket path",
+                ));
+            }
+            match probe_broker_listener(&socket_path) {
+                Ok(true) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        "live socket listener",
+                    ))
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!("cannot prove socket stale: {error}"),
+                    ));
+                }
+            }
+            let current = fs::symlink_metadata(&socket_path)?;
+            if !safe_socket_metadata(&current, uid, gid)
+                || current.dev() != existing.dev()
+                || current.ino() != existing.ino()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "socket changed during stale check",
+                ));
+            }
+            fs::remove_file(&socket_path)?;
         }
-        if UnixStream::connect(&socket_path).is_ok() {
-            return Err(io::Error::new(io::ErrorKind::AddrInUse, "active socket"));
-        }
-        fs::remove_file(&socket_path)?
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
-    let listener = UnixListener::bind(&socket_path)?;
-    let path = CString::new(socket_path.as_os_str().as_bytes())
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
+    let bound = fs::symlink_metadata(&socket_path)?;
+    let c_path = CString::new(socket_path.as_os_str().as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "socket path contains NUL"))?;
-    if unsafe { libc::chown(path.as_ptr(), libc::geteuid(), gid) } < 0 {
-        let e = io::Error::last_os_error();
-        drop(listener);
-        let _ = fs::remove_file(&socket_path);
-        return Err(e);
+    if unsafe { libc::chown(c_path.as_ptr(), libc::geteuid(), gid) } < 0 {
+        return Err(io::Error::last_os_error());
     }
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o660))?;
     let st = fs::symlink_metadata(&socket_path)?;
-    if st.uid() != unsafe { libc::geteuid() }
-        || st.gid() != gid
-        || st.permissions().mode() & 0o777 != 0o660
-    {
-        drop(listener);
-        let _ = fs::remove_file(&socket_path);
+    if !safe_socket_metadata(&st, uid, gid) || st.dev() != bound.dev() || st.ino() != bound.ino() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "socket ownership verification failed",
         ));
     }
-    Ok(listener)
+    Ok((listener, st))
 }
-#[allow(unreachable_code, unused_variables)]
-fn serve(p: PathBuf, once: bool, fake: Option<PathBuf>) -> io::Result<()> {
-    return Err(io::Error::new(
+
+/// Retained only to fail closed for the retired protocol-v4 single-socket CLI.
+/// The direct filesystem core is test-qualified but is not reachable here.
+fn serve(_p: PathBuf, _once: bool, _fake: Option<PathBuf>) -> io::Result<()> {
+    Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "protocol-v4 single-socket service is disabled",
-    ));
-    if fake.is_some() && unsafe { libc::geteuid() } == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "REAL_ROOT_DISABLED",
-        ));
-    }
-    if fake.as_deref() == Some(Path::new("/")) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "REAL_ROOT_DISABLED",
-        ));
-    }
-    let l = listener(&p)?;
-    let mut replay = HashSet::new();
-    for incoming in l.incoming() {
-        let mut s = incoming?;
-        s.set_read_timeout(Some(std::time::Duration::from_secs(IO_TIMEOUT)))?;
-        s.set_write_timeout(Some(std::time::Duration::from_secs(IO_TIMEOUT)))?;
-        let out = match peer_uid(&s) {
-            Ok(u) => match read_frame(&mut s).and_then(|b| {
-                serde_json::from_slice(&b)
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid JSON"))
-            }) {
-                Ok(v) => process(v, Some(u), &mut replay, fake.as_deref()),
-                Err(e) => err("INVALID_PROTOCOL", &e.to_string(), None),
-            },
-            Err(e) => err("INTERNAL_ERROR", &e, None),
-        };
-        let _ = write_frame(&mut s, out.as_bytes());
-        if once {
-            break;
-        }
-    }
-    let _ = fs::remove_file(p);
-    Ok(())
+    ))
 }
+
 fn main() {
     let a: Vec<String> = env::args().collect();
     if a.iter().any(|x| x == "--approval-console") {
@@ -952,16 +456,6 @@ fn main() {
             .position(|x| x == "--approval-socket")
             .and_then(|j| a.get(j + 1))
             .map(PathBuf::from);
-        let requester = a
-            .iter()
-            .position(|x| x == "--request-uid")
-            .and_then(|j| a.get(j + 1))
-            .and_then(|x| x.parse::<u32>().ok());
-        let approver = a
-            .iter()
-            .position(|x| x == "--approval-uid")
-            .and_then(|j| a.get(j + 1))
-            .and_then(|x| x.parse::<u32>().ok());
         let request_gid = a
             .iter()
             .position(|x| x == "--request-gid")
@@ -972,26 +466,23 @@ fn main() {
             .position(|x| x == "--approval-gid")
             .and_then(|j| a.get(j + 1))
             .and_then(|x| x.parse::<u32>().ok());
-        let development = a.iter().any(|x| x == "--development-same-uid");
-        match (req, auth, requester, approver, request_gid, approval_gid) {
-            (Some(r), Some(a), Some(requester), Some(uid), Some(rgid), Some(agid)) => {
-                if let Err(e) = broker::serve(r, a, requester, uid, rgid, agid, development) {
+        let development = a
+            .iter()
+            .any(|x| x == "--development-shared-role-group" || x == "--development-same-uid");
+        match (req, auth, request_gid, approval_gid) {
+            (Some(r), Some(a), Some(rgid), Some(agid)) => {
+                if let Err(e) = broker::serve(r, a, rgid, agid, development) {
                     eprintln!("mayi-executor: {e}");
                     std::process::exit(1)
                 }
                 return;
             }
             _ => {
-                eprintln!("request socket requires --approval-socket PATH --request-uid UID --request-gid GID --approval-uid UID --approval-gid GID");
+                eprintln!("request socket requires --approval-socket PATH --request-gid GID --approval-gid GID");
                 std::process::exit(2)
             }
         }
     }
-    let fake = a
-        .iter()
-        .position(|x| x == "--fake-root")
-        .and_then(|i| a.get(i + 1))
-        .map(PathBuf::from);
     if a.iter().any(|x| x == "--stdio" || x == "--dry-run") {
         if a.iter().any(|x| x == "--fake-root") {
             eprintln!("--fake-root is not supported with stdio/dry-run");
@@ -1019,29 +510,106 @@ fn main() {
             std::process::exit(3);
         }
         if let Some(p) = a.get(i + 1) {
-            if let Err(e) = serve(PathBuf::from(p), a.iter().any(|x| x == "--once"), fake) {
+            if let Err(e) = serve(
+                PathBuf::from(p),
+                a.iter().any(|x| x == "--once"),
+                a.iter()
+                    .position(|x| x == "--fake-root")
+                    .and_then(|j| a.get(j + 1))
+                    .map(PathBuf::from),
+            ) {
                 eprintln!("mayi-executor: {e}");
                 std::process::exit(1)
             }
             return;
         }
     }
-    eprintln!("usage: mayi-executor --request-socket PATH --approval-socket PATH --request-uid UID --request-gid GID --approval-uid UID --approval-gid GID [--development-same-uid] | --approval-console --approval-socket PATH --broker-uid UID | --stdio");
+    eprintln!("usage: mayi-executor --request-socket PATH --approval-socket PATH --request-gid GID --approval-gid GID [--development-shared-role-group] | --approval-console --approval-socket PATH --broker-uid UID | --stdio");
     std::process::exit(2)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn exact_patch_rejects_changed_base() {
-        let s = "a=1\n";
-        assert_eq!(s.matches("a=1").count(), 1);
-        assert_eq!("a=3\n".matches("a=1").count(), 0)
+
+    fn test_socket_path(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("mayi-broker-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path.join("broker.sock")
     }
+
     #[test]
-    fn unknown_fails_closed() {
-        let mut r = HashSet::new();
-        let d = serde_json::json!({"protocol":4,"request_id":"r","nonce":"0123456789abcdef","expires_at":now()+100,"requester":{"uid":1},"target":{"uid":1,"gid":1},"operations":[{"type":"shell"}],"approval":{"scope":"once","digest":"x"}});
-        assert!(process(d, None, &mut r, None).contains("LEGACY_AUTHORITY_FIELD_REMOVED"));
+    fn broker_socket_reclaims_only_owned_stale_sockets_and_preserves_live_listeners() {
+        let path = test_socket_path("stale-live");
+        let gid = unsafe { libc::getegid() };
+        let (listener, original) = listener_for(&path, gid).unwrap();
+        drop(listener);
+        let (listener, current) = listener_for(&path, gid).unwrap();
+        assert_ne!(
+            (original.dev(), original.ino()),
+            (current.dev(), current.ino())
+        );
+        let error = listener_for(&path, gid).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        let after = fs::symlink_metadata(&path).unwrap();
+        assert_eq!((current.dev(), current.ino()), (after.dev(), after.ino()));
+        drop(listener);
+        remove_broker_socket_if_same(&path, &current, unsafe { libc::geteuid() }, gid).unwrap();
+        fs::remove_file(path.parent().unwrap().join(".mayi-broker.lock")).ok();
+        fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn broker_socket_rejects_symlink_file_directory_and_wrong_ownership() {
+        let path = test_socket_path("unexpected");
+        let target = path.with_extension("target");
+        fs::write(&target, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(listener_for(&path, unsafe { libc::getegid() }).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"untouched");
+        fs::remove_file(&path).unwrap();
+
+        fs::write(&path, b"untouched file").unwrap();
+        assert!(listener_for(&path, unsafe { libc::getegid() }).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"untouched file");
+        fs::remove_file(&path).unwrap();
+
+        fs::create_dir(&path).unwrap();
+        assert!(listener_for(&path, unsafe { libc::getegid() }).is_err());
+        assert!(path.is_dir());
+        fs::remove_dir(&path).unwrap();
+
+        let gid = unsafe { libc::getegid() };
+        let (listener, metadata) = listener_for(&path, gid).unwrap();
+        drop(listener);
+        let wrong_gid = gid.wrapping_add(1);
+        assert!(listener_for(&path, wrong_gid).is_err());
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), metadata.ino());
+        remove_broker_socket_if_same(&path, &metadata, unsafe { libc::geteuid() }, gid).unwrap();
+        fs::remove_file(path.parent().unwrap().join(".mayi-broker.lock")).ok();
+        fs::remove_file(target).unwrap();
+        fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn broker_start_lock_allows_only_one_instance() {
+        let path = test_socket_path("lock");
+        let first = broker_instance_lock(&path).unwrap();
+        let error = broker_instance_lock(&path).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        drop(first);
+        let _again = broker_instance_lock(&path).unwrap();
+        fs::remove_file(path.parent().unwrap().join(".mayi-broker.lock")).unwrap();
+        fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn protocol_v4_service_is_disabled_without_binding() {
+        let p = std::env::temp_dir().join(format!("mayi-v4-disabled-{}", std::process::id()));
+        let e = serve(p.clone(), false, None).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::Unsupported);
+        assert!(!p.exists());
     }
 }

@@ -1,0 +1,61 @@
+#!/bin/sh
+set -eu
+ensure_group() {
+    name=$1 gid=$2
+    if entry=$(getent group "$name"); then
+        actual=$(printf '%s\n' "$entry" | cut -d: -f3)
+        [ "$actual" = "$gid" ] || { echo "group $name has unexpected gid $actual" >&2; exit 1; }
+    else
+        addgroup --system --gid "$gid" "$name"
+    fi
+}
+ensure_user() {
+    name=$1 uid=$2 group=$3
+    if entry=$(getent passwd "$name"); then
+        actual_uid=$(printf '%s\n' "$entry" | cut -d: -f3)
+        actual_gid=$(printf '%s\n' "$entry" | cut -d: -f4)
+        expected_gid=$(getent group "$group" | cut -d: -f3)
+        [ "$actual_uid" = "$uid" ] || { echo "user $name has unexpected uid $actual_uid" >&2; exit 1; }
+        [ "$actual_gid" = "$expected_gid" ] || { echo "user $name has unexpected primary gid $actual_gid" >&2; exit 1; }
+    else
+        adduser --system --uid "$uid" --ingroup "$group" --no-create-home \
+            --disabled-password --shell /usr/sbin/nologin "$name"
+    fi
+}
+ensure_group mayi-requester 23011
+ensure_group mayi-broker-socket 23012
+ensure_group mayi-approver 23013
+# Human requester/approver identities are not package accounts; NSS role groups
+# authorize whichever peer UIDs the administrator assigns to those roles.
+ensure_user mayi-broker 23002 mayi-broker-socket
+ensure_membership() {
+    user=$1 group=$2
+    gid=$(getent group "$group" | cut -d: -f3)
+    groups=$(id -G "$user")
+    case " $groups " in
+        *" $gid "*) ;;
+        *) adduser --quiet "$user" "$group" ;;
+    esac
+}
+ensure_membership mayi-broker mayi-requester
+ensure_membership mayi-broker mayi-approver
+install -d -o root -g root -m 0755 /run/mayi
+install -d -o mayi-broker -g mayi-requester -m 0750 /run/mayi/request
+install -d -o mayi-broker -g mayi-approver -m 0750 /run/mayi/approval
+install -d -o root -g mayi-broker-socket -m 0750 /run/mayi/executor
+install -d -o root -g root -m 0700 /var/lib/mayi-privileged-executor
+deb-systemd-helper enable mayi-privileged-executor.service mayi-broker.service >/dev/null
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    if [ -n "${2:-}" ]; then
+        # Older packages stop services in prerm during upgrade. Restart the
+        # executor (which also starts it if already stopped), then restore the
+        # broker after executor readiness. deb-systemd-invoke respects policy.
+        deb-systemd-invoke restart mayi-privileged-executor.service
+        deb-systemd-invoke start mayi-broker.service
+    else
+        deb-systemd-invoke start mayi-privileged-executor.service
+        deb-systemd-invoke start mayi-broker.service
+    fi
+fi
+exit 0

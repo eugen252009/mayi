@@ -28,3 +28,11 @@ def test_exec_and_service_are_rejected_by_executor_schema(tmp_path):
         doc=request_document([op])
         p=subprocess.run(['executor/target/debug/mayi-executor','--stdio'],input=json.dumps(doc),text=True,capture_output=True,check=True)
         assert json.loads(p.stdout)['code']=='APPROVAL_SOCKET_REQUIRED'
+
+def test_protocol5_broker_hands_only_stored_exec_to_privileged_boundary():
+    broker=Path('executor/src/broker.rs').read_text()
+    assert 'ExecutionContext' not in broker
+    assert 'filesystem::' not in broker
+    assert 'call_privileged_executor(&challenge, &operation)' in broker
+    assert 'PRIVILEGED_EXECUTOR_SOCKET' in broker
+    assert 'r["execution"] = Value::String("EXECUTION_DISABLED".into())' in broker

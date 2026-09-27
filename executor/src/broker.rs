@@ -1,4 +1,4 @@
-//! Protocol-v5 broker-owned proposal and approval lifecycle. No execution exists here.
+//! Protocol-v5 broker-owned proposal, group-authenticated roles, approval lifecycle, and Exec handoff.
 use super::{peer_uid, validate_op, MAX_MESSAGE};
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Map, Value};
@@ -27,6 +27,164 @@ const VIEW_MAX_LIFETIME: u64 = 60;
 const WORKERS: usize = 8;
 const MAX_RENDERED: usize = 32768;
 const MAX_OPERATION: usize = 128 * 1024;
+const NSS_BUFFER_INITIAL: usize = 16 * 1024;
+const NSS_BUFFER_MAX: usize = 1024 * 1024;
+const MAX_NSS_GROUPS: usize = 65_536;
+static NSS_GROUP_LOOKUP: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Copy)]
+struct PeerCredentials {
+    pid: i32,
+    uid: u32,
+    gid: u32,
+}
+
+fn peer_credentials(stream: &UnixStream) -> io::Result<PeerCredentials> {
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut credentials as *mut libc::ucred).cast(),
+            &mut length,
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unexpected SO_PEERCRED size",
+        ));
+    }
+    Ok(PeerCredentials {
+        pid: credentials.pid,
+        uid: credentials.uid,
+        gid: credentials.gid,
+    })
+}
+
+/// None means no passwd/NSS account; Some reports membership using the NSS
+/// account's primary gid and supplementary groups, not client credentials.
+fn uid_in_group(uid: u32, role_gid: u32) -> io::Result<Option<bool>> {
+    let _guard = NSS_GROUP_LOOKUP
+        .lock()
+        .map_err(|_| io::Error::other("NSS group lookup lock poisoned"))?;
+    let mut passwd_buffer = vec![0u8; NSS_BUFFER_INITIAL];
+    let (username, primary_gid) = loop {
+        let mut account: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::null_mut();
+        let rc = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut account,
+                passwd_buffer.as_mut_ptr().cast(),
+                passwd_buffer.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE && passwd_buffer.len() < NSS_BUFFER_MAX {
+            passwd_buffer.resize((passwd_buffer.len() * 2).min(NSS_BUFFER_MAX), 0);
+            continue;
+        }
+        if rc != 0 {
+            return Err(io::Error::from_raw_os_error(rc));
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
+        if account.pw_name.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "NSS returned passwd entry without a username",
+            ));
+        }
+        let username = unsafe { std::ffi::CStr::from_ptr(account.pw_name) }.to_owned();
+        break (username, account.pw_gid);
+    };
+    if primary_gid == role_gid {
+        return Ok(Some(true));
+    }
+
+    let mut groups = vec![0 as libc::gid_t; 16];
+    loop {
+        let mut count = i32::try_from(groups.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "NSS group count overflow"))?;
+        let result = unsafe {
+            libc::getgrouplist(
+                username.as_ptr(),
+                primary_gid,
+                groups.as_mut_ptr(),
+                &mut count,
+            )
+        };
+        if result >= 0 {
+            let count = usize::try_from(count).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid NSS group count")
+            })?;
+            if count > groups.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "NSS returned more groups than allocated",
+                ));
+            }
+            return Ok(Some(groups[..count].contains(&(role_gid as libc::gid_t))));
+        }
+        let required = usize::try_from(count)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid NSS group count"))?;
+        if required <= groups.len() || required > MAX_NSS_GROUPS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "NSS group lookup failed or exceeded group limit",
+            ));
+        }
+        groups.resize(required, 0);
+    }
+}
+
+fn role_authorization(peer: PeerCredentials, role_gid: u32, approver: bool) -> Result<(), Value> {
+    let role = if approver { "approver" } else { "requester" };
+    let denied = |reason: String| {
+        let code = if approver {
+            "UNAUTHORIZED_APPROVER"
+        } else {
+            "UNAUTHORIZED_REQUESTER"
+        };
+        let mut response = response_error(code, &reason);
+        response["peer_pid"] = Value::from(peer.pid);
+        response["peer_uid"] = Value::from(peer.uid);
+        response["peer_gid"] = Value::from(peer.gid);
+        response
+    };
+    match uid_in_group(peer.uid, role_gid) {
+        Ok(Some(true)) => Ok(()),
+        Ok(Some(false)) => Err(denied(format!(
+            "peer UID {} is not a member of configured {role} group GID {role_gid}",
+            peer.uid
+        ))),
+        Ok(None) => Err(denied(format!(
+            "peer UID {} has no passwd/NSS account",
+            peer.uid
+        ))),
+        Err(error) => {
+            eprintln!(
+                "event=ROLE_LOOKUP_FAILED role={role} peer_pid={} peer_uid={} peer_gid={} error={}",
+                peer.pid,
+                peer.uid,
+                peer.gid,
+                safe(&error.to_string())
+            );
+            Err(response_error(
+                "INTERNAL_ERROR",
+                &format!("{role} group lookup failed: {error}"),
+            ))
+        }
+    }
+}
+
 struct Unique(Value);
 impl<'de> Deserialize<'de> for Unique {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -94,8 +252,52 @@ enum State {
     Pending,
     Approved,
     Denied,
+    Explained,
     Expired,
     Consumed,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QueueState {
+    PendingApproval,
+    WaitingDependency,
+    Ready,
+    Running,
+    Succeeded,
+    Failed,
+    Denied,
+    ExplainRequested,
+    Expired,
+    ExecutionUnknown,
+    Blocked,
+}
+impl QueueState {
+    fn terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded
+                | Self::Failed
+                | Self::Denied
+                | Self::ExplainRequested
+                | Self::Expired
+                | Self::ExecutionUnknown
+                | Self::Blocked
+        )
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::PendingApproval => "PENDING_APPROVAL",
+            Self::WaitingDependency => "WAITING_DEPENDENCY",
+            Self::Ready => "READY",
+            Self::Running => "RUNNING",
+            Self::Succeeded => "SUCCEEDED",
+            Self::Failed => "FAILED",
+            Self::Denied => "DENIED",
+            Self::ExplainRequested => "EXPLAIN_REQUESTED",
+            Self::Expired => "EXPIRED",
+            Self::ExecutionUnknown => "EXECUTION_UNKNOWN",
+            Self::Blocked => "BLOCKED",
+        }
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PolicyDecision {
@@ -105,7 +307,7 @@ enum PolicyDecision {
 fn broker_policy(op: &str) -> PolicyDecision {
     if matches!(
         op,
-        "file_patch" | "file_create" | "file_delete" | "file_move"
+        "exec" | "file_patch" | "file_create" | "file_delete" | "file_move"
     ) {
         PolicyDecision::RequireHumanApproval
     } else {
@@ -142,11 +344,16 @@ struct Request {
     deadline: Instant,
     ops: Vec<Value>,
     state: State,
+    request_id: Option<String>,
+    dependencies: Vec<String>,
+    queue_state: Option<QueueState>,
+    approver_uid: Option<u32>,
+    child_exit_status: Option<i32>,
+    mayi_result: Option<i32>,
+    blocking_dependency: Option<String>,
 }
 struct Broker {
     instance: String,
-    request_uid: u32,
-    approver_uid: u32,
     challenge_counter: u64,
     view_counter: u64,
     pending: HashMap<String, Request>,
@@ -161,6 +368,16 @@ fn random_id() -> io::Result<String> {
     let mut b = [0u8; 24];
     fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
     Ok(hex::encode(b))
+}
+fn random_request_id() -> io::Result<String> {
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(format!("rq_{}", hex::encode(bytes)))
+}
+fn valid_request_id(value: &str) -> bool {
+    value
+        .strip_prefix("rq_")
+        .is_some_and(|tail| valid_hex(Some(&Value::String(tail.to_owned())), 32))
 }
 fn fresh_token(counter: &mut u64) -> io::Result<String> {
     let mut entropy = [0u8; 16];
@@ -219,6 +436,7 @@ fn transition(current: &mut State, next: State) -> Result<(), ()> {
             | (State::Pending, State::Approved)
             | (State::Pending, State::Denied)
             | (State::Pending, State::Expired)
+            | (State::Pending, State::Explained)
             | (State::Approved, State::Expired)
             | (State::Approved, State::Consumed)
     );
@@ -245,7 +463,9 @@ fn transition_view(current: &mut ViewState, next: ViewState) -> Result<(), ()> {
 fn terminal_safe(s: &str) -> String {
     s.chars()
         .map(|c| {
-            if c.is_control() || !c.is_ascii() {
+            if c == '\n' {
+                "\n".to_string()
+            } else if c.is_control() || !c.is_ascii() {
                 format!("\\u{{{:04x}}}", c as u32)
             } else {
                 c.to_string()
@@ -284,6 +504,7 @@ fn strict_operation(o: &Value) -> bool {
         return false;
     };
     let keys = match t {
+        "exec" => &["type", "executable", "argv"][..],
         "file_patch" => &[
             "type",
             "path",
@@ -304,7 +525,44 @@ fn strict_operation(o: &Value) -> bool {
             return false;
         }
     }
-    if t == "file_patch" {
+    if t == "exec" {
+        let Some(executable) = m.get("executable").and_then(Value::as_str) else {
+            return false;
+        };
+        let trusted = [
+            "/usr/bin",
+            "/usr/sbin",
+            "/bin",
+            "/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+        ];
+        let Some(argv) = m.get("argv").and_then(Value::as_array) else {
+            return false;
+        };
+        let mut total = 0usize;
+        if !canonical_path(Some(&Value::String(executable.to_owned())))
+            || executable.len() > 4096
+            || !trusted
+                .iter()
+                .any(|directory| Path::new(executable).parent() == Some(Path::new(directory)))
+            || fs::canonicalize(executable).ok().as_deref() != Some(Path::new(executable))
+            || argv.is_empty()
+            || argv.len() > 128
+        {
+            return false;
+        }
+        for arg in argv {
+            let Some(value) = arg.as_str() else {
+                return false;
+            };
+            total = total.saturating_add(value.len());
+            if value.contains('\0') || value.len() > 1024 || total > 2048 {
+                return false;
+            }
+        }
+        true
+    } else if t == "file_patch" {
         m.get("patch").and_then(Value::as_array).is_some_and(|a| {
             !a.is_empty()
                 && a.iter().all(|e| {
@@ -320,11 +578,49 @@ fn strict_operation(o: &Value) -> bool {
     }
 }
 impl Broker {
-    fn new(request_uid: u32, approver_uid: u32) -> io::Result<Self> {
+    fn dependency_graph_acyclic(&self, new_id: &str, dependencies: &[String]) -> bool {
+        fn visit(
+            broker: &Broker,
+            new_id: &str,
+            id: &str,
+            active: &mut HashSet<String>,
+            done: &mut HashSet<String>,
+        ) -> bool {
+            if id == new_id {
+                return false;
+            }
+            if done.contains(id) {
+                return true;
+            }
+            if !active.insert(id.to_owned()) {
+                return false;
+            }
+            let Some(request) = broker
+                .pending
+                .values()
+                .find(|request| request.request_id.as_deref() == Some(id))
+            else {
+                active.remove(id);
+                return true;
+            };
+            for dependency in &request.dependencies {
+                if !visit(broker, new_id, dependency, active, done) {
+                    return false;
+                }
+            }
+            active.remove(id);
+            done.insert(id.to_owned());
+            true
+        }
+        let mut active = HashSet::new();
+        let mut done = HashSet::new();
+        dependencies
+            .iter()
+            .all(|id| visit(self, new_id, id, &mut active, &mut done))
+    }
+    fn new() -> io::Result<Self> {
         Ok(Self {
             instance: random_id()?,
-            request_uid,
-            approver_uid,
             challenge_counter: 0,
             view_counter: 0,
             pending: HashMap::new(),
@@ -333,8 +629,15 @@ impl Broker {
     }
     fn expire(&mut self) {
         for r in self.pending.values_mut() {
-            if matches!(r.state, State::Pending | State::Approved) && Instant::now() >= r.deadline {
+            if matches!(r.state, State::Pending | State::Approved)
+                && r.queue_state != Some(QueueState::Running)
+                && Instant::now() >= r.deadline
+            {
                 let _ = transition(&mut r.state, State::Expired);
+                if r.queue_state.is_some() {
+                    r.queue_state = Some(QueueState::Expired);
+                    r.mayi_result = Some(11);
+                }
                 eprintln!("event=EXPIRED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={}",r.instance,r.challenge,r.digest,r.requester,r.target_uid,r.target_gid);
             }
         }
@@ -353,29 +656,34 @@ impl Broker {
     }
     fn propose(&mut self, v: &Value, peer: u32) -> Value {
         self.expire();
-        if peer == self.approver_uid {
-            return response_error(
-                "ROLE_SEPARATION_REQUIRED",
-                "approver UID cannot submit requests",
-            );
-        }
-        if peer != self.request_uid {
-            return response_error(
-                "UNAUTHORIZED_REQUESTER",
-                "peer UID is not configured requester",
-            );
-        }
         let Some(o) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
         };
-        if !only_keys(o, &["type", "protocol", "target", "operations"])
-            || o.get("type").and_then(Value::as_str) != Some("PROPOSE_REQUEST")
-            || o.get("protocol").and_then(Value::as_i64) != Some(VERSION)
-        {
+        let queued = match o.get("type").and_then(Value::as_str) {
+            Some("PROPOSE_REQUEST") => false,
+            Some("QUEUE_REQUEST") => true,
+            _ => return response_error("INVALID_PROTOCOL", "invalid proposal type"),
+        };
+        let keys = if queued {
+            &["type", "protocol", "target", "operations", "dependencies"][..]
+        } else {
+            &["type", "protocol", "target", "operations"][..]
+        };
+        if !only_keys(o, keys) || o.get("protocol").and_then(Value::as_i64) != Some(VERSION) {
             return response_error("INVALID_PROTOCOL", "invalid proposal schema");
         }
+        let referenced: HashSet<String> = self
+            .pending
+            .values()
+            .flat_map(|r| r.dependencies.iter().cloned())
+            .collect();
+        let retain_time = Instant::now();
         self.pending.retain(|_, r| {
-            matches!(r.state, State::Pending | State::Approved) || Instant::now() < r.deadline
+            matches!(r.state, State::Pending | State::Approved)
+                || retain_time < r.deadline
+                || r.request_id
+                    .as_ref()
+                    .is_some_and(|id| referenced.contains(id))
         });
         let active = self
             .pending
@@ -411,6 +719,47 @@ impl Broker {
         let Some(ops) = o.get("operations").and_then(Value::as_array) else {
             return response_error("INVALID_PROTOCOL", "operations array required");
         };
+        let mut dependencies = Vec::new();
+        if queued {
+            let Some(values) = o.get("dependencies").and_then(Value::as_array) else {
+                return response_error("INVALID_DEPENDENCY", "dependencies array required");
+            };
+            let mut seen = HashSet::new();
+            for value in values {
+                let Some(id) = value.as_str() else {
+                    return response_error("INVALID_DEPENDENCY", "dependency ID must be a string");
+                };
+                if !valid_request_id(id) || !seen.insert(id.to_owned()) {
+                    return response_error(
+                        "INVALID_DEPENDENCY",
+                        "invalid or duplicate dependency ID",
+                    );
+                }
+                let Some(dep) = self
+                    .pending
+                    .values()
+                    .find(|request| request.request_id.as_deref() == Some(id))
+                else {
+                    return response_error(
+                        "DEPENDENCY_NOT_FOUND",
+                        "dependency request is unknown or no longer retained",
+                    );
+                };
+                if dep.requester != peer {
+                    return response_error(
+                        "DEPENDENCY_OWNER_MISMATCH",
+                        "dependencies must belong to the authenticated requester UID",
+                    );
+                }
+                if dep.queue_state.is_none() {
+                    return response_error(
+                        "INVALID_DEPENDENCY",
+                        "dependency is not a queued request",
+                    );
+                }
+                dependencies.push(id.to_owned());
+            }
+        }
         if ops.len() != 1 {
             return response_error(
                 "INVALID_OPERATION_COUNT",
@@ -418,6 +767,12 @@ impl Broker {
             );
         }
         let op = &ops[0];
+        if queued && op.get("type").and_then(Value::as_str) != Some("exec") {
+            return response_error(
+                "UNSUPPORTED_OPERATION",
+                "queue accepts exact exec requests only",
+            );
+        }
         if op.to_string().len() > MAX_OPERATION {
             return response_error("OPERATION_TOO_LARGE", "operation exceeds limit");
         }
@@ -440,9 +795,28 @@ impl Broker {
             Ok(id) => id,
             Err(_) => return response_error("INTERNAL_ERROR", "challenge generation failed"),
         };
-        let ttl = Duration::from_secs(MAX_TTL);
-        let expires = now() + MAX_TTL as i64;
-        let material = json!({"broker_instance_id":self.instance,"challenge_id":challenge,"expires_at":expires,"operations":ops,"protocol":VERSION,"requester_uid":peer,"target_gid":gid,"target_uid":uid});
+        let request_id = if queued {
+            match random_request_id() {
+                Ok(id)
+                    if !self
+                        .pending
+                        .values()
+                        .any(|r| r.request_id.as_deref() == Some(&id)) =>
+                {
+                    Some(id)
+                }
+                _ => return response_error("INTERNAL_ERROR", "request ID generation failed"),
+            }
+        } else {
+            None
+        };
+        let ttl_seconds = if queued { 24 * 60 * 60 } else { MAX_TTL };
+        let ttl = Duration::from_secs(ttl_seconds);
+        let expires = now() + ttl_seconds as i64;
+        let material = json!({"broker_instance_id":self.instance,"challenge_id":challenge,"dependencies":dependencies,"expires_at":expires,"operations":ops,"protocol":VERSION,"requester_uid":peer,"target_gid":gid,"target_uid":uid});
+        if queued && !self.dependency_graph_acyclic(request_id.as_deref().unwrap(), &dependencies) {
+            return response_error("DEPENDENCY_CYCLE", "dependency graph must be acyclic");
+        }
         let mut h = Sha256::new();
         h.update(canonical(&material).as_bytes());
         let digest = hex::encode(h.finalize());
@@ -457,6 +831,13 @@ impl Broker {
             deadline: Instant::now() + ttl,
             ops: ops.clone(),
             state: State::Proposed,
+            request_id: request_id.clone(),
+            dependencies: dependencies.clone(),
+            queue_state: queued.then_some(QueueState::PendingApproval),
+            approver_uid: None,
+            child_exit_status: None,
+            mayi_result: None,
+            blocking_dependency: None,
         };
         let mut req = req;
         if transition(&mut req.state, State::Pending).is_err() {
@@ -464,6 +845,7 @@ impl Broker {
         }
         let path = ops[0]
             .get("path")
+            .or_else(|| ops[0].get("executable"))
             .or_else(|| ops[0].get("source"))
             .and_then(Value::as_str)
             .unwrap_or("");
@@ -472,12 +854,39 @@ impl Broker {
         let path_id = hex::encode(ph.finalize());
         eprintln!("event=PROPOSED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={} operation={} path_id={} proposal_time={}",self.instance,challenge,digest,peer,uid,gid,ty,path_id,now());
         self.pending.insert(challenge.clone(), req);
-        json!({"ok":true,"protocol":VERSION,"type":"PROPOSE_RESPONSE","broker_instance_id":self.instance,"challenge_id":challenge,"request_digest":digest,"status":"PENDING_APPROVAL","expires_at":expires})
+        if let Some(request_id) = request_id {
+            eprintln!("event=QUEUE_SUBMITTED request_id={} broker_instance_id={} challenge_id={} requester_uid={} dependencies={:?}", request_id, self.instance, challenge, peer, dependencies);
+            json!({"ok":true,"protocol":VERSION,"type":"QUEUE_RESPONSE","request_id":request_id,"broker_instance_id":self.instance,"challenge_id":challenge,"request_digest":digest,"status":"PENDING_APPROVAL","expires_at":expires})
+        } else {
+            json!({"ok":true,"protocol":VERSION,"type":"PROPOSE_RESPONSE","broker_instance_id":self.instance,"challenge_id":challenge,"request_digest":digest,"status":"PENDING_APPROVAL","expires_at":expires})
+        }
     }
     fn render(&self, r: &Request, _view_id: &str, view_expires: i64) -> String {
         let mut out=format!("MAYI REQUEST\nBroker: {}\nChallenge: {}\nDigest: {}\nView expires: {}\nRequester UID: {}\nTarget UID/GID: {}/{}\nRequest expires: {}\n",r.instance,r.challenge,r.digest,view_expires,r.requester,r.target_uid,r.target_gid,r.expires);
         for op in &r.ops {
             let ty = op["type"].as_str().unwrap_or("unknown");
+            if ty == "exec" {
+                out.push_str("The agent requests privileged execution:\nExecutor identity: UID 0, primary GID 23012\nRequest target UID/GID (metadata only): ");
+                out.push_str(&format!(
+                    "{}/{}\n\nExecutable:\n",
+                    r.target_uid, r.target_gid
+                ));
+                let executable = op["executable"].as_str().unwrap_or("<invalid>");
+                out.push_str(&safe(
+                    &serde_json::to_string(executable).unwrap_or_else(|_| "\"<invalid>\"".into()),
+                ));
+                out.push_str("\n\nArguments:\n");
+                if let Some(argv) = op["argv"].as_array() {
+                    for (index, arg) in argv.iter().enumerate() {
+                        let value = arg.as_str().unwrap_or("<invalid>");
+                        let encoded =
+                            serde_json::to_string(value).unwrap_or_else(|_| "\"<invalid>\"".into());
+                        out.push_str(&format!("[{}] {}\n", index, safe(&encoded)));
+                    }
+                }
+                out.push_str("\n[y] allow once\n[n] deny\n[e] explain\n");
+                continue;
+            }
             out.push_str(&format!("Operation: {}\n", safe(ty)));
             for key in [
                 "path",
@@ -511,12 +920,6 @@ impl Broker {
     }
     fn authority(&mut self, v: &Value, peer: u32) -> Value {
         self.expire();
-        if peer != self.approver_uid {
-            return response_error(
-                "UNAUTHORIZED_APPROVER",
-                "peer UID is not configured approver",
-            );
-        }
         let Some(o) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
         };
@@ -528,8 +931,58 @@ impl Broker {
                 {
                     return response_error("INVALID_PROTOCOL", "invalid list message");
                 };
-                let items:Vec<_>=self.pending.values().filter(|r|r.state==State::Pending).map(|r|json!({"challenge_id":r.challenge,"request_digest":r.digest,"requester_uid":r.requester,"expires_at":r.expires})).collect();
-                json!({"ok":true,"protocol":VERSION,"broker_instance_id":self.instance,"pending":items})
+                let mut included: HashSet<String> = self
+                    .pending
+                    .values()
+                    .filter(|r| {
+                        r.queue_state == Some(QueueState::PendingApproval)
+                            || (r.queue_state.is_none() && r.state == State::Pending)
+                    })
+                    .map(|r| r.challenge.clone())
+                    .collect();
+                loop {
+                    let before = included.len();
+                    let dependencies: Vec<String> = self
+                        .pending
+                        .iter()
+                        .filter(|(key, _)| included.contains(*key))
+                        .flat_map(|(_, r)| r.dependencies.iter().cloned())
+                        .collect();
+                    for id in dependencies {
+                        if let Some((challenge, _)) = self
+                            .pending
+                            .iter()
+                            .find(|(_, r)| r.request_id.as_deref() == Some(id.as_str()))
+                        {
+                            included.insert(challenge.clone());
+                        }
+                    }
+                    let included_ids: HashSet<String> = self
+                        .pending
+                        .iter()
+                        .filter(|(key, _)| included.contains(*key))
+                        .filter_map(|(_, r)| r.request_id.clone())
+                        .collect();
+                    let descendants: Vec<String> = self
+                        .pending
+                        .iter()
+                        .filter(|(_, r)| {
+                            r.dependencies.iter().any(|dep| included_ids.contains(dep))
+                        })
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    included.extend(descendants);
+                    if included.len() == before {
+                        break;
+                    }
+                }
+                let mut rows: Vec<_> = self.pending.values().filter(|r| included.contains(&r.challenge)).map(|r| json!({
+                    "challenge_id":r.challenge,"request_digest":r.digest,"requester_uid":r.requester,"expires_at":r.expires,
+                    "request_id":r.request_id,"queue_state":r.queue_state.map(QueueState::label).unwrap_or("PENDING_APPROVAL"),
+                    "dependencies":r.dependencies,"operations":r.ops,"approver_uid":r.approver_uid,"blocking_dependency":r.blocking_dependency
+                })).collect();
+                rows.sort_by_key(|row| row["request_id"].as_str().unwrap_or("").to_owned());
+                json!({"ok":true,"protocol":VERSION,"broker_instance_id":self.instance,"pending":rows})
             }
             "GET_CHALLENGE" => {
                 if !only_keys(
@@ -663,7 +1116,7 @@ impl Broker {
                 let request_state = match ty {
                     "APPROVE_CHALLENGE" => Some(State::Approved),
                     "DENY_CHALLENGE" => Some(State::Denied),
-                    _ => None,
+                    _ => Some(State::Explained),
                 };
                 if let Some(next) = request_state {
                     let req = self.pending.get_mut(id).unwrap();
@@ -672,6 +1125,21 @@ impl Broker {
                             "INVALID_STATE_TRANSITION",
                             "request transition rejected",
                         );
+                    }
+                    if req.queue_state.is_some() {
+                        req.approver_uid = Some(peer);
+                        req.queue_state = Some(match ty {
+                            "APPROVE_CHALLENGE" if req.dependencies.is_empty() => QueueState::Ready,
+                            "APPROVE_CHALLENGE" => QueueState::WaitingDependency,
+                            "DENY_CHALLENGE" => {
+                                req.mayi_result = Some(10);
+                                QueueState::Denied
+                            }
+                            _ => {
+                                req.mayi_result = Some(20);
+                                QueueState::ExplainRequested
+                            }
+                        });
                     }
                 }
                 let view = self.views.get_mut(view_id).unwrap();
@@ -697,18 +1165,6 @@ impl Broker {
     }
     fn consume_request(&mut self, v: &Value, peer: u32) -> Value {
         self.expire();
-        if peer == self.approver_uid {
-            return response_error(
-                "ROLE_SEPARATION_REQUIRED",
-                "approver UID cannot consume requests",
-            );
-        }
-        if peer != self.request_uid {
-            return response_error(
-                "UNAUTHORIZED_REQUESTER",
-                "peer UID is not configured requester",
-            );
-        }
         let Some(o) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
         };
@@ -760,6 +1216,12 @@ impl Broker {
         if r.digest != digest {
             return response_error("CHALLENGE_MISMATCH", "digest mismatch");
         }
+        if r.queue_state.is_some() {
+            return response_error(
+                "QUEUED_AUTO_EXECUTION",
+                "queued requests execute only through the broker scheduler",
+            );
+        }
         match r.state {
             State::Approved => {
                 if transition(&mut r.state, State::Consumed).is_err() {
@@ -772,12 +1234,100 @@ impl Broker {
                     "event=CONSUMED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={}",
                     r.instance, r.challenge, r.digest, r.requester, r.target_uid, r.target_gid
                 );
-                json!({"ok":true,"protocol":VERSION,"status":"CONSUMED","state":"CONSUMED","execution":"EXECUTION_DISABLED","broker_instance_id":r.instance,"challenge_id":r.challenge,"request_digest":r.digest})
+                json!({"ok":true,"protocol":VERSION,"status":"CONSUMED","state":"CONSUMED","execution":"EXECUTION_PENDING","broker_instance_id":r.instance,"challenge_id":r.challenge,"request_digest":r.digest})
             }
             State::Consumed => response_error("ALREADY_CONSUMED", "approval already consumed"),
             State::Expired => response_error("REQUEST_EXPIRED", "challenge expired"),
             _ => response_error("INVALID_STATE_TRANSITION", "request not approved"),
         }
+    }
+
+    fn queue_status_request(&mut self, v: &Value, peer: u32) -> Value {
+        self.expire();
+        let Some(object) = v.as_object() else {
+            return response_error("INVALID_PROTOCOL", "message must be object");
+        };
+        if !only_keys(object, &["type", "protocol", "request_id"])
+            || object.get("type").and_then(Value::as_str) != Some("GET_QUEUE_STATUS")
+            || object.get("protocol").and_then(Value::as_i64) != Some(VERSION)
+        {
+            return response_error("INVALID_PROTOCOL", "invalid queue status request");
+        }
+        let Some(id) = object.get("request_id").and_then(Value::as_str) else {
+            return response_error("INVALID_REQUEST_ID", "request ID required");
+        };
+        if !valid_request_id(id) {
+            return response_error("INVALID_REQUEST_ID", "invalid request ID");
+        }
+        let Some(request) = self
+            .pending
+            .values()
+            .find(|request| request.request_id.as_deref() == Some(id))
+        else {
+            return response_error(
+                "REQUEST_NOT_FOUND",
+                "request is unknown, expired, or invalidated by broker restart",
+            );
+        };
+        if request.requester != peer {
+            return response_error("UNAUTHORIZED_REQUESTER", "request belongs to another UID");
+        }
+        let Some(state) = request.queue_state else {
+            return response_error("INVALID_REQUEST_ID", "request is not queued");
+        };
+        json!({"ok":true,"protocol":VERSION,"request_id":id,"requester_uid":peer,"state":state.label(),"mayi_result":request.mayi_result,"child_exit_status":request.child_exit_status,"blocking_dependency":request.blocking_dependency,"dependencies":request.dependencies})
+    }
+    fn status_request(&mut self, v: &Value, peer: u32) -> Value {
+        self.expire();
+        let Some(o) = v.as_object() else {
+            return response_error("INVALID_PROTOCOL", "message must be object");
+        };
+        if !only_keys(
+            o,
+            &[
+                "type",
+                "protocol",
+                "broker_instance_id",
+                "challenge_id",
+                "request_digest",
+            ],
+        ) || o.get("type").and_then(Value::as_str) != Some("GET_REQUEST_STATUS")
+            || o.get("protocol").and_then(Value::as_i64) != Some(VERSION)
+        {
+            return response_error("INVALID_PROTOCOL", "invalid status request");
+        }
+        let (Some(instance), Some(id), Some(digest)) = (
+            o.get("broker_instance_id").and_then(Value::as_str),
+            o.get("challenge_id").and_then(Value::as_str),
+            o.get("request_digest").and_then(Value::as_str),
+        ) else {
+            return response_error("INVALID_PROTOCOL", "status identifiers required");
+        };
+        if instance != self.instance {
+            return response_error("BROKER_INSTANCE_MISMATCH", "broker instance mismatch");
+        }
+        let Some(request) = self.pending.get(id) else {
+            return response_error("CHALLENGE_NOT_FOUND", "challenge unavailable");
+        };
+        if request.requester != peer {
+            return response_error(
+                "UNAUTHORIZED_REQUESTER",
+                "consumer UID does not own this request",
+            );
+        }
+        if request.instance != instance || request.challenge != id || request.digest != digest {
+            return response_error("CHALLENGE_MISMATCH", "request binding mismatch");
+        }
+        let status = match &request.state {
+            State::Pending => "PENDING",
+            State::Approved => "APPROVED",
+            State::Denied => "DENIED",
+            State::Explained => "EXPLAINED",
+            State::Expired => "EXPIRED",
+            State::Consumed => "CONSUMED",
+            State::Proposed => "PENDING",
+        };
+        json!({"ok":true,"protocol":VERSION,"status":status,"broker_instance_id":instance,"challenge_id":id,"request_digest":digest})
     }
 }
 fn read_exact_deadline(s: &mut UnixStream, buf: &mut [u8], deadline: Instant) -> io::Result<()> {
@@ -854,7 +1404,7 @@ fn console_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> 
     let mut s = UnixStream::connect(path)?;
     if peer_uid(&s).ok() != Some(broker_uid) {
         return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::InvalidData,
             "unexpected broker peer UID",
         ));
     }
@@ -869,6 +1419,37 @@ fn console_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> 
         ));
     }
     Ok(v)
+}
+fn approval_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> {
+    console_call(path, broker_uid, msg).map_err(|error| {
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("MAYI_UNAUTHORIZED_APPROVER: approval socket access denied: {error}"),
+            )
+        } else {
+            error
+        }
+    })
+}
+fn check_authority_response(response: &Value) -> io::Result<()> {
+    if response["ok"] == true {
+        return Ok(());
+    }
+    let code = response["code"].as_str().unwrap_or("INTERNAL_ERROR");
+    let message = response["message"]
+        .as_str()
+        .unwrap_or("broker rejected request");
+    if code == "UNAUTHORIZED_APPROVER" {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("MAYI_UNAUTHORIZED_APPROVER: {message}"),
+        ));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("MAYI_BROKER_REJECTED: {code}: {message}"),
+    ))
 }
 struct TerminalMode {
     fd: std::os::fd::RawFd,
@@ -929,6 +1510,9 @@ fn poll_input(fd: i32, timeout_ms: i32) -> io::Result<bool> {
     }
 }
 fn read_tty_frame() -> io::Result<Vec<u8>> {
+    read_tty_frame_with_poll(|| Ok(()))
+}
+fn read_tty_frame_with_poll<F: FnMut() -> io::Result<()>>(mut on_poll: F) -> io::Result<Vec<u8>> {
     const MAX_INPUT: usize = 64;
     const QUIET_MS: u64 = 100;
     let fd = io::stdin().as_raw_fd();
@@ -944,12 +1528,10 @@ fn read_tty_frame() -> io::Result<Vec<u8>> {
                 "terminal input timed out",
             ));
         }
-        let wait_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
+        let wait_ms = remaining.as_millis().min(1000) as i32;
         if !poll_input(fd, wait_ms)? {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "terminal input timed out",
-            ));
+            on_poll()?;
+            continue;
         }
         let read = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), byte.len()) };
         if read < 0 {
@@ -1017,13 +1599,14 @@ fn read_tty_frame() -> io::Result<Vec<u8>> {
 }
 fn parse_decision(frame: &[u8]) -> Option<&'static str> {
     match frame {
-        b"approve" => Some("APPROVE_CHALLENGE"),
-        b"deny" => Some("DENY_CHALLENGE"),
-        b"explain" => Some("EXPLAIN_CHALLENGE"),
+        b"y" | b"approve" | b"yes" => Some("APPROVE_CHALLENGE"),
+        b"n" | b"deny" | b"no" => Some("DENY_CHALLENGE"),
+        b"e" | b"explain" => Some("EXPLAIN_CHALLENGE"),
         _ => None,
     }
 }
-pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
+#[allow(dead_code)]
+fn approval_console_legacy(path: PathBuf, broker_uid: u32) -> io::Result<()> {
     if unsafe { libc::geteuid() } == 0
         || unsafe { libc::isatty(libc::STDIN_FILENO) } != 1
         || unsafe { libc::isatty(libc::STDOUT_FILENO) } != 1
@@ -1033,14 +1616,16 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
             "approval console requires an unprivileged interactive terminal",
         ));
     }
-    let list = console_call(
+    let list = approval_call(
         &path,
         broker_uid,
         &json!({"type":"LIST_PENDING","protocol":VERSION}),
     )?;
-    if list["ok"] != true || !valid_hex(list.get("broker_instance_id"), 48) {
-        return Err(io::Error::other(
-            "broker rejected or miscorrelated pending-list request",
+    check_authority_response(&list)?;
+    if !valid_hex(list.get("broker_instance_id"), 48) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pending-list response correlation mismatch",
         ));
     }
     let instance = list["broker_instance_id"].as_str().unwrap().to_owned();
@@ -1116,11 +1701,12 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
     }
     let challenge = row["challenge_id"].as_str().unwrap();
     let digest = row["request_digest"].as_str().unwrap();
-    let view = console_call(
+    let view = approval_call(
         &path,
         broker_uid,
         &json!({"type":"GET_CHALLENGE","protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge}),
     )?;
+    check_authority_response(&view)?;
     if view["ok"] != true
         || view["type"] != "CHALLENGE_VIEW"
         || view["broker_instance_id"] != instance
@@ -1146,16 +1732,17 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
                 .ok_or_else(|| io::Error::other("missing trusted rendering"))?
         )
     );
-    print!("Decision [approve/deny/explain; input is not echoed]: ");
+    print!("Decision [y] allow once / [n] deny / [e] explain: ");
     io::stdout().flush()?;
     let frame = read_tty_frame()?;
     let decision = parse_decision(&frame)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid decision"))?;
-    let response = console_call(
+    let response = approval_call(
         &path,
         broker_uid,
         &json!({"type":decision,"protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge,"request_digest":digest,"view_id":view["view_id"]}),
     )?;
+    check_authority_response(&response)?;
     if response["broker_instance_id"] != instance
         || response["challenge_id"] != challenge
         || response["request_digest"] != digest
@@ -1175,15 +1762,668 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
         ));
     }
     println!(
-        "{} (filesystem execution remains disabled)",
+        "{} (the requester must consume an approval before execution)",
         terminal_safe(response["status"].as_str().unwrap_or("REJECTED"))
     );
     Ok(())
 }
-fn handle(mut s: UnixStream, broker: &Arc<Mutex<Broker>>, approval: bool) -> io::Result<()> {
+fn console_snapshot(path: &Path, broker_uid: u32) -> io::Result<(String, Vec<Value>)> {
+    let response = approval_call(
+        path,
+        broker_uid,
+        &json!({"type":"LIST_PENDING","protocol":VERSION}),
+    )?;
+    check_authority_response(&response)?;
+    if !valid_hex(response.get("broker_instance_id"), 48) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid broker identity in pending list",
+        ));
+    }
+    let instance = response["broker_instance_id"].as_str().unwrap().to_owned();
+    let rows = response
+        .get("pending")
+        .and_then(Value::as_array)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid pending list"))?;
+    if rows.len() > MAX_PENDING {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pending list exceeds broker limit",
+        ));
+    }
+    let mut challenges = HashSet::new();
+    let mut request_ids = HashSet::new();
+    for row in rows {
+        if !valid_hex(row.get("challenge_id"), 48)
+            || !valid_hex(row.get("request_digest"), 64)
+            || row.get("requester_uid").and_then(Value::as_u64).is_none()
+            || row.get("queue_state").and_then(Value::as_str).is_none()
+            || row.get("dependencies").and_then(Value::as_array).is_none()
+            || row
+                .get("operations")
+                .and_then(Value::as_array)
+                .is_none_or(|ops| ops.len() != 1 || ops[0]["type"] != "exec")
+            || !challenges.insert(row["challenge_id"].as_str().unwrap().to_owned())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid pending request row",
+            ));
+        }
+        if let Some(id) = row.get("request_id").and_then(Value::as_str) {
+            if !valid_request_id(id) || !request_ids.insert(id.to_owned()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid or duplicate request ID in pending list",
+                ));
+            }
+        }
+        for dep in row["dependencies"].as_array().unwrap() {
+            if dep.as_str().is_none_or(|id| !valid_request_id(id)) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid dependency ID in pending list",
+                ));
+            }
+        }
+    }
+    Ok((instance, rows.clone()))
+}
+fn console_row_key(row: &Value) -> String {
+    row["request_id"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("sync:{}", row["challenge_id"].as_str().unwrap_or("")))
+}
+fn console_components(rows: &[Value]) -> io::Result<Vec<Vec<usize>>> {
+    let by_id: HashMap<String, usize> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| row["request_id"].as_str().map(|id| (id.to_owned(), i)))
+        .collect();
+    let mut edges = vec![HashSet::<usize>::new(); rows.len()];
+    for (i, row) in rows.iter().enumerate() {
+        for dependency in row["dependencies"].as_array().unwrap() {
+            let id = dependency.as_str().unwrap();
+            let parent = *by_id.get(id).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "pending list omitted a dependency",
+                )
+            })?;
+            edges[i].insert(parent);
+            edges[parent].insert(i);
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut components = Vec::new();
+    for start in 0..rows.len() {
+        if !seen.insert(start) {
+            continue;
+        }
+        let mut component = vec![start];
+        let mut cursor = 0;
+        while cursor < component.len() {
+            let current = component[cursor];
+            cursor += 1;
+            for &next in &edges[current] {
+                if seen.insert(next) {
+                    component.push(next);
+                }
+            }
+        }
+        let mut remaining: HashSet<usize> = component.iter().copied().collect();
+        let mut order = Vec::new();
+        while !remaining.is_empty() {
+            let mut ready: Vec<usize> = remaining
+                .iter()
+                .copied()
+                .filter(|index| {
+                    rows[*index]["dependencies"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|dep| {
+                            by_id
+                                .get(dep.as_str().unwrap())
+                                .is_some_and(|parent| !remaining.contains(parent))
+                        })
+                })
+                .collect();
+            if ready.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "dependency graph cycle in broker listing",
+                ));
+            }
+            ready.sort_by_key(|i| console_row_key(&rows[*i]));
+            for index in ready {
+                remaining.remove(&index);
+                order.push(index);
+            }
+        }
+        if order
+            .iter()
+            .any(|i| rows[*i]["queue_state"] == "PENDING_APPROVAL")
+        {
+            components.push(order);
+        }
+    }
+    components.sort_by_key(|component| {
+        component
+            .first()
+            .map(|i| console_row_key(&rows[*i]))
+            .unwrap_or_default()
+    });
+    Ok(components)
+}
+fn console_signature(rows: &[Value], component: &[usize]) -> String {
+    component
+        .iter()
+        .map(|i| {
+            format!(
+                "{}:{}",
+                console_row_key(&rows[*i]),
+                rows[*i]["queue_state"].as_str().unwrap_or("?")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+fn print_console_component(rows: &[Value], component: &[usize]) {
+    println!("\nCommands: {}", component.len());
+    let mut index_by_id = HashMap::new();
+    for (index, row_index) in component.iter().enumerate() {
+        if let Some(id) = rows[*row_index]["request_id"].as_str() {
+            index_by_id.insert(id.to_owned(), index);
+        }
+    }
+    let mut outdegree = vec![0usize; component.len()];
+    for row_index in component {
+        for dep in rows[*row_index]["dependencies"].as_array().unwrap() {
+            if let Some(parent) = index_by_id.get(dep.as_str().unwrap()) {
+                outdegree[*parent] += 1;
+            }
+        }
+    }
+    let linear = component.iter().enumerate().all(|(i, row_index)| {
+        let deps = rows[*row_index]["dependencies"].as_array().unwrap();
+        deps.len() <= 1 && outdegree[i] <= 1
+    });
+    for (index, row_index) in component.iter().enumerate() {
+        let row = &rows[*row_index];
+        let operation = &row["operations"][0];
+        println!(
+            "[{}] {}  ({})",
+            index,
+            terminal_safe(operation["executable"].as_str().unwrap_or("<invalid>")),
+            row["queue_state"].as_str().unwrap_or("UNKNOWN")
+        );
+        if let Some(argv) = operation["argv"].as_array() {
+            for (arg_index, arg) in argv.iter().enumerate() {
+                let rendered = serde_json::to_string(arg.as_str().unwrap_or("<invalid>"))
+                    .unwrap_or_else(|_| "\"<invalid>\"".into());
+                println!("     argv[{}] {}", arg_index, terminal_safe(&rendered));
+            }
+        }
+        println!("     requester UID: {}", row["requester_uid"]);
+        if let Some(id) = row["request_id"].as_str() {
+            println!("     request ID: {}", terminal_safe(id));
+        }
+        let dependency_indexes: Vec<String> = row["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|dep| index_by_id.get(dep.as_str()?).map(ToString::to_string))
+            .collect();
+        if !dependency_indexes.is_empty() && !linear {
+            println!("     after: {}", dependency_indexes.join(","));
+        }
+        if row["queue_state"] == "BLOCKED" {
+            println!(
+                "     blocked by: {}",
+                terminal_safe(row["blocking_dependency"].as_str().unwrap_or("unknown"))
+            );
+        }
+        if linear && index + 1 < component.len() {
+            println!("     ↓");
+        }
+    }
+    println!("Executor: UID 0 / GID 23012");
+    println!("[a] allow all  [s] skip  [d] deny  [f] follow-up  [q] quit");
+    println!("Or approve selected commands by index (e.g. 012).\n>");
+    let _ = io::stdout().flush();
+}
+fn parse_console_subset(
+    input: &str,
+    rows: &[Value],
+    component: &[usize],
+) -> io::Result<Vec<usize>> {
+    let pending: Vec<usize> = component
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row_index)| {
+            (rows[*row_index]["queue_state"] == "PENDING_APPROVAL").then_some(index)
+        })
+        .collect();
+    if input == "all" {
+        return Ok(pending);
+    }
+    if input.is_empty() || !input.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "enter 'all' or valid displayed command indices",
+        ));
+    }
+    let mut selected = BTreeMap::new();
+    for byte in input.bytes() {
+        let index = (byte - b'0') as usize;
+        if index >= component.len() || !pending.contains(&index) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "selection includes an unavailable command index",
+            ));
+        }
+        selected.insert(index, ());
+    }
+    Ok(selected.into_keys().collect())
+}
+fn decide_console_row(
+    path: &Path,
+    broker_uid: u32,
+    instance: &str,
+    row: &Value,
+    decision: &str,
+) -> io::Result<()> {
+    let challenge = row["challenge_id"].as_str().unwrap();
+    let digest = row["request_digest"].as_str().unwrap();
+    let view = approval_call(
+        path,
+        broker_uid,
+        &json!({"type":"GET_CHALLENGE","protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge}),
+    )?;
+    check_authority_response(&view)?;
+    if view["type"] != "CHALLENGE_VIEW"
+        || view["broker_instance_id"] != instance
+        || view["challenge_id"] != challenge
+        || view["request_digest"] != digest
+        || view["state"] != "PENDING_APPROVAL"
+        || !valid_hex(view.get("view_id"), 48)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "challenge view correlation mismatch",
+        ));
+    }
+    let message = match decision {
+        "approve" => "APPROVE_CHALLENGE",
+        "deny" => "DENY_CHALLENGE",
+        _ => "EXPLAIN_CHALLENGE",
+    };
+    let result = approval_call(
+        path,
+        broker_uid,
+        &json!({"type":message,"protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge,"request_digest":digest,"view_id":view["view_id"]}),
+    )?;
+    check_authority_response(&result)?;
+    Ok(())
+}
+fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()> {
+    if unsafe { libc::geteuid() } == 0
+        || unsafe { libc::isatty(libc::STDIN_FILENO) } != 1
+        || unsafe { libc::isatty(libc::STDOUT_FILENO) } != 1
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "approval console requires an unprivileged interactive terminal",
+        ));
+    }
+    let mut idle_announced = false;
+    let mut skipped = HashSet::new();
+    loop {
+        let (instance, rows) = console_snapshot(&path, broker_uid)?;
+        let components = console_components(&rows)?;
+        if components.is_empty() {
+            if !idle_announced {
+                println!("Waiting for Mayi requests...");
+                let _ = io::stdout().flush();
+                idle_announced = true;
+            }
+            skipped.clear();
+            if poll_input(io::stdin().as_raw_fd(), 1000)? && read_tty_frame()? == b"q" {
+                return Ok(());
+            }
+            continue;
+        }
+        idle_announced = false;
+        let selected_component = components
+            .iter()
+            .find(|component| !skipped.contains(&console_signature(&rows, component)))
+            .cloned();
+        let Some(component) = selected_component else {
+            if poll_input(io::stdin().as_raw_fd(), 1000)? && read_tty_frame()? == b"q" {
+                return Ok(());
+            }
+            skipped.clear();
+            continue;
+        };
+        let signature = console_signature(&rows, &component);
+        print_console_component(&rows, &component);
+        let mut announced = HashSet::from([signature.clone()]);
+        // A poll refreshes newly-arrived dependency sets while the human is deciding.
+        let input = read_tty_frame_with_poll(|| {
+            let (_, pending) = console_snapshot(&path, broker_uid)?;
+            let latest_components = console_components(&pending)?;
+            for set in latest_components {
+                let id = console_signature(&pending, &set);
+                if announced.insert(id) {
+                    print_console_component(&pending, &set);
+                }
+            }
+            Ok(())
+        })?;
+        let (current_instance, _) = console_snapshot(&path, broker_uid)?;
+        if current_instance != instance {
+            eprintln!("Mayi broker restarted; queued approvals were invalidated. Refreshing.");
+            continue;
+        }
+        let input = std::str::from_utf8(&input)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid console input"))?
+            .trim();
+        if input == "q" {
+            return Ok(());
+        }
+        if input == "s" {
+            skipped.insert(signature);
+            continue;
+        }
+        let (decision, selection) = match input {
+            "a" | "y" | "allow" => ("approve", None),
+            "d" | "n" | "deny" => {
+                print!("Deny [all or indices]: ");
+                io::stdout().flush()?;
+                ("deny", Some(read_tty_frame()?))
+            }
+            "f" | "e" | "explain" | "follow-up" => {
+                print!("Follow up on [all or indices]: ");
+                io::stdout().flush()?;
+                ("explain", Some(read_tty_frame()?))
+            }
+            _ if input.bytes().all(|b| b.is_ascii_digit()) && !input.is_empty() => {
+                ("approve", Some(input.as_bytes().to_vec()))
+            }
+            _ => {
+                eprintln!("Invalid input; use a, s, d, f, numeric indices, or q.");
+                continue;
+            }
+        };
+        let selected = if let Some(selection) = selection {
+            let selection = std::str::from_utf8(&selection)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid selection"))?;
+            match parse_console_subset(selection, &rows, &component) {
+                Ok(selected) => selected,
+                Err(error) => {
+                    eprintln!("Invalid command selection: {error}");
+                    continue;
+                }
+            }
+        } else {
+            component
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row_index)| {
+                    (rows[*row_index]["queue_state"] == "PENDING_APPROVAL").then_some(index)
+                })
+                .collect()
+        };
+        let mut completed = Vec::new();
+        for index in selected {
+            let row = &rows[component[index]];
+            match decide_console_row(&path, broker_uid, &instance, row, decision) {
+                Ok(()) => completed.push(index),
+                Err(error) => eprintln!("Mayi decision for [{}] was not applied: {}", index, error),
+            }
+        }
+        if !completed.is_empty() {
+            println!(
+                "{}: {}",
+                match decision {
+                    "approve" => "Approved",
+                    "deny" => "Denied",
+                    _ => "Follow-up requested",
+                },
+                completed
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+    }
+}
+
+pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
+    approval_console_persistent(path, broker_uid)
+}
+
+const PRIVILEGED_EXECUTOR_SOCKET: &str = "/run/mayi/executor/executor.sock";
+const EXECUTOR_MAX_FRAME: usize = 300 * 1024;
+
+fn call_privileged_executor(identity: &str, operation: &Value) -> Value {
+    let request_id = if valid_request_id(identity) {
+        &identity[3..]
+    } else {
+        &identity[..32]
+    };
+    let message = json!({
+        "type": "EXEC_REQUEST",
+        "protocol": 1,
+        "request_id": request_id,
+        "executable": operation["executable"],
+        "argv": operation["argv"]
+    });
+    let body = message.to_string();
+    if body.len() > MAX_OPERATION {
+        return json!({"execution":"INTERNAL_ERROR"});
+    }
+    let mut stream = match UnixStream::connect(PRIVILEGED_EXECUTOR_SOCKET) {
+        Ok(stream) => stream,
+        Err(_) => return json!({"execution":"INTERNAL_ERROR"}),
+    };
+    if peer_uid(&stream).ok() != Some(0) {
+        return json!({"execution":"INTERNAL_ERROR"});
+    }
+    let deadline = Instant::now() + Duration::from_secs(300);
+    if write_all_deadline(&mut stream, &(body.len() as u32).to_be_bytes(), deadline).is_err()
+        || write_all_deadline(&mut stream, body.as_bytes(), deadline).is_err()
+    {
+        return json!({"execution":"UNKNOWN"});
+    }
+    let response = read_frame_deadline(&mut stream, deadline).and_then(|bytes| {
+        if bytes.len() > EXECUTOR_MAX_FRAME {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "executor response frame too large",
+            ));
+        }
+        serde_json::from_slice::<Unique>(&bytes)
+            .map(|value| value.0)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid executor response"))
+    });
+    let Ok(response) = response else {
+        return json!({"execution":"UNKNOWN"});
+    };
+    if !response.as_object().is_some_and(|object| {
+        only_keys(
+            object,
+            &[
+                "type",
+                "protocol",
+                "request_id",
+                "status",
+                "exit_code",
+                "stdout_hex",
+                "stderr_hex",
+                "stdout_truncated",
+                "stderr_truncated",
+            ],
+        )
+    }) || response["type"] != "EXEC_RESPONSE"
+        || response["protocol"] != 1
+        || response["request_id"] != request_id
+    {
+        return json!({"execution":"UNKNOWN"});
+    }
+    let status = response["status"].as_str().unwrap_or("");
+    let execution = match status {
+        "EXECUTION_UNKNOWN" => "UNKNOWN",
+        "EXECUTION_FAILED" => "FAILED",
+        "EXECUTED" if response["exit_code"].as_i64() == Some(0) => "SUCCEEDED",
+        "EXECUTED" => "FAILED",
+        _ => "UNKNOWN",
+    };
+    json!({
+        "execution": execution,
+        "exit_code": response["exit_code"],
+        "stdout_hex": response["stdout_hex"],
+        "stderr_hex": response["stderr_hex"],
+        "stdout_truncated": response["stdout_truncated"],
+        "stderr_truncated": response["stderr_truncated"]
+    })
+}
+
+fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
+    let mut ready = Vec::new();
+    {
+        let Ok(mut state) = broker.lock() else {
+            return;
+        };
+        state.expire();
+        let ids: Vec<String> = state
+            .pending
+            .values()
+            .filter(|r| {
+                r.queue_state == Some(QueueState::Ready)
+                    || r.queue_state == Some(QueueState::WaitingDependency)
+            })
+            .filter_map(|r| r.request_id.clone())
+            .collect();
+        for id in ids {
+            let Some(challenge) = state
+                .pending
+                .values()
+                .find(|r| r.request_id.as_deref() == Some(id.as_str()))
+                .map(|r| r.challenge.clone())
+            else {
+                continue;
+            };
+            let dependencies = state
+                .pending
+                .get(&challenge)
+                .map(|r| r.dependencies.clone())
+                .unwrap_or_default();
+            let mut blocked_by = None;
+            let mut all_succeeded = true;
+            for dependency in &dependencies {
+                let dep = state
+                    .pending
+                    .values()
+                    .find(|r| r.request_id.as_deref() == Some(dependency.as_str()));
+                match dep.and_then(|r| r.queue_state) {
+                    Some(QueueState::Succeeded) => {}
+                    Some(q) if q.terminal() => {
+                        blocked_by = Some(dependency.clone());
+                        break;
+                    }
+                    Some(_) => all_succeeded = false,
+                    None => {
+                        blocked_by = Some(dependency.clone());
+                        break;
+                    }
+                }
+            }
+            let request = state.pending.get_mut(&challenge).unwrap();
+            if let Some(dependency) = blocked_by {
+                request.queue_state = Some(QueueState::Blocked);
+                request.blocking_dependency = Some(dependency.clone());
+                request.mayi_result = Some(14);
+                request.state = State::Consumed;
+                eprintln!(
+                    "event=QUEUE_BLOCKED request_id={} requester_uid={} dependency={}",
+                    id, request.requester, dependency
+                );
+            } else if all_succeeded {
+                if request.queue_state != Some(QueueState::Running) {
+                    request.queue_state = Some(QueueState::Running);
+                    eprintln!("event=QUEUE_EXECUTION_STARTED request_id={} requester_uid={} approver_uid={:?} dependencies={:?}", id, request.requester, request.approver_uid, request.dependencies);
+                    if let Some(operation) = request.ops.first().cloned() {
+                        ready.push((id, request.requester, request.approver_uid, operation));
+                    } else {
+                        request.queue_state = Some(QueueState::ExecutionUnknown);
+                        request.mayi_result = Some(16);
+                        request.state = State::Consumed;
+                    }
+                }
+            } else {
+                request.queue_state = Some(QueueState::WaitingDependency);
+            }
+        }
+    }
+    for (request_id, requester, approver, operation) in ready {
+        let worker_broker = broker.clone();
+        let worker_request_id = request_id.clone();
+        let spawn = std::thread::Builder::new().name("mayi-queued-exec".into()).spawn(move || {
+            let outcome = call_privileged_executor(&worker_request_id, &operation);
+            let execution = outcome["execution"].as_str().unwrap_or("UNKNOWN");
+            let child = outcome["exit_code"].as_i64().and_then(|x| i32::try_from(x).ok());
+            if let Ok(mut state) = worker_broker.lock() {
+                if let Some(request) = state.pending.values_mut().find(|r| r.request_id.as_deref() == Some(worker_request_id.as_str())) {
+                    if request.queue_state == Some(QueueState::Running) {
+                        let (queue_state, code) = match execution {
+                            "SUCCEEDED" => (QueueState::Succeeded, 0),
+                            "FAILED" => (QueueState::Failed, 14),
+                            "INTERNAL_ERROR" | "EXECUTION_DISABLED" => (QueueState::Failed, 15),
+                            _ => (QueueState::ExecutionUnknown, 16),
+                        };
+                        request.queue_state = Some(queue_state);
+                        request.mayi_result = Some(code);
+                        request.child_exit_status = child;
+                        request.state = State::Consumed;
+                        eprintln!("event=QUEUE_EXECUTION_FINISHED request_id={} requester_uid={} approver_uid={:?} state={} mayi_result={} child_exit_status={:?}", worker_request_id, requester, approver, queue_state.label(), code, child);
+                    }
+                }
+            }
+        });
+        if spawn.is_err() {
+            if let Ok(mut state) = broker.lock() {
+                if let Some(request) = state
+                    .pending
+                    .values_mut()
+                    .find(|r| r.request_id.as_deref() == Some(request_id.as_str()))
+                {
+                    request.queue_state = Some(QueueState::ExecutionUnknown);
+                    request.mayi_result = Some(16);
+                    request.state = State::Consumed;
+                }
+            }
+        }
+    }
+}
+
+fn handle(
+    mut s: UnixStream,
+    broker: &Arc<Mutex<Broker>>,
+    approval: bool,
+    request_gid: u32,
+    approval_gid: u32,
+) -> io::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     s.set_write_timeout(Some(Duration::from_secs(5)))?;
-    let peer = peer_uid(&s).unwrap_or(u32::MAX);
+    let credentials = peer_credentials(&s);
+    let peer = credentials
+        .as_ref()
+        .map(|peer| peer.uid)
+        .unwrap_or(u32::MAX);
     let v = match read_frame_deadline(&mut s, deadline).and_then(|b| {
         serde_json::from_slice::<Unique>(&b)
             .map(|u| u.0)
@@ -1205,15 +2445,37 @@ fn handle(mut s: UnixStream, broker: &Arc<Mutex<Broker>>, approval: bool) -> io:
             return Ok(());
         }
     };
+    let role_gid = if approval { approval_gid } else { request_gid };
+    let authorization = match credentials {
+        Ok(credentials) => role_authorization(credentials, role_gid, approval),
+        Err(error) => Err(response_error(
+            "INTERNAL_ERROR",
+            &format!("SO_PEERCRED lookup failed: {error}"),
+        )),
+    };
     let mut state = broker
         .lock()
         .map_err(|_| io::Error::other("broker state poisoned"))?;
-    let mut r = if approval {
-        state.authority(&v, peer)
-    } else if v.get("type").and_then(Value::as_str) == Some("CONSUME_APPROVED") {
-        state.consume_request(&v, peer)
+    let message_type = v.get("type").and_then(Value::as_str).unwrap_or("");
+    let mut r = match authorization {
+        Err(error) => error,
+        Ok(()) if approval => state.authority(&v, peer),
+        Ok(()) if message_type == "CONSUME_APPROVED" => state.consume_request(&v, peer),
+        Ok(()) if message_type == "GET_REQUEST_STATUS" => state.status_request(&v, peer),
+        Ok(()) if message_type == "GET_QUEUE_STATUS" => state.queue_status_request(&v, peer),
+        Ok(()) => state.propose(&v, peer),
+    };
+    let execution = if !approval && message_type == "CONSUME_APPROVED" && r["status"] == "CONSUMED"
+    {
+        v.get("challenge_id")
+            .and_then(Value::as_str)
+            .and_then(|id| state.pending.get(id))
+            .and_then(|request| request.ops.first())
+            .filter(|operation| operation["type"] == "exec")
+            .cloned()
+            .map(|operation| (v["challenge_id"].as_str().unwrap().to_owned(), operation))
     } else {
-        state.propose(&v, peer)
+        None
     };
     if let Some(m) = r.as_object_mut() {
         m.insert(
@@ -1233,22 +2495,43 @@ fn handle(mut s: UnixStream, broker: &Arc<Mutex<Broker>>, approval: bool) -> io:
         }
     }
     drop(state);
+    if let Some((challenge, operation)) = execution {
+        let outcome = call_privileged_executor(&challenge, &operation);
+        if let Some(response) = r.as_object_mut() {
+            for (key, value) in outcome.as_object().into_iter().flat_map(|map| map.iter()) {
+                response.insert(key.clone(), value.clone());
+            }
+            response.insert(
+                "mayi_exit_code".into(),
+                Value::from(match outcome["execution"].as_str() {
+                    Some("SUCCEEDED") => 0,
+                    Some("FAILED") => 14,
+                    Some("INTERNAL_ERROR") => 15,
+                    _ => 16,
+                }),
+            );
+        }
+    } else if !approval && message_type == "CONSUME_APPROVED" && r["status"] == "CONSUMED" {
+        r["execution"] = Value::String("EXECUTION_DISABLED".into());
+    }
     let out = r.to_string();
-    let left = deadline.saturating_duration_since(Instant::now());
-    if left.is_zero() {
+    if out.len() > MAX_MESSAGE {
         return Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "transaction deadline exceeded",
+            io::ErrorKind::InvalidData,
+            "broker response exceeds frame limit",
         ));
     }
-    s.set_write_timeout(Some(left))?;
+    let response_deadline = Instant::now() + Duration::from_secs(5);
+    s.set_write_timeout(Some(Duration::from_secs(5)))?;
     s.write_all(&(out.len() as u32).to_be_bytes())?;
-    s.write_all(out.as_bytes())
+    write_all_deadline(&mut s, out.as_bytes(), response_deadline)
 }
 fn dispatch(
     stream: UnixStream,
     broker: Arc<Mutex<Broker>>,
     approval: bool,
+    request_gid: u32,
+    approval_gid: u32,
     active: Arc<AtomicUsize>,
 ) {
     if active
@@ -1264,7 +2547,7 @@ fn dispatch(
     if let Err(e) = std::thread::Builder::new()
         .name(format!("mayi-{role}"))
         .spawn(move || {
-            if let Err(e) = handle(stream, &broker, approval) {
+            if let Err(e) = handle(stream, &broker, approval, request_gid, approval_gid) {
                 eprintln!(
                     "event=CONNECTION_ERROR role={} error={}",
                     role,
@@ -1286,11 +2569,9 @@ fn dispatch(
 pub fn serve(
     request_path: PathBuf,
     approval_path: PathBuf,
-    request_uid: u32,
-    approver_uid: u32,
     request_gid: u32,
     approval_gid: u32,
-    development_same_uid: bool,
+    development_shared_role_group: bool,
 ) -> io::Result<()> {
     if unsafe { libc::geteuid() } == 0 {
         return Err(io::Error::new(
@@ -1298,35 +2579,10 @@ pub fn serve(
             "REAL_ROOT_DISABLED",
         ));
     }
-    let broker_uid = unsafe { libc::geteuid() };
-    if approver_uid == broker_uid {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "approver UID must differ from request broker UID",
-        ));
-    }
-    if request_uid == approver_uid {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "requester and approver UIDs must differ",
-        ));
-    }
-    if !development_same_uid && request_gid == approval_gid {
+    if !development_shared_role_group && request_gid == approval_gid {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "production request and approval socket groups must differ",
-        ));
-    }
-    if request_uid == broker_uid && !development_same_uid {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "requester and broker UIDs must differ outside explicit development mode",
-        ));
-    }
-    if development_same_uid && request_uid != broker_uid {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "development same-UID mode requires requester UID equal broker UID",
         ));
     }
     if request_path == approval_path {
@@ -1338,19 +2594,42 @@ pub fn serve(
     unsafe {
         libc::umask(0o077);
     }
-    let broker = Arc::new(Mutex::new(Broker::new(request_uid, approver_uid)?));
+    let _instance_lock = super::broker_instance_lock(&request_path)?;
+    let request_socket_path = super::secure_socket_path(&request_path)?;
+    let approval_socket_path = super::secure_socket_path(&approval_path)?;
+    super::install_broker_shutdown_handlers();
+    let broker = Arc::new(Mutex::new(Broker::new()?));
     let request_active = Arc::new(AtomicUsize::new(0));
     let approval_active = Arc::new(AtomicUsize::new(0));
-    let req = super::listener_for(&request_path, request_gid)?;
-    let auth = super::listener_for(&approval_path, approval_gid)?;
+    let (req, req_metadata) = super::listener_for(&request_path, request_gid)?;
+    let (auth, auth_metadata) = match super::listener_for(&approval_path, approval_gid) {
+        Ok(listener) => listener,
+        Err(error) => {
+            drop(req);
+            let _ = super::remove_broker_socket_if_same(
+                &request_socket_path,
+                &req_metadata,
+                unsafe { libc::geteuid() },
+                request_gid,
+            );
+            return Err(error);
+        }
+    };
     req.set_nonblocking(true)?;
     auth.set_nonblocking(true)?;
-    loop {
+    while !super::broker_shutdown_requested() {
         let mut activity = false;
         match req.accept() {
             Ok((s, _)) => {
                 activity = true;
-                dispatch(s, broker.clone(), false, request_active.clone())
+                dispatch(
+                    s,
+                    broker.clone(),
+                    false,
+                    request_gid,
+                    approval_gid,
+                    request_active.clone(),
+                )
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
             Err(e) => return Err(e),
@@ -1358,27 +2637,59 @@ pub fn serve(
         match auth.accept() {
             Ok((s, _)) => {
                 activity = true;
-                dispatch(s, broker.clone(), true, approval_active.clone())
+                dispatch(
+                    s,
+                    broker.clone(),
+                    true,
+                    request_gid,
+                    approval_gid,
+                    approval_active.clone(),
+                )
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
             Err(e) => return Err(e),
         }
+        run_queue_scheduler(&broker);
         if !activity {
-            std::thread::sleep(Duration::from_millis(5))
+            std::thread::sleep(Duration::from_millis(100))
         }
     }
+    drop(req);
+    drop(auth);
+    super::remove_broker_socket_if_same(
+        &request_socket_path,
+        &req_metadata,
+        unsafe { libc::geteuid() },
+        request_gid,
+    )?;
+    super::remove_broker_socket_if_same(
+        &approval_socket_path,
+        &auth_metadata,
+        unsafe { libc::geteuid() },
+        approval_gid,
+    )?;
+    Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     fn broker() -> Broker {
-        Broker::new(1000, 9001).unwrap()
+        Broker::new().unwrap()
     }
     fn proposal() -> Value {
         json!({"type":"PROPOSE_REQUEST","protocol":5,"target":{"uid":1000,"gid":1000},"operations":[{"type":"file_create","path":"/etc/x","content":"x","expected_result_sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881","mode":"0644"}]})
     }
+    fn exec_proposal(argv: Value) -> Value {
+        json!({"type":"PROPOSE_REQUEST","protocol":5,"target":{"uid":1000,"gid":1000},"operations":[{"type":"exec","executable":"/usr/bin/printf","argv":argv}]})
+    }
+    fn queue_proposal(dependencies: Vec<String>) -> Value {
+        json!({"type":"QUEUE_REQUEST","protocol":5,"target":{"uid":1000,"gid":1000},"dependencies":dependencies,"operations":[{"type":"exec","executable":"/usr/bin/true","argv":["true"]}]})
+    }
+    fn view_as(b: &mut Broker, p: &Value, approver_uid: u32) -> Value {
+        b.authority(&json!({"type":"GET_CHALLENGE","protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"]}),approver_uid)
+    }
     fn view(b: &mut Broker, p: &Value) -> Value {
-        b.authority(&json!({"type":"GET_CHALLENGE","protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"]}),9001)
+        view_as(b, p, 9001)
     }
     fn decision(p: &Value, v: &Value, ty: &str) -> Value {
         json!({"type":ty,"protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"],"request_digest":p["request_digest"],"view_id":v["view_id"]})
@@ -1387,21 +2698,176 @@ mod tests {
         json!({"type":"CONSUME_APPROVED","protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"],"request_digest":p["request_digest"]})
     }
     #[test]
-    fn proposal_is_pending_and_client_cannot_approve() {
-        let mut b = broker();
-        let p = b.propose(&proposal(), 1000);
-        assert_eq!(p["status"], "PENDING_APPROVAL");
-        assert_eq!(
-            b.authority(&json!({"type":"APPROVE_CHALLENGE","protocol":5}), 1000)["code"],
-            "UNAUTHORIZED_APPROVER"
-        );
-        assert_eq!(
-            b.propose(&proposal(), 9001)["code"],
-            "ROLE_SEPARATION_REQUIRED"
-        );
+    fn approval_console_preserves_broker_authorization_errors() {
+        let error = check_authority_response(&json!({"ok":false,"code":"UNAUTHORIZED_APPROVER","message":"peer UID 1001 is not a member of configured approver group GID 23013"})).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("MAYI_UNAUTHORIZED_APPROVER"));
+        assert!(!error.to_string().contains("miscorrelated"));
+    }
+
+    #[test]
+    fn nss_group_lookup_handles_primary_supplementary_and_missing_accounts() {
+        let uid = unsafe { libc::geteuid() };
+        let primary_gid = unsafe { libc::getegid() };
+        assert_eq!(uid_in_group(uid, primary_gid).unwrap(), Some(true));
+
+        let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        assert!(count >= 0);
+        if count > 1 {
+            let mut groups = vec![0 as libc::gid_t; count as usize];
+            let actual = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
+            assert!(actual > 0);
+            if let Some(group) = groups[..actual as usize]
+                .iter()
+                .find(|group| **group != primary_gid)
+            {
+                assert_eq!(uid_in_group(uid, *group).unwrap(), Some(true));
+            }
+        }
+        assert_eq!(uid_in_group(u32::MAX, primary_gid).unwrap(), None);
     }
     #[test]
-    fn approval_is_one_shot_and_execution_disabled() {
+    fn queued_requests_have_unique_broker_ids_and_are_requester_bound() {
+        let mut b = broker();
+        let first = b.propose(&queue_proposal(vec![]), 1001);
+        let second = b.propose(&queue_proposal(vec![]), 1001);
+        assert_eq!(first["type"], "QUEUE_RESPONSE");
+        let first_id = first["request_id"].as_str().unwrap();
+        let second_id = second["request_id"].as_str().unwrap();
+        assert!(valid_request_id(first_id) && valid_request_id(second_id));
+        assert_ne!(first_id, second_id);
+        assert_ne!(first_id, first["request_digest"].as_str().unwrap());
+        let status = b.queue_status_request(
+            &json!({"type":"GET_QUEUE_STATUS","protocol":5,"request_id":first_id}),
+            1001,
+        );
+        assert_eq!(status["state"], "PENDING_APPROVAL");
+        assert_eq!(
+            b.queue_status_request(
+                &json!({"type":"GET_QUEUE_STATUS","protocol":5,"request_id":first_id}),
+                1002
+            )["code"],
+            "UNAUTHORIZED_REQUESTER"
+        );
+        assert_eq!(
+            b.propose(&queue_proposal(vec![first_id.to_owned()]), 1002)["code"],
+            "DEPENDENCY_OWNER_MISMATCH"
+        );
+        assert_eq!(
+            b.propose(
+                &queue_proposal(vec!["rq_00000000000000000000000000000000".into()]),
+                1001
+            )["code"],
+            "DEPENDENCY_NOT_FOUND"
+        );
+        let dependent = b.propose(&queue_proposal(vec![first_id.to_owned()]), 1001);
+        let stored = b
+            .pending
+            .values()
+            .find(|r| r.request_id.as_deref() == dependent["request_id"].as_str())
+            .unwrap();
+        assert_eq!(stored.dependencies, vec![first_id]);
+        assert_eq!(stored.requester, 1001);
+    }
+
+    #[test]
+    fn queue_dependency_cycles_are_rejected_and_failed_parents_block_children() {
+        let mut b = broker();
+        let parent = b.propose(&queue_proposal(vec![]), 1001);
+        let parent_id = parent["request_id"].as_str().unwrap().to_owned();
+        let child = b.propose(&queue_proposal(vec![parent_id.clone()]), 1001);
+        let child_id = child["request_id"].as_str().unwrap().to_owned();
+        b.pending
+            .get_mut(parent["challenge_id"].as_str().unwrap())
+            .unwrap()
+            .dependencies
+            .push(child_id.clone());
+        assert!(!b.dependency_graph_acyclic(&child_id, std::slice::from_ref(&parent_id)));
+        b.pending
+            .get_mut(parent["challenge_id"].as_str().unwrap())
+            .unwrap()
+            .dependencies
+            .clear();
+        for proposal in [&parent, &child] {
+            let view = view(&mut b, proposal);
+            let approved = b.authority(&decision(proposal, &view, "APPROVE_CHALLENGE"), 9001);
+            assert_eq!(approved["status"], "APPROVED");
+        }
+        let parent_challenge = parent["challenge_id"].as_str().unwrap();
+        let failed = b.pending.get_mut(parent_challenge).unwrap();
+        failed.queue_state = Some(QueueState::Failed);
+        failed.state = State::Consumed;
+        failed.mayi_result = Some(14);
+        let shared = Arc::new(Mutex::new(b));
+        run_queue_scheduler(&shared);
+        let status = shared.lock().unwrap().queue_status_request(
+            &json!({"type":"GET_QUEUE_STATUS","protocol":5,"request_id":child_id}),
+            1001,
+        );
+        assert_eq!(status["state"], "BLOCKED");
+        assert_eq!(status["blocking_dependency"], parent_id);
+    }
+
+    #[test]
+    fn proposal_stores_the_authenticated_requester_uid() {
+        let mut b = broker();
+        let p = b.propose(&proposal(), 1001);
+        assert_eq!(p["status"], "PENDING_APPROVAL");
+        assert_eq!(
+            b.pending[p["challenge_id"].as_str().unwrap()].requester,
+            1001
+        );
+        assert_eq!(
+            b.authority(&json!({"type":"APPROVE_CHALLENGE","protocol":5}), 1000)["code"],
+            "BROKER_INSTANCE_MISMATCH"
+        );
+    }
+
+    #[test]
+    fn group_authorized_requesters_still_cannot_consume_each_others_requests() {
+        let mut b = broker();
+        let p = b.propose(&proposal(), 1001);
+        let v = view_as(&mut b, &p, 1000);
+        assert_eq!(
+            b.authority(&decision(&p, &v, "APPROVE_CHALLENGE"), 1000)["status"],
+            "APPROVED"
+        );
+        assert_eq!(b.views[v["view_id"].as_str().unwrap()].approver_uid, 1000);
+        assert_eq!(
+            b.consume_request(&consume(&p), 1000)["code"],
+            "UNAUTHORIZED_REQUESTER"
+        );
+        assert_eq!(b.consume_request(&consume(&p), 1001)["status"], "CONSUMED");
+    }
+    #[test]
+    fn exact_exec_is_rendered_and_status_is_requester_bound() {
+        let mut b = broker();
+        let p = b.propose(
+            &exec_proposal(json!(["printf", "%s", "; touch /tmp/pwned"])),
+            1000,
+        );
+        assert_eq!(p["status"], "PENDING_APPROVAL");
+        let v = view(&mut b, &p);
+        let rendered = v["rendered"].as_str().unwrap();
+        assert!(rendered.contains("Executor identity: UID 0, primary GID 23012"));
+        assert!(rendered.contains("Request target UID/GID (metadata only): 1000/1000"));
+        assert!(rendered.contains("Executable:\n\"/usr/bin/printf\""));
+        assert!(rendered.contains("[0] \"printf\""));
+        assert!(rendered.contains("[2] \"; touch /tmp/pwned\""));
+        let status = json!({"type":"GET_REQUEST_STATUS","protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"],"request_digest":p["request_digest"]});
+        assert_eq!(b.status_request(&status, 1000)["status"], "PENDING");
+        assert_eq!(
+            b.status_request(&status, 1001)["code"],
+            "UNAUTHORIZED_REQUESTER"
+        );
+        assert_eq!(
+            b.authority(&decision(&p, &v, "APPROVE_CHALLENGE"), 9001)["status"],
+            "APPROVED"
+        );
+        assert_eq!(b.status_request(&status, 1000)["status"], "APPROVED");
+    }
+    #[test]
+    fn approval_is_one_shot_and_executor_handoff_is_deferred_to_network_handler() {
         let mut b = broker();
         let p = b.propose(&proposal(), 1000);
         let base = p.clone();
@@ -1413,7 +2879,7 @@ mod tests {
         let consume = consume(&base);
         let consumed = b.consume_request(&consume, 1000);
         assert_eq!(consumed["state"], "CONSUMED");
-        assert_eq!(consumed["execution"], "EXECUTION_DISABLED");
+        assert_eq!(consumed["execution"], "EXECUTION_PENDING");
         assert_eq!(
             b.consume_request(&consume, 1000)["code"],
             "ALREADY_CONSUMED"
@@ -1438,18 +2904,12 @@ mod tests {
         assert_eq!(b.authority(&explain, 9001)["authorized"], false);
         assert_eq!(
             b.pending[p["challenge_id"].as_str().unwrap()].state,
-            State::Pending
+            State::Explained
         );
         assert_eq!(b.authority(&explain, 9001)["code"], "VIEW_ALREADY_USED");
-        let v2 = view(&mut b, &p);
-        assert_ne!(v1["view_id"], v2["view_id"]);
         assert_eq!(
-            b.authority(&decision(&p, &v2, "APPROVE_CHALLENGE"), 9001)["status"],
-            "APPROVED"
-        );
-        assert_eq!(
-            b.consume_request(&consume(&p), 1000)["execution"],
-            "EXECUTION_DISABLED"
+            b.status_request(&json!({"type":"GET_REQUEST_STATUS","protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"],"request_digest":p["request_digest"]}),1000)["status"],
+            "EXPLAINED"
         );
         let mut changed = proposal();
         changed["operations"][0]["path"] = Value::String("/etc/changed".into());
@@ -1565,7 +3025,7 @@ mod tests {
         let v = view(&mut b, &p);
         assert_eq!(
             b.authority(&decision(&p, &v, "APPROVE_CHALLENGE"), 9002)["code"],
-            "UNAUTHORIZED_APPROVER"
+            "VIEW_BINDING_MISMATCH"
         );
         assert_eq!(
             b.pending[p["challenge_id"].as_str().unwrap()].state,
@@ -1711,6 +3171,9 @@ mod tests {
     }
     #[test]
     fn console_decision_grammar_is_exact() {
+        assert_eq!(parse_decision(b"y"), Some("APPROVE_CHALLENGE"));
+        assert_eq!(parse_decision(b"n"), Some("DENY_CHALLENGE"));
+        assert_eq!(parse_decision(b"e"), Some("EXPLAIN_CHALLENGE"));
         assert_eq!(parse_decision(b"approve"), Some("APPROVE_CHALLENGE"));
         assert_eq!(parse_decision(b"deny"), Some("DENY_CHALLENGE"));
         assert_eq!(parse_decision(b"explain"), Some("EXPLAIN_CHALLENGE"));
@@ -1745,7 +3208,7 @@ mod tests {
         assert_eq!(b.consume_request(&injected, 1000)["code"], "UNKNOWN_FIELD");
         assert_eq!(
             b.consume_request(&request, 9001)["code"],
-            "ROLE_SEPARATION_REQUIRED"
+            "UNAUTHORIZED_REQUESTER"
         );
         assert_eq!(
             b.consume_request(&request, 1001)["code"],
@@ -1772,12 +3235,15 @@ mod tests {
     #[test]
     fn unsupported_operation_types_never_enter_approval_state() {
         let mut b = broker();
-        for ty in ["exec", "service_restart", "package_install", "unknown"] {
+        for ty in ["service_restart", "package_install", "unknown"] {
             let mut p = proposal();
             p["operations"][0]["type"] = json!(ty);
             assert_eq!(b.propose(&p, 1000)["code"], "UNSUPPORTED_OPERATION");
         }
-        assert!(b.pending.is_empty());
+        assert_eq!(
+            b.propose(&exec_proposal(json!(["printf", "A"])), 1000)["status"],
+            "PENDING_APPROVAL"
+        );
     }
     #[test]
     fn duplicate_json_keys_are_rejected() {
