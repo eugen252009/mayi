@@ -1,5 +1,40 @@
 # Mayi package and deployment qualification record
 
+## Man-page package release 0.3.2 (2026-09-27)
+
+### Scope and outcome
+
+Mayi 0.3.2 is a packaging/documentation release. It installs `mayi(1)` at `/usr/share/man/man1/mayi.1.gz` and the workflow guide at `/usr/share/man/man7/mayi-workflow.7.gz`, making `man mayi` and `man mayi-workflow` work through normal Debian lookup. The package adds `man-db` as a dependency. The Mayi runtime source, authorization, approval, queue, dependency, and filesystem behavior were not changed. No separate `mayi-approve(1)` page is provided.
+
+The exact artifact passed fresh install and 0.3.1 upgrade qualification on Debian 10–13, including installed manual lookup/rendering and runtime/lifecycle checks. The Debian 12 fresh installation also used `apt-get install` on the local package. The 0.3.1 `.deb` remains byte-for-byte unchanged. The workflow page is now package content as well as repository documentation. Queue/results remain in-memory and the filesystem executor remains disconnected/**INCOMPLETE**.
+
+### Artifact and build
+
+- Package: `executor/target/debian/mayi_0.3.2_amd64.deb`
+- SHA-256: `f5e81423e198cb386584de5a5060d429733b9205499ca73f5a76a512729159b1`
+- TPA metadata: version 0.4.0; `Created-At` `2026-09-27T07:16:59Z`; provenance enabled.
+- Build environment: disposable Debian 10.13 (Buster), `libc6 2.28-10+deb10u3`, GCC 8.3.0, Rust/Cargo 1.95.0; apt source pinned to the 2024-06-12 Buster snapshot. Native executables require at most `GLIBC_2.28`.
+- TPA builder binary: Go build metadata reports module revision `ab9da01d7728+dirty`; the TPA source checkout has separate uncommitted state. This builder detail is recorded rather than implying a clean TPA build.
+- The Rust/Python runtime source diff from v0.3.1 is empty. Native executables were rebuilt and their byte hashes differ from the historical 0.3.1 binaries; runtime behavior was qualified, but binary byte-identity is not claimed. The binary SHA-256 changes are `mayi-executor`: `7e565ac1c5aa8125d5e00e201fdec115233e20de5797bb0252e2a3058161cc30` → `19183a8e8cd48e8f803fe1b2584f0ac1b5ef2b2976a2d7ef8c212fefe733607f`; `privileged-executor`: `eb953e015bf8baa2fd1ad4fb96b6fef180af3f10f17c4cddbf77effc8ef2360` → `57d2d2ceb088139bdc481f8da3c48392c0c8a54717d4a525cd8f977731ba1b89`. Both builds retain the `GLIBC_2.28` maximum. The 0.3.1 `.deb` SHA-256 remains `9162530d3052389f5b84edef2680e379350bbd79a0981e247628d08a1df1b57e`.
+- Artifact was built from the uncommitted 0.3.2 source snapshot before the qualification-gated release commit. Clean-source byte-for-byte reproducibility is **not claimed**. The final commit records the packaged source after qualification; no rebuild or replacement of the qualified artifact is planned.
+
+### Package and installed-manual checks
+
+`dpkg-deb` inspection confirms both compressed pages are present at the expected section paths. Decompressing either packaged page matches its repository source byte-for-byte. The package declares `man-db`; disposable installs passed `man -w mayi`, `man -w mayi-workflow`, `man mayi`, `man 1 mayi`, `man mayi-workflow`, and `man 7 mayi-workflow` with the normal man path (only the pager was set to `cat` for noninteractive capture). The man pages are not installed as package source or under a nonstandard manual path. TPA package metadata declares `libc6 (>= 2.28)`, `python3 (>= 3.7)`, and `man-db` in addition to the existing package dependencies.
+
+### Debian 0.3.2 qualification matrix
+
+All tests ran in disposable containers with systemd as PID 1, no host mounts, and no runtime network. Each suite covered fresh install, upgrade from 0.3.1, installed manual lookup, requester/approver and synchronous execution, queue/dependency/wait/failure-budget behavior, security regressions, package-setup failure, and systemd lifecycle including 100 executor and 100 broker restarts per full lifecycle run. Debian 13 additionally exercised historical upgrades. Debian 12 fresh install used apt on the local `.deb`; the other installs used dpkg.
+
+| Debian | Result |
+| --- | --- |
+| 10 Buster | Fresh install and 0.3.1 upgrade; installed man pages, runtime/security, and lifecycle qualification PASS. |
+| 11 Bullseye | Same 0.3.2 fresh/upgrade and installed-manual/runtime/lifecycle gates PASS. |
+| 12 Bookworm | Same gates PASS; fresh install via `apt-get install` on the local artifact, then upgrade from 0.3.1 PASS. |
+| 13 Trixie | Fresh install and upgrades from 0.2.0, 0.2.1, 0.2.2, 0.3.0, and 0.3.1; all installed-manual/runtime/lifecycle gates PASS. |
+
+Repository checks also passed: Python tests 58/58, Rust tests 71 + 5, Clippy with warnings denied, Rust formatting, Python/shell syntax, `git diff --check`, and groff rendering of both manual pages. The real Debian 12.15 host was not accessed or modified for this release. Debian 10 is technically compatible but EOL; Debian 12+ remains the recommended operational baseline.
+
 ## Debian portability / package 0.3.1 release (2026-09-26)
 
 ### Result

@@ -1,5 +1,7 @@
 # Debian compatibility qualification — Mayi 0.3.1
 
+This page preserves the original 0.3.1 artifact qualification record. The packaging-only 0.3.2 artifact was independently tested on Debian 10–13, including fresh installs, 0.3.1 upgrades, installed man-page lookup, and runtime/systemd lifecycle checks; see the 0.3.2 evidence in [MVP_QUALIFICATION.md](MVP_QUALIFICATION.md).
+
 **Result (2026-09-26):** Debian 10 (Buster) is the oldest technically compatible Debian release tested. Debian 9 (Stretch) is below the package's Python floor. This is a technical compatibility result, not a recommendation to operate an end-of-life OS: Debian 10 LTS ended in June 2024, and Debian 11 LTS ended on 2026-08-31. For a currently maintained Debian OS, use Debian 12 or newer. The administrator later reported manual deployment and smoke testing on the real Debian 12.15 host; this repository qualification/consolidation did not access or modify it.
 
 ## Release artifact

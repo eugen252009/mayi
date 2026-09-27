@@ -8,7 +8,8 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE_DIR = ROOT / "executor/target/debian"
-IMAGE = "mayi-systemd-qualification:trixie"
+SUITE = os.environ.get("MAYI_DEBIAN_SUITE", "trixie")
+IMAGE = f"mayi-systemd-qualification:{SUITE}"
 SYSTEMD_IMAGE = ROOT / "executor/package/systemd-qualification"
 SCRIPT = ROOT / "executor/package/qualify-mvp.py"
 PACKAGES = {
@@ -17,6 +18,7 @@ PACKAGES = {
     "0.2.2": PACKAGE_DIR / "mayi_0.2.2_amd64.deb",
     "0.3.0": PACKAGE_DIR / "mayi_0.3.0_amd64.deb",
     "0.3.1": PACKAGE_DIR / "mayi_0.3.1_amd64.deb",
+    "0.3.2": PACKAGE_DIR / "mayi_0.3.2_amd64.deb",
 }
 UNIT_EXECUTOR = "mayi-privileged-executor.service"
 UNIT_BROKER = "mayi-broker.service"
@@ -473,7 +475,7 @@ def restart_qualification(name):
 def install_failure_gate(name):
     # Wrong pre-existing group GID simulates a mandatory package-account setup failure.
     dexec(name, "groupadd", "-g", "23010", "mayi-requester")
-    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.3.1'].name}", check=False, timeout=120)
+    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.3.2'].name}", check=False, timeout=120)
     if result.returncode == 0:
         raise AssertionError("mandatory account setup conflict incorrectly configured package")
     status = dexec(name, "dpkg-query", "-W", "-f=${db:Status-Status}", "mayi", check=False)
@@ -491,8 +493,9 @@ def qualify_environment(name, mode):
     env.update({
         "MAYI_TEST_CONTAINER": name,
         "MAYI_TEST_MODE": mode,
-        "MAYI_TARGET_VERSION": "0.3.1",
+        "MAYI_TARGET_VERSION": "0.3.2",
         "MAYI_TEST_SYSTEMD": "1",
+        "MAYI_TEST_APT": "1" if SUITE == "bookworm" and mode == "fresh" else "0",
         "MAYI_TEST_KEEP_PACKAGE": "1",
     })
     # Pass qualification mode into the installed-package flow without exposing
@@ -501,7 +504,7 @@ def qualify_environment(name, mode):
         "env",
         *[f"{key}={env[key]}" for key in (
             "MAYI_TEST_CONTAINER", "MAYI_TEST_MODE", "MAYI_TARGET_VERSION",
-            "MAYI_TEST_SYSTEMD", "MAYI_TEST_KEEP_PACKAGE",
+            "MAYI_TEST_SYSTEMD", "MAYI_TEST_APT", "MAYI_TEST_KEEP_PACKAGE",
         )],
         sys.executable, SCRIPT,
     ], timeout=900, capture=False)
@@ -519,18 +522,25 @@ def main():
     expected_021 = "1799e555c6e983b99b10e3c92d52b46079b2b9fa853618c424c317ebc12316dd"
     expected_022 = "24b5d51daf274290af2ee73df3393be70ce588567a0608cd7a571ec4f9f35f58"
     expected_030 = "0f356c880d8351f9ca5a05267530b8b9741a08b6b715ee0c9d1fe571ac851e57"
-    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030)):
+    expected_031 = "9162530d3052389f5b84edef2680e379350bbd79a0981e247628d08a1df1b57e"
+    expected_032 = "f5e81423e198cb386584de5a5060d429733b9205499ca73f5a76a512729159b1"
+    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032)):
         actual = subprocess.check_output(["sha256sum", str(PACKAGES[version])], text=True).split()[0]
         if actual != expected:
-            raise SystemExit(f"{version} package baseline hash mismatch: {actual}")
-    run(["docker", "build", "-t", IMAGE, SYSTEMD_IMAGE], timeout=900, capture=False)
-    names = [f"mayi-systemd-{os.getpid()}-{suffix}" for suffix in ("fresh", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "failure")]
+            raise SystemExit(f"{version} package hash mismatch: {actual}")
+    run(["docker", "build", "--build-arg", f"DEBIAN_SUITE={SUITE}", "-t", IMAGE, SYSTEMD_IMAGE], timeout=900, capture=False)
+    if SUITE == "trixie":
+        modes = ("fresh", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031")
+    else:
+        modes = ("fresh", "upgrade031")
+    suffixes = (*modes, "failure")
+    names = [f"mayi-systemd-{SUITE}-{os.getpid()}-{suffix}" for suffix in suffixes]
     passed = False
     try:
-        for name, mode in zip(names[:5], ("fresh", "upgrade020", "upgrade021", "upgrade022", "upgrade030")):
+        for name, mode in zip(names[:-1], modes):
             qualify_environment(name, mode)
-        start_container(names[5])
-        install_failure_gate(names[5])
+        start_container(names[-1])
+        install_failure_gate(names[-1])
         passed = True
     finally:
         if passed:
@@ -544,7 +554,7 @@ def main():
                 if logs.stdout:
                     print(logs.stdout, file=sys.stderr)
             print("FAILED qualification containers retained for diagnosis:", *names, file=sys.stderr)
-    print("FRESH + 0.2.0/0.2.1/0.2.2/0.3.0 UPGRADES + QUEUE/SYSTEMD LIFECYCLE QUALIFICATION: PASS")
+    print(f"{SUITE}: FRESH + {', '.join(modes[1:])} + MANPAGES/QUEUE/SYSTEMD LIFECYCLE QUALIFICATION: PASS")
 
 
 if __name__ == "__main__":

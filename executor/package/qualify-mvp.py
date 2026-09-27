@@ -13,11 +13,12 @@ NAME = os.environ.get("MAYI_TEST_CONTAINER")
 MODE = os.environ.get("MAYI_TEST_MODE", "fresh")
 TARGET_VERSION = os.environ.get("MAYI_TARGET_VERSION", "0.3.1")
 SYSTEMD_MODE = os.environ.get("MAYI_TEST_SYSTEMD", "0") == "1"
+APT_MODE = os.environ.get("MAYI_TEST_APT", "0") == "1"
 KEEP_PACKAGE = os.environ.get("MAYI_TEST_KEEP_PACKAGE", "0") == "1"
-if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030"}:
-    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021 are required")
-if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1"}:
-    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, or 0.3.1")
+if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031"}:
+    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031 are required")
+if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2"}:
+    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, or 0.3.2")
 
 USERS = {
     "both": (1000, 1000, (23011, 23013)),
@@ -399,15 +400,39 @@ def package_path(version):
 
 def install_package(version):
     path = package_path(version)
+    if APT_MODE:
+        docker("apt-get", "install", "-y", path, timeout=120)
+        return
     if SYSTEMD_MODE:
         docker("dpkg", "-i", path, timeout=120)
         return
     docker("apt-get", "install", "-y", path, timeout=120)
 
 
+def manpage_qualification():
+    expected = {
+        "mayi": "/usr/share/man/man1/mayi.1.gz",
+        "mayi-workflow": "/usr/share/man/man7/mayi-workflow.7.gz",
+    }
+    for name, path in expected.items():
+        docker("test", "-f", path)
+        located = docker("man", "-w", name).stdout.decode().strip().splitlines()
+        assert path in located, (name, located, path)
+    for args, required in (
+        (("man", "mayi"), ("NAME", "SYNOPSIS", "SEE ALSO", "mayi-workflow")),
+        (("man", "1", "mayi"), ("NAME", "SYNOPSIS")),
+        (("man", "mayi-workflow"), ("NAME", "REQUESTER WORKFLOW", "APPROVER WORKFLOW")),
+        (("man", "7", "mayi-workflow"), ("NAME", "TWO-TERMINAL EXAMPLE")),
+    ):
+        rendered = docker("env", "MANPAGER=cat", *args).stdout.decode(errors="replace")
+        for section in required:
+            assert section in rendered, (args, section, rendered[:1000])
+    print("INSTALLED MAN MAYI(1)/MAYI-WORKFLOW(7), DEFAULT LOOKUP: PASS")
+
+
 def install_for_mode():
-    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030"}:
-        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0"}.get(MODE, "0.2.0")
+    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031"}:
+        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1"}.get(MODE, "0.2.0")
         install_package(baseline)
         create_human_roles()
         requester_groups = docker("id", "-G", "mayi-both").stdout
@@ -439,11 +464,14 @@ def install_for_mode():
         print(f"UPGRADE {baseline} -> {TARGET_VERSION}; MEMBERSHIPS AND LEGACY ACCOUNTS PRESERVED: PASS")
     else:
         install_package(TARGET_VERSION)
-        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1"}:
+        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2"}:
             assert docker("getent", "passwd", "mayi-requester", check=False).returncode != 0
             assert docker("getent", "passwd", "mayi-approver", check=False).returncode != 0
         create_human_roles()
-        print(f"FRESH INSTALL {TARGET_VERSION}: PASS")
+        method = "APT" if APT_MODE else "dpkg"
+        print(f"FRESH INSTALL {TARGET_VERSION} VIA {method}: PASS")
+    if TARGET_VERSION == "0.3.2":
+        manpage_qualification()
 
 
 def queue_qualification():

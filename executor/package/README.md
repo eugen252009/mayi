@@ -1,6 +1,6 @@
 # Mayi exact-command approval MVP package
 
-This TPA-built Debian package installs Mayi 0.3.1: the Protocol 5 broker, synchronous and asynchronous exact-command clients, persistent approval console, and separate privileged executor. Its technical compatibility floor is Debian 10 (Buster), glibc 2.28, and Python 3.7; Debian 10 is EOL, so see the root-level `DEBIAN_COMPATIBILITY.md` before treating that as an operational OS support recommendation.
+This TPA-built Debian package installs Mayi 0.3.2: the Protocol 5 broker, synchronous and asynchronous exact-command clients, persistent approval console, and separate privileged executor. Its technical compatibility floor is Debian 10 (Buster), glibc 2.28, and Python 3.7; Debian 10 is EOL, so see the root-level `DEBIAN_COMPATIBILITY.md` before treating that as an operational OS support recommendation.
 
 ## Request and approval flows
 
@@ -55,11 +55,13 @@ TPA_BIN=/tmp/tpa ./executor/package/build-deb.sh
 
 `build-deb.sh` links against the libc where Cargo runs; running it on a newer host can create a package that cannot run on the declared baseline. The release artifact below was built inside the Debian 10 baseline.
 
-Artifact: `executor/target/debian/mayi_0.3.1_amd64.deb`; SHA-256 `9162530d3052389f5b84edef2680e379350bbd79a0981e247628d08a1df1b57e`. TPA 0.4.0; `Created-At` 2026-09-26T22:11:16Z; provenance enabled. Depends on `adduser`, `init-system-helpers`, `libc6 (>= 2.28)`, and `python3 (>= 3.7)`. Both native executables' highest referenced symbol is `GLIBC_2.28`. Built in Debian 10 with Rust/Cargo 1.95.0 from a dirty, uncommitted working tree; clean-source reproducibility is not claimed. The previous 0.3.0 artifact remains unchanged.
+Artifact: `executor/target/debian/mayi_0.3.2_amd64.deb`; SHA-256 `f5e81423e198cb386584de5a5060d429733b9205499ca73f5a76a512729159b1`; TPA `Created-At` `2026-09-27T07:16:59Z`. TPA 0.4.0; provenance enabled. Depends on `adduser`, `init-system-helpers`, `libc6 (>= 2.28)`, `python3 (>= 3.7)`, and `man-db`. Built in a disposable Debian 10.13 environment with glibc 2.28-10+deb10u3 and Rust/Cargo 1.95.0. The TPA binary's Go build metadata reports source revision `ab9da01d7728+dirty`. The artifact came from the uncommitted 0.3.2 source snapshot before the qualification-gated commit; clean-source byte-for-byte reproducibility is not claimed. The 0.3.1 artifact remains unchanged.
 
-## Disposable Debian qualification
+## Man pages and qualification
 
-`python3 executor/package/qualify-systemd.py` is the Debian 13 fresh/upgrade gate: it covers 0.2.0, 0.2.1, 0.2.2, and 0.3.0 upgrades, package-setup failure, synchronous `y/n/e`, queued IDs and requester-bound dependency DAGs, blocked descendants, approval-console decisions, waits/failure budgets, socket recovery, competing starts, and 100 executor plus 100 broker restarts. The exact 0.3.1 artifact was separately installed and given the same functional and lifecycle qualification on Debian 10 (Buster), 11 (Bullseye), and 12 (Bookworm); Bookworm's local `.deb` was also installed through `apt-get`. All suites use disposable containers with systemd PID 1, private cgroups, no host mounts, and no runtime network. Debian 10 is the technical floor but is EOL. Debian 13 passed fresh install and 0.3.0 upgrade. The Debian matrix itself ran only in disposable environments. The administrator subsequently reported manual installation, active services, and successful queue/dependency/approval/privileged-execution/`--wait --fail=0` smoke testing on the real Debian 12.15 host; this repository consolidation did not access or modify it, and no live filesystem mutation was reported. See `DEBIAN_COMPATIBILITY.md` for the full scope and evidence.
+The package installs `man/mayi.1` as `/usr/share/man/man1/mayi.1.gz` and `man/mayi-workflow.7` as `/usr/share/man/man7/mayi-workflow.7.gz`. The pages use Debian's normal man-page lookup; `man-db` is a package dependency so `man mayi` and `man mayi-workflow` are available after installation. The workflow guide describes the persistent approval-console controls; no separate `mayi-approve(1)` page is installed.
+
+`python3 executor/package/qualify-systemd.py` qualifies the exact 0.3.2 artifact on disposable Debian 10–13: fresh install, upgrade from 0.3.1, installed `man` lookup/rendering, runtime and queue regressions, and systemd lifecycle gates. Debian 12 fresh installation uses `apt-get install`; Trixie additionally checks upgrades from 0.2.0 through 0.3.0. Set `MAYI_DEBIAN_SUITE` to select a suite. No real-host operation is part of this release test. The filesystem executor remains **INCOMPLETE**.
 
 The detailed record is in `MVP_QUALIFICATION.md`. The filesystem executor remains **INCOMPLETE**.
 

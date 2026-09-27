@@ -19,7 +19,7 @@ RUN if [ "$DEBIAN_SUITE" = buster ]; then \
       mkdir -p /etc/ssl/certs; \
     fi \
  && apt-get update -qq \
- && apt-get install -y -qq systemd systemd-sysv dbus python3 adduser init-system-helpers util-linux procps iproute2 ca-certificates \
+ && apt-get install -y -qq systemd systemd-sysv dbus python3 adduser init-system-helpers util-linux procps iproute2 ca-certificates man-db \
  && rm -f /usr/sbin/policy-rc.d \
  && rm -rf /var/lib/apt/lists/*
 STOPSIGNAL SIGRTMIN+3

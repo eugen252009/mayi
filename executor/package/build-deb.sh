@@ -15,7 +15,8 @@ rm -rf -- "$PKGROOT"
 rm -rf -- "$PKGROOT/usr/local"
 mkdir -p "$PKGROOT/usr/bin" "$PKGROOT/usr/libexec/mayi" \
   "$PKGROOT/usr/lib/python3/dist-packages" \
-  "$PKGROOT/usr/lib/systemd/system" "$PKGROOT/usr/lib/tmpfiles.d"
+  "$PKGROOT/usr/lib/systemd/system" "$PKGROOT/usr/lib/tmpfiles.d" \
+  "$PKGROOT/usr/share/man/man1" "$PKGROOT/usr/share/man/man7"
 install -m 0755 "$ROOT/executor/target/release/mayi-executor" \
   "$PKGROOT/usr/bin/mayi-executor"
 install -m 0755 "$ROOT/executor/target/release/mayi-privileged-executor" \
@@ -30,6 +31,10 @@ cp "$ROOT/executor/package/usr/lib/systemd/system/mayi-privileged-executor.servi
 cp "$ROOT/executor/package/usr/lib/systemd/system/mayi-broker.service" \
   "$PKGROOT/usr/lib/systemd/system/mayi-broker.service"
 cp "$ROOT/executor/package/usr/lib/tmpfiles.d/mayi.conf" "$PKGROOT/usr/lib/tmpfiles.d/mayi.conf"
+install -m 0644 "$ROOT/man/mayi.1" "$PKGROOT/usr/share/man/man1/mayi.1"
+install -m 0644 "$ROOT/man/mayi-workflow.7" "$PKGROOT/usr/share/man/man7/mayi-workflow.7"
+gzip -n -9 "$PKGROOT/usr/share/man/man1/mayi.1"
+gzip -n -9 "$PKGROOT/usr/share/man/man7/mayi-workflow.7"
 find "$PKGROOT" -type d -exec chmod 0755 {} +
 chmod 0644 "$PKGROOT/usr/lib/systemd/system/"*.service "$PKGROOT/usr/lib/tmpfiles.d/mayi.conf"
 for script in postinst prerm postrm; do
@@ -37,5 +42,5 @@ for script in postinst prerm postrm; do
   chmod 0755 "$PKGROOT/DEBIAN/$script"
 done
 "$TPA_BIN" build -in="$PKGROOT" \
-  -out="$OUT/mayi_0.3.1_amd64.deb"
-sha256sum "$OUT/mayi_0.3.1_amd64.deb"
+  -out="$OUT/mayi_0.3.2_amd64.deb"
+sha256sum "$OUT/mayi_0.3.2_amd64.deb"

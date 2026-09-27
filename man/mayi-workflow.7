@@ -1,4 +1,4 @@
-.TH MAYI-WORKFLOW 7 "2026-09-26" "Mayi 0.3.1" "Mayi Manual"
+.TH MAYI-WORKFLOW 7 "2026-09-27" "Mayi 0.3.2" "Mayi Manual"
 .SH NAME
 mayi-workflow \- requester and approver guide for Mayi's exact-command approval workflow
 .SH DESCRIPTION
@@ -182,10 +182,10 @@ An assistant may help format a request, explain a displayed dependency graph, or
 .PP
 Before an approval, the approver must assess the exact command and every argument shown. Do not approve a set merely because it came from a trusted requester or because one prerequisite looks harmless. If intent, executable, argv, requester, or dependency semantics are unclear, skip the set or request clarification rather than approving it. The console is a broad root-execution authority, not a command-safety analyzer.
 .SH LIFETIME AND LIMITS
-Queue state and results are held in broker memory. A broker restart invalidates pending approvals and retained results; Mayi does not persist or replay queued requests. Observe results before planned broker restarts. Requests and approvals expire; queue approvals expire after 24 hours. Queue capacity is bounded (128 retained requests globally and eight active requests per requester).
+Queue state and results are held in broker memory. A broker restart invalidates pending approvals and retained results; Mayi does not persist or replay queued requests. Observe results before planned broker restarts. Requests and approvals expire; queue approvals expire after 24 hours. The broker retains at most 128 request records globally and allows at most eight active requests per requester. Non-running queued requests expire after 24 hours.
 .PP
 Mayi execution is at-most-once, not transactional. A command can partially change system state before failing, and an ambiguous execution result is not automatically retried. Review actual system state when a command fails or returns an unknown result.
 .SH SEE ALSO
 Project documentation: README.md, executor/package/README.md, and DEBIAN_COMPATIBILITY.md.
 .SH SECURITY NOTE
-This manual explains the approval workflow; it does not grant authorization or replace the installed broker's checks. Never bypass NSS role authorization, peer-credential checks, exact executable/argv binding, one-shot execution, dependency enforcement, or fail-closed socket recovery. The filesystem executor is disconnected and **INCOMPLETE**.
+This manual explains the approval workflow; it does not grant authorization or replace the installed broker's checks. Never bypass NSS role authorization, peer-credential checks, exact executable/argv binding, one-shot execution, dependency enforcement, or fail-closed socket recovery. The filesystem executor is disconnected and INCOMPLETE.
