@@ -1,6 +1,6 @@
 # Mayi package and deployment qualification record
 
-> Release/qualification history, not a step-by-step user guide. Mayi's stable runtime baseline is 0.4.1; Debian package revision 0.4.1-1 is the qualified next package revision, pending TPA.run publication. Older version sections are historical. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
+> Release/qualification history, not a step-by-step user guide. Mayi's stable runtime baseline is 0.4.1; Debian package revision 0.4.1-1 is published through TPA.run and verified by an isolated APT consumer. Older version sections are historical. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
 
 ## MIT/contact metadata packaging revision — 0.4.1-1 (2026-09-27)
 
@@ -35,7 +35,13 @@ Queue/result persistence across broker restart remains **NOT CLAIMED**. The file
 
 ### TPA.run publication and APT consumer verification
 
-Publication and consumer evidence remain pending. TPA staging was not empty: it contained 104 unrelated staged SSH test packages. To avoid publishing or disturbing unrelated packages, no Mayi package was staged and no publication was attempted. Before publication, clear/resolve that unrelated workspace, reconfirm this package identity is absent, stage only the exact qualified artifact, then record its upload and isolated APT-consumer evidence here.
+- Confirmed public `bootstrap`, repository ID `f102d36c2eca9bbaa8ddcff08b3c645f`, canonical URL `https://tpa.run/r/tparun/bootstrap`.
+- Before cleanup, revalidated all 104 existing staging records: each staged path was a regular file strictly beneath `/tmp/tpahub/staging/artifacts/`, with matching recorded size, SHA-256, and package identity. Cleared the local staging workspace with `tparun unstage --all`; no original source paths were touched and no remote publication/repository operation was requested. The manifest now has zero artifact records and `tparun status` reports no packages staged.
+- Refreshed isolated APT metadata with only the bootstrap source before publication. It advertised `mayi 0.4.1` and did not contain `0.4.1-1`; source attribution was unambiguous.
+- Staged only the exact qualified `mayi 0.4.1-1 amd64` artifact. Its staged copy was independently checked as a regular file, size 481320 bytes, with the expected package identity and SHA-256 `665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8`.
+- `tparun publish --yes https://tpa.run/r/tparun/bootstrap` completed successfully: one package published and local staging cleared. Post-publication `tparun status` was empty. TPA.run's staged-artifact/upload verification completed successfully.
+- Refreshed the isolated bootstrap-only APT state. It advertises `mayi 0.4.1-1` and `0.4.1`, with `0.4.1-1` as candidate and unambiguous source attribution. Downloaded `mayi=0.4.1-1` without installing it; SHA-256 `665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8` matches the qualified and staged artifacts. Package metadata is `mayi`, `0.4.1-1`, `amd64`, maintainer `Eugen Lupricht <mayi@lupricht.net>`; `/usr/share/doc/mayi/copyright` contains the MIT license.
+- Exact artifact chain verified: qualified artifact = staged artifact = APT-downloaded artifact. No rebuild or deployment occurred.
 
 ## Approval-console UX refresh — package 0.4.1 (2026-09-27)
 

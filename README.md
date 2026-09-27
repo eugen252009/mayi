@@ -17,7 +17,7 @@ privileged executor
 
 ## Status
 
-**STABLE / MAINTENANCE — Mayi 0.4.1 is the current stable feature baseline.** The qualified Debian package revision 0.4.1-1 corrects maintainer/license metadata and carries the current documentation; it does not claim a runtime feature change. Its TPA.run publication is pending. Mayi is maintained, not abandoned.
+**STABLE / MAINTENANCE — Mayi 0.4.1 is the current stable feature baseline.** The qualified Debian package revision 0.4.1-1 corrects maintainer/license metadata and carries the current documentation; it does not claim a runtime feature change. It is published through TPA.run and verified by an isolated APT consumer. Mayi is maintained, not abandoned.
 
 - Feature development is frozen unless driven by a concrete requirement.
 - Bug fixes, security fixes, and documentation fixes remain allowed.
@@ -43,17 +43,17 @@ The display shows the resolved executable and argv[0] separately. For example, i
 
 ## Installation
 
-The original 0.4.1 Debian package is available from the public TPA.run `bootstrap` APT repository. Package revision 0.4.1-1 is qualified but not yet published; use 0.4.1 until APT advertises the new revision. Package availability is separate from local role configuration: installing Mayi does **not** add users to either role group.
+The Debian package revision 0.4.1-1 is available from the public TPA.run `bootstrap` APT repository. Verify that APT advertises this revision from the bootstrap repository before using it. Package availability is separate from local role configuration: installing Mayi does **not** add users to either role group.
 
-On a supported Debian amd64 system with the signed TPA.run `bootstrap` APT source already configured, refresh package metadata, confirm the exact 0.4.1 candidate, and install that release:
+On a supported Debian amd64 system with the signed TPA.run `bootstrap` APT source already configured, refresh package metadata, confirm the exact 0.4.1-1 candidate, and install that package revision:
 
 ```sh
 sudo apt update
 apt-cache policy mayi
-sudo apt install mayi=0.4.1
+sudo apt install mayi=0.4.1-1
 ```
 
-The repository is `https://tpa.run/r/tparun/bootstrap`; its signed [`InRelease`](https://tpa.run/r/tparun/bootstrap/dists/stable/InRelease) metadata is consumer-visible. If the TPA.run archive keyring/source is not configured, use TPA.run's current official bootstrap procedure first. Do not add an unsigned source or bypass APT signature verification. Stop if APT does not offer the expected Mayi 0.4.1 package from the intended repository. The package-install command above is initial bootstrap, before Mayi is available. Installing packages and configuring local accounts require system-administrator authority. After Mayi is installed, use Mayi's approval workflow for privileged operations when it is available; do not use a second escalation path to work around a rejected request. Package publication does not install or deploy Mayi on any host.
+The repository is `https://tpa.run/r/tparun/bootstrap`; its signed [`InRelease`](https://tpa.run/r/tparun/bootstrap/dists/stable/InRelease) metadata is consumer-visible. If the TPA.run archive keyring/source is not configured, use TPA.run's current official bootstrap procedure first. Do not add an unsigned source or bypass APT signature verification. Stop if APT does not offer the expected Mayi 0.4.1-1 package from the intended repository. The package-install command above is initial bootstrap, before Mayi is available. Installing packages and configuring local accounts require system-administrator authority. After Mayi is installed, use Mayi's approval workflow for privileged operations when it is available; do not use a second escalation path to work around a rejected request. Package publication does not install or deploy Mayi on any host.
 
 ## Initial setup
 
@@ -172,7 +172,7 @@ Qualification evidence concerns the exact 0.4.1-1 package, not every locally reb
 ## Stable release and maintenance
 
 - Stable feature baseline: **0.4.1**, release tag `v0.4.1`, release commit `9b3c69a292a36155d5994fa8b55da5cdc7f67ac4`.
-- Qualified next package revision: **0.4.1-1**, a packaging/documentation correction to maintainer/license metadata; the application/runtime remains 0.4.1. TPA.run publication is pending.
+- Published package revision: **0.4.1-1**, a packaging/documentation correction to maintainer/license metadata; the application/runtime remains 0.4.1. Publication and isolated APT consumer verification are recorded in [`MVP_QUALIFICATION.md`](MVP_QUALIFICATION.md).
 - Qualified package: `executor/target/debian/mayi_0.4.1-1_amd64.deb`, SHA-256 `665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8`.
 - The original qualified 0.4.1 package remains unchanged at `executor/target/debian/mayi_0.4.1_amd64.deb`, SHA-256 `22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0`.
 - Distribution: public TPA.run `bootstrap` repository through APT (see its signed [`InRelease`](https://tpa.run/r/tparun/bootstrap/dists/stable/InRelease) metadata). Publication is not deployment.
