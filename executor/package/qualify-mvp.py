@@ -4,6 +4,7 @@ import json
 import os
 import pty
 import select
+import secrets
 import subprocess
 import sys
 import time
@@ -12,13 +13,16 @@ from concurrent.futures import ThreadPoolExecutor
 NAME = os.environ.get("MAYI_TEST_CONTAINER")
 MODE = os.environ.get("MAYI_TEST_MODE", "fresh")
 TARGET_VERSION = os.environ.get("MAYI_TARGET_VERSION", "0.3.1")
+# Qualification-only random values stay in process memory and disposable containers.
+APPROVER_PASSWORD = secrets.token_urlsafe(32)
+WRONG_PASSWORD = secrets.token_urlsafe(32)
 SYSTEMD_MODE = os.environ.get("MAYI_TEST_SYSTEMD", "0") == "1"
 APT_MODE = os.environ.get("MAYI_TEST_APT", "0") == "1"
 KEEP_PACKAGE = os.environ.get("MAYI_TEST_KEEP_PACKAGE", "0") == "1"
-if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031"}:
-    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031 are required")
-if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2"}:
-    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, or 0.3.2")
+if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032"}:
+    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031|upgrade032 are required")
+if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0"}:
+    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, 0.3.2, or 0.4.0")
 
 USERS = {
     "both": (1000, 1000, (23011, 23013)),
@@ -30,8 +34,11 @@ USERS = {
 }
 
 
-def docker(*args, check=True, timeout=30):
-    result = subprocess.run(["docker", "exec", NAME, *map(str, args)],
+def docker(*args, check=True, timeout=30, input=None):
+    command = ["docker", "exec"]
+    if input is not None:
+        command.append("-i")
+    result = subprocess.run([*command, NAME, *map(str, args)], input=input,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     if check and result.returncode:
         raise RuntimeError(f"docker exec {args!r} failed ({result.returncode}): {result.stderr.decode(errors='replace')}")
@@ -46,8 +53,10 @@ def command_path(name):
     raise RuntimeError(f"required system command is unavailable: {name}")
 
 
-def setpriv_args(uid, gid, groups):
-    args = ["/usr/bin/setpriv", "--no-new-privs", f"--reuid={uid}", f"--regid={gid}"]
+def setpriv_args(uid, gid, groups, no_new_privs=True):
+    args = ["/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}"]
+    if no_new_privs:
+        args.insert(1, "--no-new-privs")
     if groups:
         args.append("--groups=" + ",".join(map(str, groups)))
     else:
@@ -100,7 +109,7 @@ def approve_actions(actions, identity="both"):
     uid, gid, groups = USERS[identity]
     master, slave = pty.openpty()
     proc = subprocess.Popen(
-        ["docker", "exec", "-it", NAME, *setpriv_args(uid, gid, groups), "/usr/bin/mayi-approve"],
+        ["docker", "exec", "-it", NAME, *setpriv_args(uid, gid, groups, no_new_privs=TARGET_VERSION != "0.4.0"), "/usr/bin/mayi-approve"],
         stdin=slave, stdout=slave, stderr=slave, close_fds=True,
     )
     os.close(slave)
@@ -118,6 +127,10 @@ def approve_actions(actions, identity="both"):
             raise RuntimeError(f"approval console missed {marker!r}: {output.decode(errors='replace')}")
     try:
         controls = acknowledgements = 0
+        if TARGET_VERSION == "0.4.0":
+            wait_marker(b"Password:")
+            os.write(master, APPROVER_PASSWORD.encode() + b"\n")
+            wait_marker(b"Authenticated.")
         wait_marker(b"[a] allow all")
         controls = 1
         for action, subset in actions:
@@ -147,6 +160,9 @@ def approve_actions(actions, identity="both"):
             raise RuntimeError(f"persistent approval console did not quit: {output.decode(errors='replace')}")
         if proc.returncode != 0:
             raise RuntimeError(f"approval console failed: rc={proc.returncode}, output={output.decode(errors='replace')}")
+        if TARGET_VERSION == "0.4.0":
+            assert output.count(b"Password:") == 1 and output.count(b"Authenticated.") == 1, output
+            assert APPROVER_PASSWORD.encode() not in output, "PAM password was echoed to the terminal"
         while True:
             ready, _, _ = select.select([master], [], [], 0)
             if not ready:
@@ -209,8 +225,8 @@ def queue_command(executable, argv=(), after=(), identity="both"):
     return value.strip()
 
 
-def wait_jobs(request_ids, fail=0, fail_instant=False, timeout=60):
-    uid, gid, groups = USERS["both"]
+def wait_jobs(request_ids, fail=0, fail_instant=False, timeout=60, identity="both"):
+    uid, gid, groups = USERS[identity]
     args = ["/usr/bin/mayi", "--wait", f"--fail={fail}"]
     if fail_instant:
         args.append("--fail-instant")
@@ -229,6 +245,60 @@ def execution_request_ids():
     else:
         logs = docker("sh", "-c", "cat /tmp/executor.log").stdout
     return [line.split(b"request_id=", 1)[1].split()[0].decode() for line in logs.splitlines() if line.startswith(b"event=EXECUTION_STARTED ")]
+
+
+def approval_console_probe(identity="both", password=APPROVER_PASSWORD, env=None, extra_args=()):
+    uid, gid, groups = USERS[identity]
+    master, slave = pty.openpty()
+    env_args = [item for key, value in (env or {}).items() for item in ("--env", f"{key}={value}")]
+    proc = subprocess.Popen(
+        ["docker", "exec", "-it", *env_args, NAME,
+         *setpriv_args(uid, gid, groups, no_new_privs=False), "/usr/bin/mayi-approve", *extra_args],
+        stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    )
+    os.close(slave)
+    output = bytearray()
+    sent = 0
+    deadline = time.monotonic() + 15
+    try:
+        while time.monotonic() < deadline and proc.poll() is None:
+            prompts = output.count(b"Password:")
+            while password is not None and sent < prompts:
+                os.write(master, password.encode() + b"\n")
+                sent += 1
+            if b"Authenticated." in output:
+                while b"Waiting for Mayi requests..." not in output and proc.poll() is None:
+                    ready, _, _ = select.select([master], [], [], 0.1)
+                    if ready:
+                        try:
+                            output.extend(os.read(master, 4096))
+                        except OSError:
+                            break
+                if b"Waiting for Mayi requests..." in output:
+                    os.write(master, b"q\n")
+                    proc.wait(timeout=5)
+                break
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    output.extend(os.read(master, 4096))
+                except OSError:
+                    break
+            if password is None and b"Password:" in output:
+                # Cancel through the PAM conversation so the child restores
+                # terminal state and exits instead of orphaning docker exec.
+                os.write(master, b"\x03\n")
+                proc.wait(timeout=5)
+                break
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5)
+        return proc.returncode, output.decode("utf-8", "replace")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        os.close(master)
 
 
 def console_rejection(identity, injected_group):
@@ -355,6 +425,10 @@ usermod -aG mayi-approver mayi-approver-only
 ''')
     docker("usermod", "-aG", "mayi-requester", "mayi-primary-requester-user")
     docker("usermod", "-aG", "mayi-approver", "mayi-primary-approver-user")
+    if TARGET_VERSION == "0.4.0":
+        accounts = ("mayi-both", "mayi-approver-only", "mayi-primary-approver-user")
+        docker("chpasswd", input="".join(f"{account}:{APPROVER_PASSWORD}\n" for account in accounts).encode())
+        docker("chpasswd", input=f"mayi-unrelated:{WRONG_PASSWORD}\n".encode())
 
 
 def check_roles_and_topology():
@@ -431,8 +505,8 @@ def manpage_qualification():
 
 
 def install_for_mode():
-    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031"}:
-        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1"}.get(MODE, "0.2.0")
+    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032"}:
+        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1", "upgrade032": "0.3.2"}.get(MODE, "0.2.0")
         install_package(baseline)
         create_human_roles()
         requester_groups = docker("id", "-G", "mayi-both").stdout
@@ -464,13 +538,13 @@ def install_for_mode():
         print(f"UPGRADE {baseline} -> {TARGET_VERSION}; MEMBERSHIPS AND LEGACY ACCOUNTS PRESERVED: PASS")
     else:
         install_package(TARGET_VERSION)
-        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2"}:
+        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0"}:
             assert docker("getent", "passwd", "mayi-requester", check=False).returncode != 0
             assert docker("getent", "passwd", "mayi-approver", check=False).returncode != 0
         create_human_roles()
         method = "APT" if APT_MODE else "dpkg"
         print(f"FRESH INSTALL {TARGET_VERSION} VIA {method}: PASS")
-    if TARGET_VERSION == "0.3.2":
+    if TARGET_VERSION in {"0.3.2", "0.4.0"}:
         manpage_qualification()
 
 
@@ -597,6 +671,80 @@ def queue_qualification():
     print("FAIL-INSTANT RETURNS WITHOUT CANCELLING OTHER JOB: PASS")
 
 
+def authentication_qualification():
+    docker("test", "-f", "/etc/pam.d/mayi-approve")
+    pam_config = docker("cat", "/etc/pam.d/mayi-approve").stdout
+    assert b"@include common-auth" in pam_config and b"@include common-account" in pam_config
+
+    launcher = docker_as(*USERS["both"], "/usr/bin/mayi-approve", "--password", check=False)
+    assert launcher.returncode != 0 and b"options are accepted" in launcher.stderr and b"Password:" not in launcher.stderr
+
+    piped = docker(
+        "setpriv", "--no-new-privs", "--reuid=1000", "--regid=1000", "--groups=23011,23013",
+        "/usr/bin/mayi-approve", check=False, input=(APPROVER_PASSWORD + "\n").encode(),
+    )
+    assert piped.returncode != 0 and b"interactive terminal" in piped.stderr
+    assert b"Password:" not in piped.stdout + piped.stderr
+
+    if SYSTEMD_MODE:
+        docker("systemctl", "stop", "mayi-broker.service")
+    else:
+        docker("sh", "-c", "kill $(cat /tmp/broker.pid); sleep .3; rm -f /run/mayi/request/broker.sock /run/mayi/approval/broker.sock")
+    code, output = approval_console_probe(password=WRONG_PASSWORD)
+    assert code != 0 and "Password:" in output and "Authenticated." not in output, output
+    assert "Waiting for Mayi requests" not in output and WRONG_PASSWORD not in output
+    broker_restart()
+
+    pending = queue_command(command_path("true"), identity="requester")
+    code, output = approval_console_probe(password=WRONG_PASSWORD)
+    assert code != 0 and "Authenticated." not in output and "Waiting for Mayi requests" not in output, output
+    assert "Commands:" not in output and pending not in output and WRONG_PASSWORD not in output
+    code, output = approval_console_probe(password=WRONG_PASSWORD, env={"PAM_USER": "mayi-unrelated"})
+    assert code != 0 and "Authenticated." not in output and "Waiting for Mayi requests" not in output, output
+
+    docker("chage", "-E", "1", "mayi-both")
+    try:
+        code, output = approval_console_probe(password=APPROVER_PASSWORD)
+    finally:
+        docker("chage", "-E", "-1", "mayi-both")
+    assert code != 0 and "Authenticated." not in output and "Waiting for Mayi requests" not in output, output
+    assert pending not in output and "Commands:" not in output
+
+    code, output = approval_console_probe(password=None, env={"MAYI_PASSWORD": APPROVER_PASSWORD})
+    assert "Password:" in output and "Authenticated." not in output and "Waiting for Mayi requests" not in output, output
+    assert APPROVER_PASSWORD not in output
+
+    docker("mv", "/etc/pam.d/mayi-approve", "/tmp/mayi-approve.pam.saved")
+    try:
+        code, output = approval_console_probe()
+    finally:
+        docker("mv", "/tmp/mayi-approve.pam.saved", "/etc/pam.d/mayi-approve")
+    assert code != 0 and "Authenticated." not in output and "Waiting for Mayi requests" not in output, output
+    assert pending not in output and "Commands:" not in output
+
+    display = approve("a", identity="approver")
+    assert "requester UID: 1001" in display
+    assert wait_jobs([pending], identity="requester").returncode == 0
+
+    ids = [queue_command(command_path("true"), identity="both") for _ in range(2)]
+    before = execution_request_ids()
+    display = approve_actions([("a", "all"), ("a", "all")], identity="both")
+    assert display.count("Password:") == 1 and display.count("Authenticated.") == 1, display
+    assert set(execution_request_ids()[len(before):]) == {request_id[3:] for request_id in ids}
+    assert wait_jobs(ids).returncode == 0
+
+    separate = queue_command(command_path("true"), identity="requester")
+    display = approve("a", identity="approver")
+    assert "requester UID: 1001" in display and "Authenticated." in display
+    assert wait_jobs([separate], identity="requester").returncode == 0
+    if SYSTEMD_MODE:
+        auth_log = docker("journalctl", "-u", "mayi-broker.service", "-o", "cat", "--no-pager").stdout
+    else:
+        auth_log = docker("cat", "/tmp/broker.log").stdout
+    assert APPROVER_PASSWORD.encode() not in auth_log and WRONG_PASSWORD.encode() not in auth_log
+    print("PAM TTY AUTH, NO PREAUTH BROKER ACCESS, SAME/SEPARATE ACCOUNTS, PROCESS-LOCAL SESSION: PASS")
+
+
 def run():
     install_for_mode()
     start_services()
@@ -614,6 +762,8 @@ def run():
     assert code != 0 and "MAYI_UNAUTHORIZED_APPROVER" in error, (code, error)
     assert count_started() == before
     print("REQUESTER/APPROVER GROUP AUTHORIZATION AND CLEAR ERRORS: PASS")
+    if TARGET_VERSION == "0.4.0":
+        authentication_qualification()
 
     # Supplementary requester A and approver B; other members cannot consume A's request.
     before = count_started()

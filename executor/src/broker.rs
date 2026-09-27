@@ -69,7 +69,7 @@ fn peer_credentials(stream: &UnixStream) -> io::Result<PeerCredentials> {
 
 /// None means no passwd/NSS account; Some reports membership using the NSS
 /// account's primary gid and supplementary groups, not client credentials.
-fn uid_in_group(uid: u32, role_gid: u32) -> io::Result<Option<bool>> {
+pub(crate) fn uid_in_group(uid: u32, role_gid: u32) -> io::Result<Option<bool>> {
     let _guard = NSS_GROUP_LOOKUP
         .lock()
         .map_err(|_| io::Error::other("NSS group lookup lock poisoned"))?;

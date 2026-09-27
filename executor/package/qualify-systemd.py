@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real systemd package/socket qualification in isolated Debian 13 containers."""
+"""Real systemd package/authentication/socket qualification in Debian 10–13 containers."""
 import os
 import pathlib
 import subprocess
@@ -19,6 +19,7 @@ PACKAGES = {
     "0.3.0": PACKAGE_DIR / "mayi_0.3.0_amd64.deb",
     "0.3.1": PACKAGE_DIR / "mayi_0.3.1_amd64.deb",
     "0.3.2": PACKAGE_DIR / "mayi_0.3.2_amd64.deb",
+    "0.4.0": PACKAGE_DIR / "mayi_0.4.0_amd64.deb",
 }
 UNIT_EXECUTOR = "mayi-privileged-executor.service"
 UNIT_BROKER = "mayi-broker.service"
@@ -475,7 +476,7 @@ def restart_qualification(name):
 def install_failure_gate(name):
     # Wrong pre-existing group GID simulates a mandatory package-account setup failure.
     dexec(name, "groupadd", "-g", "23010", "mayi-requester")
-    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.3.2'].name}", check=False, timeout=120)
+    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.4.0'].name}", check=False, timeout=120)
     if result.returncode == 0:
         raise AssertionError("mandatory account setup conflict incorrectly configured package")
     status = dexec(name, "dpkg-query", "-W", "-f=${db:Status-Status}", "mayi", check=False)
@@ -487,13 +488,36 @@ def install_failure_gate(name):
     print("MANDATORY PACKAGE SETUP FAILURE → DPKG CONFIGURATION FAILS: PASS")
 
 
+def pam_conffile_lifecycle(name):
+    config = "/etc/pam.d/mayi-approve"
+    package = f"/root/{PACKAGES['0.4.0'].name}"
+    original = dexec(name, "cat", config).stdout
+    if "@include common-auth" not in original or "@include common-account" not in original:
+        raise AssertionError(f"unexpected installed PAM policy: {original!r}")
+    dexec(name, "dpkg", "--remove", "mayi", timeout=120)
+    if dexec(name, "cat", config).stdout != original:
+        raise AssertionError("dpkg remove did not preserve the PAM conffile")
+    dexec(name, "dpkg", "-i", package, timeout=120)
+    if dexec(name, "cat", config).stdout != original:
+        raise AssertionError("reinstall replaced the preserved PAM conffile")
+    marker = "# local qualification customization\n"
+    dexec(name, "sh", "-c", "printf '\\n# local qualification customization\\n' >> /etc/pam.d/mayi-approve")
+    dexec(name, "dpkg", "--force-confold", "-i", package, timeout=120)
+    if marker not in dexec(name, "cat", config).stdout:
+        raise AssertionError("package reinstall overwrote a locally modified PAM conffile")
+    dexec(name, "dpkg", "--purge", "mayi", timeout=120)
+    if dexec(name, "test", "!", "-e", config, check=False).returncode != 0:
+        raise AssertionError("dpkg purge did not remove the PAM conffile")
+    print("PAM CONFFILE REMOVE/REINSTALL/PRESERVE/PURGE: PASS")
+
+
 def qualify_environment(name, mode):
     start_container(name)
     env = os.environ.copy()
     env.update({
         "MAYI_TEST_CONTAINER": name,
         "MAYI_TEST_MODE": mode,
-        "MAYI_TARGET_VERSION": "0.3.2",
+        "MAYI_TARGET_VERSION": "0.4.0",
         "MAYI_TEST_SYSTEMD": "1",
         "MAYI_TEST_APT": "1" if SUITE == "bookworm" and mode == "fresh" else "0",
         "MAYI_TEST_KEEP_PACKAGE": "1",
@@ -509,6 +533,7 @@ def qualify_environment(name, mode):
         sys.executable, SCRIPT,
     ], timeout=900, capture=False)
     restart_qualification(name)
+    pam_conffile_lifecycle(name)
     dexec(name, "systemctl", "stop", UNIT_BROKER, UNIT_EXECUTOR, check=False)
     dexec(name, "dpkg", "--purge", "mayi", check=False, timeout=120)
     run(["docker", "rm", "-f", name], check=False)
@@ -524,15 +549,16 @@ def main():
     expected_030 = "0f356c880d8351f9ca5a05267530b8b9741a08b6b715ee0c9d1fe571ac851e57"
     expected_031 = "9162530d3052389f5b84edef2680e379350bbd79a0981e247628d08a1df1b57e"
     expected_032 = "f5e81423e198cb386584de5a5060d429733b9205499ca73f5a76a512729159b1"
-    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032)):
+    expected_040 = "d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86"
+    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032), ("0.4.0", expected_040)):
         actual = subprocess.check_output(["sha256sum", str(PACKAGES[version])], text=True).split()[0]
         if actual != expected:
             raise SystemExit(f"{version} package hash mismatch: {actual}")
     run(["docker", "build", "--build-arg", f"DEBIAN_SUITE={SUITE}", "-t", IMAGE, SYSTEMD_IMAGE], timeout=900, capture=False)
     if SUITE == "trixie":
-        modes = ("fresh", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031")
+        modes = ("fresh", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032")
     else:
-        modes = ("fresh", "upgrade031")
+        modes = ("fresh", "upgrade031", "upgrade032")
     suffixes = (*modes, "failure")
     names = [f"mayi-systemd-{SUITE}-{os.getpid()}-{suffix}" for suffix in suffixes]
     passed = False
@@ -554,7 +580,7 @@ def main():
                 if logs.stdout:
                     print(logs.stdout, file=sys.stderr)
             print("FAILED qualification containers retained for diagnosis:", *names, file=sys.stderr)
-    print(f"{SUITE}: FRESH + {', '.join(modes[1:])} + MANPAGES/QUEUE/SYSTEMD LIFECYCLE QUALIFICATION: PASS")
+    print(f"{SUITE}: FRESH + {', '.join(modes[1:])} + PAM/MANPAGES/QUEUE/SYSTEMD LIFECYCLE QUALIFICATION: PASS")
 
 
 if __name__ == "__main__":

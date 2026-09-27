@@ -4,6 +4,8 @@
 - Do not bypass Mayi with `sudo`, `su`, `pkexec`, an improvised root shell, or another escalation path. For current syntax and behavior, consult `man mayi` and `man mayi-workflow` when needed.
 - If Mayi rejects an operation, do not wrap it in a shell or move/copy scripts or executables to evade its restrictions. Report the blocker or find a narrower legitimate operation.
 - After an approved privileged operation, verify the result with unprivileged/read-only commands where possible.
+- Mayi request submission and approval are separate authorities. During actual operations, an agent may submit a request when authorized but must not invoke or automate the human approver's PAM authentication, request/accept an approver password, or handle/replay credentials. The approver must use their own interactive TTY; passwords must never be placed in argv, environment variables, or piped stdin. Automated authentication tests are allowed only in disposable qualification environments with synthetic accounts and credentials; never use real credentials or the real host.
+- Approval-console authentication is per process. Do not claim authentication survives exit/restart; do not bypass it using direct broker access or another identity.
 
 # Package publication
 

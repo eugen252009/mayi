@@ -1,0 +1,4 @@
+#%PAM-1.0
+# Use the host's configured authentication and account policy.
+@include common-auth
+@include common-account

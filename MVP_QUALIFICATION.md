@@ -1,5 +1,52 @@
 # Mayi package and deployment qualification record
 
+## PAM-authenticated approver sessions — package 0.4.0 (2026-09-27)
+
+### Scope and security outcome
+
+Mayi 0.4.0 adds an authenticated local entry gate to `mayi-approve` while preserving Protocol 5 and all broker-side peer-UID/group/view/one-shot checks. Before any approval-socket connection or request display, the console requires a controlling interactive TTY, verifies the actual calling UID's fixed approver-group membership (GID 23013), resolves that UID's NSS username, and authenticates the same account through the dedicated root-owned `/etc/pam.d/mayi-approve` service. The service file is required, regular, root-owned, single-link, and not group/world writable; absence or unsafe metadata fails closed rather than falling back to PAM's `other` service. The actual controlling terminal path is supplied to PAM as `PAM_TTY` so host account policy can apply terminal-specific rules. PAM includes the host's common authentication and account policies. Echo-off responses are read from `/dev/tty`; PAM-supplied terminal controls are escaped, catchable cancellation signals restore terminal state, and unsupported echo-on prompts and conversation errors fail closed. The console accepts no options and does not consume password credentials from argv, environment, or piped stdin. Password input is zeroed in the client-owned buffer, and the PAM response buffer is cleared on local conversation failure. A successful PAM handle is ended immediately; authentication state lives only in the console process, so exit/restart requires fresh authentication.
+
+The change does not alter request authorization, broker queue/approval behavior, privilege boundaries, or restart semantics. Queue/results persistence across broker restart remains **NOT CLAIMED**. The filesystem executor remains **DISCONNECTED / INCOMPLETE**.
+
+### Exact artifact and build provenance
+
+- Package: `executor/target/debian/mayi_0.4.0_amd64.deb` (`mayi 0.4.0 amd64`)
+- SHA-256: `d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86`
+- Dependencies: `adduser`, `init-system-helpers`, `libc6 (>= 2.28)`, `python3 (>= 3.7)`, `man-db`, `libpam0g (>= 1.1.8)`, and `libpam-runtime`.
+- TPA 0.4.0 metadata: `Created-At: 2026-09-27T12:40:21Z`; provenance enabled. Builder source revision is `ab9da01d7728+dirty`.
+- Built in disposable Debian 10.13 (Buster): glibc `2.28-10+deb10u3`, GCC 8.3.0, Rust/Cargo 1.95.0, PAM development library installed. Both native executables have `GLIBC_2.28` as their highest referenced GLIBC symbol.
+- Mayi working tree was dirty and uncommitted at build; clean-source byte-for-byte reproducibility is **not claimed**. The qualified artifact was not rebuilt/replaced during qualification. The 0.3.2 artifact remains byte-for-byte unchanged.
+- No publication, deployment, real-host access, or real-host modification occurred.
+
+### Exact-artifact Debian/systemd qualification matrix
+
+`executor/package/qualify-systemd.py` pinned and verified the artifact hash before each suite. Disposable containers ran systemd as PID 1 with private cgroups, no host mounts, and no runtime network. Fresh installs passed on all suites; upgrades from 0.3.2 passed on all suites. Trixie additionally tested upgrades from 0.2.0, 0.2.1, 0.2.2, 0.3.0, and 0.3.1. Bookworm fresh installation used `apt-get install` on the exact local `.deb`. Every full lifecycle environment passed 100 executor and 100 broker restarts.
+
+| Debian | Result |
+| --- | --- |
+| 10 Buster | Fresh 0.4.0 install; upgrades from 0.3.1 and 0.3.2; PAM, runtime, queue, man-page, conffile, socket, and systemd lifecycle gates PASS. |
+| 11 Bullseye | Same fresh/upgrade and full PAM/runtime/systemd gates PASS. |
+| 12 Bookworm | Same gates PASS; fresh local-package APT install and 0.3.2 upgrade PASS. |
+| 13 Trixie | Fresh install and upgrades from 0.2.0 through 0.3.2; full gates PASS. |
+
+### PAM-specific qualification
+
+| Gate | Result |
+| --- | --- |
+| Eligible user + valid PAM password on controlling PTY; echo disabled; process reaches approval console | PASS |
+| Wrong password, PAM service-file removal, PAM account/PAM policy failure | PASS — no authenticated console or pending-request display |
+| Broker stopped during failed-auth probe | PASS — password prompt occurs before any broker connection; auth fails without broker |
+| Same account in requester and approver groups | PASS — one authentication supports multiple decisions within the same process |
+| Separate requester-only and approver-only accounts | PASS — requester UID is preserved; approver UID is the actual PAM-authenticated caller |
+| Primary-GID and supplementary-GID role membership | PASS |
+| PAM username environment spoof and `MAYI_PASSWORD` environment variable | PASS — neither substitutes for TTY authentication of the calling NSS UID |
+| `mayi-approve --password`, piped stdin, and non-interactive invocation | PASS — rejected without reading a password |
+| Authentication state after process exit/restart | PASS — a new console process authenticates again |
+| PAM conffile remove/reinstall, local modification preservation, purge | PASS |
+| PAM password absent from terminal output and broker logs | PASS |
+
+The legacy fake-broker PTY unit suite is skipped in ordinary host pytest because it predates the mandatory PAM gate; the package qualification uses disposable accounts and PTYs and exercises the installed console end-to-end. Repository checks: Rust **74 + 5**, including PTY cancellation/terminal-echo restoration and PAM terminal-control sanitization tests; Clippy with warnings denied; Python **51 passed, 9 skipped** (including **2** approval-launcher tests; nine legacy console PTY cases skipped); Python/shell syntax, formatting, `git diff --check`, and groff rendering.
+
 ## Man-page package release 0.3.2 (2026-09-27)
 
 ### Scope and outcome

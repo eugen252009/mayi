@@ -1,12 +1,13 @@
 //! mayi executor. Protocol-v5 broker holds approval state; mutation remains disabled.
 mod broker;
 mod filesystem;
+mod pam_auth;
 use serde_json::Value;
 use std::{
     env,
     ffi::CString,
     fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -17,6 +18,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 const MAX_MESSAGE: usize = 512 * 1024;
+const APPROVER_GID: u32 = 23013;
 static BROKER_SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn request_broker_shutdown(_: libc::c_int) {
@@ -410,6 +412,65 @@ fn serve(_p: PathBuf, _once: bool, _fake: Option<PathBuf>) -> io::Result<()> {
     ))
 }
 
+fn approval_console_authenticated(path: PathBuf, broker_uid: u32) -> io::Result<()> {
+    let uid = unsafe { libc::getuid() };
+    let euid = unsafe { libc::geteuid() };
+    if uid == 0 || euid != uid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "approval console requires the calling user without set-user-ID privileges",
+        ));
+    }
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1
+        || unsafe { libc::isatty(libc::STDOUT_FILENO) } != 1
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "approval authentication requires an interactive terminal",
+        ));
+    }
+    match broker::uid_in_group(uid, APPROVER_GID)? {
+        Some(true) => {}
+        Some(false) | None => {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("MAYI_UNAUTHORIZED_APPROVER: UID {uid} is not in the approver group"),
+            ));
+        }
+    }
+    let tty = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC)
+        .open("/dev/tty")?;
+    let tty_fd = tty.as_raw_fd();
+    if unsafe { libc::isatty(tty_fd) } != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "approval authentication requires a controlling terminal",
+        ));
+    }
+
+    println!("Mayi approval authentication");
+    io::stdout().flush()?;
+    let authenticated = pam_auth::authenticate_current("mayi-approve", uid, tty_fd)?;
+    if !authenticated {
+        eprintln!("event=APPROVAL_AUTH_FAILURE approver_uid={uid}");
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Authentication failed.",
+        ));
+    }
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+        eprintln!("event=APPROVAL_AUTH_FAILURE approver_uid={uid} reason=dumpable_lock_failed");
+        return Err(io::Error::last_os_error());
+    }
+    println!("Authenticated.");
+    io::stdout().flush()?;
+    eprintln!("event=APPROVAL_AUTH_SUCCESS approver_uid={uid}");
+    broker::approval_console(path, broker_uid)
+}
+
 fn main() {
     let a: Vec<String> = env::args().collect();
     if a.iter().any(|x| x == "--approval-console") {
@@ -419,26 +480,25 @@ fn main() {
             eprintln!("approval console cannot be combined with fake-root/dry-run/stdio");
             std::process::exit(2)
         }
-        let path = a
-            .iter()
-            .position(|x| x == "--approval-socket")
-            .and_then(|i| a.get(i + 1))
-            .map(PathBuf::from);
-        let uid = a
-            .iter()
-            .position(|x| x == "--broker-uid")
-            .and_then(|i| a.get(i + 1))
-            .and_then(|x| x.parse::<u32>().ok());
-        match (path, uid) {
-            (Some(p), Some(u)) => {
-                if let Err(e) = broker::approval_console(p, u) {
-                    eprintln!("mayi approval console: {e}");
+        let parsed = if a.len() == 6
+            && a[1] == "--approval-console"
+            && a[2] == "--approval-socket"
+            && a[4] == "--broker-uid"
+        {
+            Some((PathBuf::from(&a[3]), a[5].parse::<u32>().ok()))
+        } else {
+            None
+        };
+        match parsed {
+            Some((path, Some(broker_uid))) => {
+                if let Err(error) = approval_console_authenticated(path, broker_uid) {
+                    eprintln!("mayi approval console: {error}");
                     std::process::exit(1)
                 }
                 return;
             }
             _ => {
-                eprintln!("--approval-console requires --approval-socket PATH --broker-uid UID");
+                eprintln!("--approval-console requires --approval-socket PATH --broker-uid UID and accepts no other options");
                 std::process::exit(2)
             }
         }

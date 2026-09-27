@@ -1,4 +1,4 @@
-.TH MAYI 1 "2026-09-27" "Mayi 0.3.2" "User Commands"
+.TH MAYI 1 "2026-09-27" "Mayi 0.4.0" "User Commands"
 .SH NAME
 mayi \- submit an exact command for human approval or manage queued requests
 .SH SYNOPSIS
@@ -223,11 +223,24 @@ Mayi preserves the executable and argv as structured data; it does not reinterpr
 .B /bin/sh -c ... ,
 will run as that shell if an approver authorizes it. The approver must assess the displayed command, arguments, requester UID, and dependency relationships.
 .PP
-Requester and approver roles are authorized through NSS-backed groups. The broker authenticates peer UIDs with
+Requester and approver roles are authorized through NSS-backed groups. Before opening the broker connection or displaying requests,
+.B mayi-approve
+requires the actual calling UID to belong to the configured approver group and authenticates that UID through PAM service
+.BR mayi-approve .
+Authentication requires a controlling interactive terminal and is valid only while that console process remains alive. The PAM conversation reads responses directly from the terminal with echo disabled; passwords are not accepted through command-line options, environment variables, or piped standard input. A failed or unavailable PAM policy fails closed. Membership in both requester and approver groups is supported.
+.PP
+The broker independently authenticates peer UIDs with
 .BR SO_PEERCRED ;
 the privileged executor separately requires the exact configured broker UID. The executor revalidates the executable/argv and runs with a cleared, fixed environment. Mayi is human-gated root execution, not a command-safety analyzer or semantic allowlist.
 .PP
 Execution is at most once, not transactional: a command can partially change system state before failing or returning an ambiguous result. Mayi does not retry ambiguous execution. Filesystem operations remain disconnected from the privileged executor.
+.SH APPROVER AUTHENTICATION
+.B mayi-approve
+accepts no command-line options. It first checks the calling user's NSS-backed approver-group membership, then authenticates that same Unix account using the host's PAM policy configured by
+.IR /etc/pam.d/mayi-approve .
+Only after successful PAM authentication does it connect to the broker or display pending requests. A password is entered at the controlling terminal and is not echoed. Non-interactive invocation, authentication failure, account denial, or PAM failure does not fall back to broker-only authorization.
+.PP
+Authentication state is held only by the running console process. Multiple approval decisions in that process use the same successful authentication; exiting or restarting the console requires authenticating again. The broker's peer-UID, approver-group, request-view, and one-shot decision checks remain independently enforced.
 .SH FILES
 .TP
 .I /run/mayi/request/broker.sock
@@ -236,6 +249,9 @@ Requester/broker Unix-domain socket.
 .I /run/mayi/approval/broker.sock
 Approver/broker Unix-domain socket used by
 .BR mayi-approve .
+.TP
+.I /etc/pam.d/mayi-approve
+PAM service configuration includes the host's common authentication and account policy.
 .TP
 .I /usr/libexec/mayi/privileged-executor
 Separate privileged command executor managed by systemd.

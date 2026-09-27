@@ -1,11 +1,11 @@
 {
   "control": {
     "name": "mayi",
-    "version": "0.3.2",
+    "version": "0.4.0",
     "architecture": "amd64",
     "maintainer": "Mayi Qualification <security@example.invalid>",
     "description": "Human-approved exact-command privilege broker",
-    "depends": "adduser, init-system-helpers, libc6 (>= 2.28), python3 (>= 3.7), man-db",
+    "depends": "adduser, init-system-helpers, libc6 (>= 2.28), python3 (>= 3.7), man-db, libpam0g (>= 1.1.8), libpam-runtime",
     "section": "admin",
     "priority": "optional"
   },

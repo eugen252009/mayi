@@ -1,6 +1,16 @@
-# Debian compatibility qualification — Mayi 0.3.1
+# Debian compatibility qualification — Mayi
 
-This page preserves the original 0.3.1 artifact qualification record. The packaging-only 0.3.2 artifact was independently tested on Debian 10–13, including fresh installs, 0.3.1 upgrades, installed man-page lookup, and runtime/systemd lifecycle checks; see the 0.3.2 evidence in [MVP_QUALIFICATION.md](MVP_QUALIFICATION.md).
+This page preserves the original 0.3.1 artifact qualification record and subsequent package qualification records.
+
+## Mayi 0.4.0 PAM-authenticated approval qualification (2026-09-27)
+
+The exact `mayi 0.4.0 amd64` artifact, SHA-256 `d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86`, passed disposable Debian 10–13 systemd qualification. It retains the Debian 10 glibc 2.28 / Python 3.7 floor and adds `libpam0g (>= 1.1.8)` plus `libpam-runtime`. Native executables require at most `GLIBC_2.28`.
+
+Fresh installs and upgrades from 0.3.2 passed on Debian 10, 11, 12, and 13. Trixie additionally passed upgrades from 0.2.0, 0.2.1, 0.2.2, 0.3.0, and 0.3.1. Debian 12 fresh installation used APT on the local package. Each full systemd lifecycle run passed 100 executor and 100 broker restarts. The isolated auth gates verified PAM failure and account/PAM-file denial, same-account and separate requester/approver identities, actual-UID PAM username binding, no broker access/request display before auth, interactive TTY and echo-disabled prompt, rejection of argv/environment/piped-stdin credential channels, process-local auth, and PAM conffile preservation/purge behavior. Runtime, queue, man-page, socket, and systemd checks also passed.
+
+The build used a disposable Debian 10.13 environment with glibc 2.28-10+deb10u3, GCC 8.3.0, and Rust/Cargo 1.95.0. TPA 0.4.0 metadata records `Created-At: 2026-09-27T12:40:21Z`; provenance is enabled. The source tree was dirty and uncommitted; clean-source byte-for-byte reproducibility is not claimed. No publication, deployment, or real-host access/modification occurred. Queue persistence remains unclaimed across broker restart; filesystem execution remains disconnected and **INCOMPLETE**. See [MVP_QUALIFICATION.md](MVP_QUALIFICATION.md) for the complete record.
+
+The packaging-only 0.3.2 artifact was independently tested on Debian 10–13, including fresh installs, 0.3.1 upgrades, installed man-page lookup, and runtime/systemd lifecycle checks; see the 0.3.2 evidence in [MVP_QUALIFICATION.md](MVP_QUALIFICATION.md).
 
 **Result (2026-09-26):** Debian 10 (Buster) is the oldest technically compatible Debian release tested. Debian 9 (Stretch) is below the package's Python floor. This is a technical compatibility result, not a recommendation to operate an end-of-life OS: Debian 10 LTS ended in June 2024, and Debian 11 LTS ended on 2026-08-31. For a currently maintained Debian OS, use Debian 12 or newer. The administrator later reported manual deployment and smoke testing on the real Debian 12.15 host; this repository qualification/consolidation did not access or modify it.
 

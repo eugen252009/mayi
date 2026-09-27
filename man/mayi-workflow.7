@@ -1,4 +1,4 @@
-.TH MAYI-WORKFLOW 7 "2026-09-27" "Mayi 0.3.2" "Mayi Manual"
+.TH MAYI-WORKFLOW 7 "2026-09-27" "Mayi 0.4.0" "Mayi Manual"
 .SH NAME
 mayi-workflow \- requester and approver guide for Mayi's exact-command approval workflow
 .SH DESCRIPTION
@@ -6,11 +6,13 @@ Mayi submits an exact executable and argument vector (argv) for human approval. 
 .PP
 A queued request is executed at most once, and only after it has been approved and all of its dependencies have succeeded. A dependency does not inherit approval from its parent: every command in a chain must be explicitly approved. The executor runs approved commands with root privileges. Treat every approval as authorization to run the displayed executable with the displayed arguments.
 .SH ROLES
-The requester must be authorized through the NSS group configured for Mayi requesters. The approver must be authorized through the configured approver group and use an interactive terminal. Run one persistent
+The requester must be authorized through the NSS group configured for Mayi requesters. Before it connects to the broker or displays requests,
 .B mayi-approve
-console as the intended approver. Do not run it as root; approval-console decisions are bound to the authenticated approver UID.
+requires the actual calling UID to be a member of the configured approver group and authenticates that same Unix account with the host's PAM policy. It requires a controlling interactive terminal; passwords are entered there with echo disabled and are never accepted through argv, environment variables, or piped stdin. PAM or account-policy failure denies access. Run one persistent
+.B mayi-approve
+console as the intended human approver. Do not run it as root; approval-console decisions remain bound to the authenticated peer UID and broker views.
 .PP
-The requester and approver may be different users or the same authorized user. A role permits use of that role; it does not replace the UID identity recorded on a request. Mayi's broker and executor perform their own authorization checks.
+The requester and approver may be different users or the same authorized user. A user in both role groups may submit requests and approve them after PAM authentication; separate requester-only and approver-only accounts are also supported. PAM authentication state lasts only for the lifetime of one console process; each new process or restart requires fresh authentication. Multiple decisions in one live console do not repeat PAM authentication. A role permits use of that role; it does not replace the UID identity recorded on a request. Mayi's broker and executor perform their own authorization checks.
 .SH REQUESTER WORKFLOW
 .SS Synchronous request
 For one request that should block until the approver decides, run:
@@ -177,7 +179,7 @@ rq_<second-id> SUCCEEDED mayi=0 child=0
 If only a subset is approved, the remaining requests stay pending. The requester may keep waiting, query status, or have the approver handle the remaining set. Do not report a request as completed merely because the console printed
 .B "Approved: ...".
 .SH OPERATOR AND LLM GUIDANCE
-An assistant may help format a request, explain a displayed dependency graph, or interpret result lines. It must not treat submission, an ID being returned, a request being displayed, or an approval acknowledgement as proof that execution completed. Completion is established by the terminal status/result, normally
+An assistant may help format a request, explain a displayed dependency graph, or interpret result lines. It may submit requests as the authorized requester, but it must not invoke or automate the human approver's PAM authentication, request or handle an approver password, or treat a requester's identity as approval authority. The human approver must start and authenticate their own console. An assistant must not treat submission, an ID being returned, a request being displayed, or an approval acknowledgement as proof that execution completed. Completion is established by the terminal status/result, normally
 .B SUCCEEDED mayi=0 child=0 .
 .PP
 Before an approval, the approver must assess the exact command and every argument shown. Do not approve a set merely because it came from a trusted requester or because one prerequisite looks harmless. If intent, executable, argv, requester, or dependency semantics are unclear, skip the set or request clarification rather than approving it. The console is a broad root-execution authority, not a command-safety analyzer.
