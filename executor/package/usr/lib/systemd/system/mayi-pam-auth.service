@@ -1,0 +1,37 @@
+[Unit]
+Description=Mayi broker-side PAM authentication service
+After=local-fs.target
+StartLimitIntervalSec=60s
+StartLimitBurst=30
+
+[Service]
+Type=simple
+User=root
+Group=mayi-broker-socket
+ExecStart=/usr/bin/mayi-executor --pam-auth-socket /run/mayi/pam-auth/auth.sock --broker-uid 23002 --socket-gid 23012
+Restart=on-failure
+RestartSec=1s
+RuntimeDirectory=faillock
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+UMask=0077
+# pam_unix requires authority to authenticate a different local UID. Keep the
+# helper root-owned but grant only CAP_DAC_READ_SEARCH; it never handles Mayi
+# authorization state or executes requester-selected commands.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=/run/mayi/pam-auth /run/faillock
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

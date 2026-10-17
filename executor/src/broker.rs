@@ -15,7 +15,10 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs,
     io::{self, Read, Write},
-    os::{fd::AsRawFd, unix::net::UnixStream},
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+        unix::{fs::OpenOptionsExt, net::UnixStream},
+    },
     path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -27,6 +30,8 @@ const VIEW_MAX_LIFETIME: u64 = 60;
 const WORKERS: usize = 8;
 const MAX_RENDERED: usize = 32768;
 const MAX_OPERATION: usize = 128 * 1024;
+const PAM_AUTH_SOCKET: &str = "/run/mayi/pam-auth/auth.sock";
+const PAM_AUTH_UID: u32 = 0;
 const NSS_BUFFER_INITIAL: usize = 16 * 1024;
 const NSS_BUFFER_MAX: usize = 1024 * 1024;
 const MAX_NSS_GROUPS: usize = 65_536;
@@ -143,6 +148,29 @@ pub(crate) fn uid_in_group(uid: u32, role_gid: u32) -> io::Result<Option<bool>> 
         }
         groups.resize(required, 0);
     }
+}
+
+fn approval_authorization_gate<P, A, F>(
+    initial: Result<(), Value>,
+    preflight: P,
+    authenticate: A,
+    final_authorization: F,
+) -> Result<(), Value>
+where
+    P: FnOnce() -> Result<(), Value>,
+    A: FnOnce() -> Result<bool, Value>,
+    F: FnOnce() -> Result<(), Value>,
+{
+    initial?;
+    preflight()?;
+    if !authenticate()? {
+        return Err(response_error(
+            "PAM_AUTHENTICATION_FAILED",
+            "broker-side PAM authentication failed",
+        ));
+    }
+    final_authorization()?;
+    Ok(())
 }
 
 fn role_authorization(peer: PeerCredentials, role_gid: u32, approver: bool) -> Result<(), Value> {
@@ -305,10 +333,9 @@ enum PolicyDecision {
     RequireHumanApproval,
 }
 fn broker_policy(op: &str) -> PolicyDecision {
-    if matches!(
-        op,
-        "exec" | "file_patch" | "file_create" | "file_delete" | "file_move"
-    ) {
+    // Only the connected exact-command path may enter live approval state.
+    // The direct filesystem core remains disconnected, including for queues.
+    if op == "exec" {
         PolicyDecision::RequireHumanApproval
     } else {
         PolicyDecision::Deny
@@ -352,6 +379,24 @@ struct Request {
     mayi_result: Option<i32>,
     blocking_dependency: Option<String>,
 }
+// Called under the broker mutex. The final monotonic sample at each selected
+// request transition is the authorization linearization point, NOT a promise
+// that IPC, process creation, or effects occur before the deadline.
+fn expire_request_at(r: &mut Request, now: Instant) -> bool {
+    if matches!(r.state, State::Pending | State::Approved)
+        && r.queue_state != Some(QueueState::Running)
+        && now >= r.deadline
+    {
+        let _ = transition(&mut r.state, State::Expired);
+        if r.queue_state.is_some() {
+            r.queue_state = Some(QueueState::Expired);
+            r.mayi_result = Some(11);
+        }
+        eprintln!("event=EXPIRED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={}",r.instance,r.challenge,r.digest,r.requester,r.target_uid,r.target_gid);
+    }
+    r.state == State::Expired
+}
+
 struct Broker {
     instance: String,
     challenge_counter: u64,
@@ -918,6 +963,101 @@ impl Broker {
         }
         out
     }
+    fn validate_decision(&mut self, v: &Value, peer: u32) -> Result<(), Value> {
+        self.expire();
+        let Some(o) = v.as_object() else {
+            return Err(response_error("INVALID_PROTOCOL", "message must be object"));
+        };
+        let ty = o.get("type").and_then(Value::as_str).unwrap_or("");
+        if !matches!(
+            ty,
+            "APPROVE_CHALLENGE" | "DENY_CHALLENGE" | "EXPLAIN_CHALLENGE"
+        ) {
+            return Err(response_error(
+                "INVALID_MESSAGE_TYPE",
+                "unsupported approval message",
+            ));
+        }
+        if !only_keys(
+            o,
+            &[
+                "type",
+                "protocol",
+                "broker_instance_id",
+                "challenge_id",
+                "request_digest",
+                "view_id",
+            ],
+        ) {
+            return Err(response_error("UNKNOWN_FIELD", "unknown decision field"));
+        }
+        if o.get("protocol").and_then(Value::as_i64) != Some(VERSION)
+            || o.get("broker_instance_id").and_then(Value::as_str) != Some(self.instance.as_str())
+        {
+            return Err(response_error(
+                "BROKER_INSTANCE_MISMATCH",
+                "broker instance mismatch",
+            ));
+        }
+        let (Some(id), Some(digest), Some(view_id)) = (
+            o.get("challenge_id").and_then(Value::as_str),
+            o.get("request_digest").and_then(Value::as_str),
+            o.get("view_id").and_then(Value::as_str),
+        ) else {
+            return Err(response_error(
+                "INVALID_PROTOCOL",
+                "challenge, digest and view ID required",
+            ));
+        };
+        let Some(view) = self.views.get(view_id) else {
+            return Err(response_error(
+                "VIEW_NOT_FOUND",
+                "approval view unavailable",
+            ));
+        };
+        if view.instance != self.instance
+            || view.challenge != id
+            || view.digest != digest
+            || view.approver_uid != peer
+        {
+            return Err(response_error(
+                "VIEW_BINDING_MISMATCH",
+                "approval view binding mismatch",
+            ));
+        }
+        if view.state == ViewState::Expired || Instant::now() >= view.deadline {
+            return Err(response_error("VIEW_EXPIRED", "approval view expired"));
+        }
+        if view.state != ViewState::Displayed {
+            return Err(response_error(
+                "VIEW_ALREADY_USED",
+                "approval view is not active",
+            ));
+        }
+        let Some(request) = self.pending.get(id) else {
+            return Err(response_error(
+                "CHALLENGE_NOT_FOUND",
+                "challenge unavailable",
+            ));
+        };
+        if request.digest != digest || request.challenge != id {
+            return Err(response_error(
+                "CHALLENGE_MISMATCH",
+                "request binding mismatch",
+            ));
+        }
+        if request.state != State::Pending {
+            return Err(response_error(
+                "INVALID_STATE_TRANSITION",
+                "request is not pending",
+            ));
+        }
+        if Instant::now() >= request.deadline {
+            return Err(response_error("REQUEST_EXPIRED", "challenge expired"));
+        }
+        Ok(())
+    }
+
     fn authority(&mut self, v: &Value, peer: u32) -> Value {
         self.expire();
         let Some(o) = v.as_object() else {
@@ -1045,6 +1185,9 @@ impl Broker {
                 json!({"ok":true,"protocol":VERSION,"type":"CHALLENGE_VIEW","status":"DISPLAYED","broker_instance_id":self.instance,"challenge_id":id,"request_digest":snapshot.digest,"view_id":view_id,"view_expires_at":view_expires,"state":"PENDING_APPROVAL","rendered":rendered})
             }
             "APPROVE_CHALLENGE" | "DENY_CHALLENGE" | "EXPLAIN_CHALLENGE" => {
+                if let Err(error) = self.validate_decision(v, peer) {
+                    return error;
+                }
                 if !only_keys(
                     o,
                     &[
@@ -1120,6 +1263,13 @@ impl Broker {
                 };
                 if let Some(next) = request_state {
                     let req = self.pending.get_mut(id).unwrap();
+                    let now = Instant::now();
+                    if expire_request_at(req, now) {
+                        return response_error("REQUEST_EXPIRED", "challenge expired");
+                    }
+                    if now >= view.deadline {
+                        return response_error("VIEW_EXPIRED", "approval view expired");
+                    }
                     if transition(&mut req.state, next).is_err() {
                         return response_error(
                             "INVALID_STATE_TRANSITION",
@@ -1165,6 +1315,8 @@ impl Broker {
     }
     fn consume_request(&mut self, v: &Value, peer: u32) -> Value {
         self.expire();
+        #[cfg(test)]
+        security_regressions::after_expiry_sweep();
         let Some(o) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
         };
@@ -1224,6 +1376,12 @@ impl Broker {
         }
         match r.state {
             State::Approved => {
+                // No external work between this selected-request clock sample
+                // and the locked one-way claim. A stalled earlier sweep grants
+                // no authority. Already dispatched execution is not cancelled.
+                if expire_request_at(r, Instant::now()) {
+                    return response_error("REQUEST_EXPIRED", "challenge expired");
+                }
                 if transition(&mut r.state, State::Consumed).is_err() {
                     return response_error(
                         "INVALID_STATE_TRANSITION",
@@ -1355,6 +1513,175 @@ fn read_exact_deadline(s: &mut UnixStream, buf: &mut [u8], deadline: Instant) ->
     }
     Ok(())
 }
+fn recv_exact_with_rights(
+    stream: &mut UnixStream,
+    buffer: &mut [u8],
+    deadline: Instant,
+    allow_rights: bool,
+) -> io::Result<Option<OwnedFd>> {
+    let mut offset = 0;
+    let mut received_fd = None;
+    while offset < buffer.len() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "transaction deadline exceeded",
+            ));
+        }
+        stream.set_read_timeout(Some(left))?;
+        let mut iov = libc::iovec {
+            iov_base: buffer[offset..].as_mut_ptr().cast(),
+            iov_len: buffer.len() - offset,
+        };
+        let mut control = [0usize; 16];
+        let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+        message.msg_iov = &mut iov;
+        message.msg_iovlen = 1;
+        message.msg_control = control.as_mut_ptr().cast();
+        message.msg_controllen = std::mem::size_of_val(&control);
+        let received =
+            unsafe { libc::recvmsg(stream.as_raw_fd(), &mut message, libc::MSG_CMSG_CLOEXEC) };
+        if received < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if received == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "truncated frame",
+            ));
+        }
+        offset += received as usize;
+        let mut descriptors = Vec::new();
+        let mut invalid_control = message.msg_flags & libc::MSG_CTRUNC != 0;
+        unsafe {
+            let mut header = libc::CMSG_FIRSTHDR(&message);
+            while !header.is_null() {
+                let header_ref = &*header;
+                let base = libc::CMSG_LEN(0) as usize;
+                if header_ref.cmsg_level != libc::SOL_SOCKET
+                    || header_ref.cmsg_type != libc::SCM_RIGHTS
+                    || header_ref.cmsg_len < base
+                    || !(header_ref.cmsg_len - base)
+                        .is_multiple_of(std::mem::size_of::<libc::c_int>())
+                {
+                    invalid_control = true;
+                } else {
+                    let count = (header_ref.cmsg_len - base) / std::mem::size_of::<libc::c_int>();
+                    let data = libc::CMSG_DATA(header).cast::<libc::c_int>();
+                    for index in 0..count {
+                        let raw_fd = std::ptr::read_unaligned(data.add(index));
+                        if raw_fd >= 0 {
+                            descriptors.push(OwnedFd::from_raw_fd(raw_fd));
+                        } else {
+                            invalid_control = true;
+                        }
+                    }
+                }
+                header = libc::CMSG_NXTHDR(&message, header);
+            }
+        }
+        if invalid_control || !descriptors.is_empty() && !allow_rights {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected socket control data",
+            ));
+        }
+        if !descriptors.is_empty() {
+            if descriptors.len() != 1 || received_fd.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "expected one terminal descriptor",
+                ));
+            }
+            received_fd = descriptors.pop();
+        }
+    }
+    Ok(received_fd)
+}
+
+fn read_frame_with_fd(
+    stream: &mut UnixStream,
+    deadline: Instant,
+) -> io::Result<(Vec<u8>, Option<OwnedFd>)> {
+    let mut header = [0; 4];
+    let received_fd = recv_exact_with_rights(stream, &mut header, deadline, true)?;
+    let length = u32::from_be_bytes(header) as usize;
+    if length == 0 || length > MAX_MESSAGE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid frame length",
+        ));
+    }
+    let mut body = vec![0; length];
+    if recv_exact_with_rights(stream, &mut body, deadline, false)?.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unexpected terminal descriptor",
+        ));
+    }
+    Ok((body, received_fd))
+}
+
+fn authenticate_through_helper(
+    peer_uid: u32,
+    request: &Value,
+    terminal_fd: RawFd,
+) -> io::Result<bool> {
+    let operation = request.get("type").and_then(Value::as_str).unwrap_or("");
+    let message = json!({
+        "type": "PAM_AUTHENTICATE",
+        "protocol": 1,
+        "peer_uid": peer_uid,
+        "operation": operation,
+        "broker_instance_id": request.get("broker_instance_id"),
+        "challenge_id": request.get("challenge_id"),
+        "request_digest": request.get("request_digest"),
+        "view_id": request.get("view_id")
+    });
+    let deadline = Instant::now() + Duration::from_secs(310);
+    let mut stream = UnixStream::connect(PAM_AUTH_SOCKET)?;
+    if peer_uid_fn(&stream)? != PAM_AUTH_UID {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unexpected PAM service peer",
+        ));
+    }
+    send_frame_with_fd(&mut stream, &message, terminal_fd, deadline)?;
+    let response = read_frame_deadline(&mut stream, deadline)?;
+    let Unique(response) = serde_json::from_slice::<Unique>(&response)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid PAM service response"))?;
+    let correlated = response["ok"] == true
+        && response["response_to"] == "PAM_AUTHENTICATE"
+        && response["peer_uid"] == peer_uid
+        && response["operation"] == operation
+        && response["broker_instance_id"] == message["broker_instance_id"]
+        && response["challenge_id"] == message["challenge_id"]
+        && response["request_digest"] == message["request_digest"]
+        && response["view_id"] == message["view_id"];
+    Ok(correlated && response["authenticated"] == true)
+}
+
+fn peer_uid_fn(stream: &UnixStream) -> io::Result<u32> {
+    peer_credentials(stream).map(|credentials| credentials.uid)
+}
+
+fn connection_usable(stream: &UnixStream) -> bool {
+    let mut descriptor = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN | libc::POLLRDHUP,
+        revents: 0,
+    };
+    if unsafe { libc::poll(&mut descriptor, 1, 0) } != 0 {
+        return false;
+    }
+    descriptor.revents == 0
+}
+
 fn read_frame_deadline(s: &mut UnixStream, deadline: Instant) -> io::Result<Vec<u8>> {
     let mut h = [0; 4];
     read_exact_deadline(s, &mut h, deadline)?;
@@ -1399,8 +1726,84 @@ fn write_frame_deadline(s: &mut UnixStream, v: &Value, deadline: Instant) -> io:
     write_all_deadline(s, &(b.len() as u32).to_be_bytes(), deadline)?;
     write_all_deadline(s, b.as_bytes(), deadline)
 }
-fn console_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+fn send_frame_with_fd(
+    stream: &mut UnixStream,
+    message: &Value,
+    terminal_fd: RawFd,
+    deadline: Instant,
+) -> io::Result<()> {
+    let body = message.to_string();
+    if body.len() > MAX_MESSAGE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "request exceeds frame limit",
+        ));
+    }
+    let mut frame = Vec::with_capacity(body.len() + 4);
+    frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    frame.extend_from_slice(body.as_bytes());
+    let mut iov = libc::iovec {
+        iov_base: frame.as_mut_ptr().cast(),
+        iov_len: frame.len(),
+    };
+    let mut control = [0usize; 8];
+    let mut header: libc::msghdr = unsafe { std::mem::zeroed() };
+    header.msg_iov = &mut iov;
+    header.msg_iovlen = 1;
+    header.msg_control = control.as_mut_ptr().cast();
+    header.msg_controllen =
+        unsafe { libc::CMSG_SPACE(std::mem::size_of::<RawFd>() as u32) as usize };
+    unsafe {
+        let cmsg = libc::CMSG_FIRSTHDR(&header);
+        if cmsg.is_null() {
+            return Err(io::Error::other(
+                "could not allocate terminal descriptor control message",
+            ));
+        }
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as usize;
+        std::ptr::write_unaligned(libc::CMSG_DATA(cmsg).cast::<RawFd>(), terminal_fd);
+    }
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "transaction deadline exceeded",
+        ));
+    }
+    stream.set_write_timeout(Some(left))?;
+    let sent = loop {
+        let count = unsafe { libc::sendmsg(stream.as_raw_fd(), &header, libc::MSG_NOSIGNAL) };
+        if count >= 0 {
+            break count as usize;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    };
+    if sent == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "socket write returned zero",
+        ));
+    }
+    write_all_deadline(stream, &frame[sent..], deadline)
+}
+
+fn console_call_inner(
+    path: &Path,
+    broker_uid: u32,
+    msg: &Value,
+    terminal_fd: Option<RawFd>,
+) -> io::Result<Value> {
+    let timeout = if terminal_fd.is_some() {
+        Duration::from_secs(310)
+    } else {
+        Duration::from_secs(5)
+    };
+    let deadline = Instant::now() + timeout;
     let mut s = UnixStream::connect(path)?;
     if peer_uid(&s).ok() != Some(broker_uid) {
         return Err(io::Error::new(
@@ -1408,7 +1811,11 @@ fn console_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> 
             "unexpected broker peer UID",
         ));
     }
-    write_frame_deadline(&mut s, msg, deadline)?;
+    if let Some(fd) = terminal_fd {
+        send_frame_with_fd(&mut s, msg, fd, deadline)?;
+    } else {
+        write_frame_deadline(&mut s, msg, deadline)?;
+    }
     let b = read_frame_deadline(&mut s, deadline)?;
     let Unique(v) = serde_json::from_slice::<Unique>(&b)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid broker response"))?;
@@ -1419,6 +1826,17 @@ fn console_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> 
         ));
     }
     Ok(v)
+}
+fn console_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> {
+    console_call_inner(path, broker_uid, msg, None)
+}
+fn approval_decision_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> {
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC)
+        .open("/dev/tty")?;
+    console_call_inner(path, broker_uid, msg, Some(tty.as_raw_fd()))
 }
 fn approval_call(path: &Path, broker_uid: u32, msg: &Value) -> io::Result<Value> {
     console_call(path, broker_uid, msg).map_err(|error| {
@@ -1513,6 +1931,12 @@ fn read_tty_frame() -> io::Result<Vec<u8>> {
     read_tty_frame_with_poll(|| Ok(()))
 }
 fn read_tty_frame_with_poll<F: FnMut() -> io::Result<()>>(mut on_poll: F) -> io::Result<Vec<u8>> {
+    read_tty_frame_with_details(|_| on_poll(), false)
+}
+fn read_tty_frame_with_details<F: FnMut(bool) -> io::Result<()>>(
+    mut on_event: F,
+    allow_details: bool,
+) -> io::Result<Vec<u8>> {
     const MAX_INPUT: usize = 64;
     const QUIET_MS: u64 = 100;
     let fd = io::stdin().as_raw_fd();
@@ -1530,7 +1954,7 @@ fn read_tty_frame_with_poll<F: FnMut() -> io::Result<()>>(mut on_poll: F) -> io:
         }
         let wait_ms = remaining.as_millis().min(1000) as i32;
         if !poll_input(fd, wait_ms)? {
-            on_poll()?;
+            on_event(false)?;
             continue;
         }
         let read = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), byte.len()) };
@@ -1546,6 +1970,11 @@ fn read_tty_frame_with_poll<F: FnMut() -> io::Result<()>>(mut on_poll: F) -> io:
                 io::ErrorKind::UnexpectedEof,
                 "terminal closed",
             ));
+        }
+        if allow_details && byte[0] == b' ' && frame.is_empty() {
+            // Navigation only: do not return a decision or fetch another view.
+            on_event(true)?;
+            continue;
         }
         if byte[0] == b'\n' || byte[0] == b'\r' {
             break;
@@ -1737,7 +2166,7 @@ fn approval_console_legacy(path: PathBuf, broker_uid: u32) -> io::Result<()> {
     let frame = read_tty_frame()?;
     let decision = parse_decision(&frame)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid decision"))?;
-    let response = approval_call(
+    let response = approval_decision_call(
         &path,
         broker_uid,
         &json!({"type":decision,"protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge,"request_digest":digest,"view_id":view["view_id"]}),
@@ -2018,8 +2447,11 @@ fn write_console_decision_feedback<W: Write>(
     output.flush()
 }
 
-fn render_console_component(rows: &[Value], component: &[usize]) -> String {
-    let mut output = format!("\nCommands: {}\n", component.len());
+fn render_console_component(rows: &[Value], component: &[usize], details: bool) -> String {
+    let mut output = format!(
+        "\nMAYI  /  Review commands\n------------------------------------------------------------\nCommands: {}\nExecutor: UID 0 / GID 23012  (privileged)\nExact arguments below are display notation, not shell input.\n\n",
+        component.len()
+    );
     let mut index_by_id = HashMap::new();
     for (index, row_index) in component.iter().enumerate() {
         if let Some(id) = rows[*row_index]["request_id"].as_str() {
@@ -2066,8 +2498,16 @@ fn render_console_component(rows: &[Value], component: &[usize]) -> String {
             }
         }
         output.push_str(&format!("     requester UID: {}\n", row["requester_uid"]));
-        if let Some(id) = row["request_id"].as_str() {
-            output.push_str(&format!("     request ID: {}\n", terminal_safe(id)));
+        if details {
+            for (key, label) in [
+                ("request_id", "request ID"),
+                ("challenge_id", "challenge ID"),
+                ("request_digest", "request digest"),
+            ] {
+                if let Some(value) = row[key].as_str() {
+                    output.push_str(&format!("     {label}: {}\n", terminal_safe(value)));
+                }
+            }
         }
         let dependency_indexes: Vec<String> = row["dependencies"]
             .as_array()
@@ -2088,12 +2528,18 @@ fn render_console_component(rows: &[Value], component: &[usize]) -> String {
             output.push_str("     ↓\n");
         }
     }
-    output.push_str("Executor: UID 0 / GID 23012\n[a] allow all  [s] skip  [d] deny  [f] follow-up  [q] quit\nOr approve selected commands by index (e.g. 012).\n>");
+    output.push_str("\n------------------------------------------------------------\n[a] Allow all pending   [d] Deny   [f] Follow-up\n[s] Skip for now        [q] Quit without deciding\n");
+    output.push_str(if details {
+        "[Space] Hide technical details\n"
+    } else {
+        "[Space] Show technical details (IDs and digest)\n"
+    });
+    output.push_str("Select indices 0-9 (e.g. 012) to allow a subset.\nType an action, then Enter. Input is not echoed.\n\nMayi > ");
     output
 }
 
-fn print_console_component(rows: &[Value], component: &[usize]) {
-    print!("{}", render_console_component(rows, component));
+fn print_console_component(rows: &[Value], component: &[usize], details: bool) {
+    print!("{}", render_console_component(rows, component, details));
     let _ = io::stdout().flush();
 }
 fn parse_console_subset(
@@ -2162,7 +2608,7 @@ fn decide_console_row(
         "deny" => "DENY_CHALLENGE",
         _ => "EXPLAIN_CHALLENGE",
     };
-    let result = approval_call(
+    let result = approval_decision_call(
         path,
         broker_uid,
         &json!({"type":message,"protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge,"request_digest":digest,"view_id":view["view_id"]}),
@@ -2227,20 +2673,35 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
             continue;
         };
         let signature = console_signature(&rows, &component);
-        print_console_component(&rows, &component);
+        let mut details = false;
+        print_console_component(&rows, &component, details);
         let mut announced = HashSet::from([signature.clone()]);
-        // A poll refreshes newly-arrived dependency sets while the human is deciding.
-        let input = read_tty_frame_with_poll(|| {
-            let (_, pending) = console_snapshot(&path, broker_uid)?;
-            let latest_components = console_components(&pending)?;
-            for set in latest_components {
-                let id = console_signature(&pending, &set);
-                if announced.insert(id) {
-                    print_console_component(&pending, &set);
+        let input = read_tty_frame_with_details(
+            |toggle| {
+                if toggle {
+                    details = !details;
+                    if visible_screen_clear_supported() {
+                        io::stdout().write_all(CLEAR_VISIBLE_SCREEN)?;
+                    }
+                    print_console_component(&rows, &component, details);
+                    return Ok(());
                 }
-            }
-            Ok(())
-        })?;
+                let (_, pending) = console_snapshot(&path, broker_uid)?;
+                let latest_components = console_components(&pending)?;
+                for set in latest_components {
+                    let id = console_signature(&pending, &set);
+                    if announced.insert(id) {
+                        // Never print another indexed set above the current action prompt:
+                        // the action still belongs to the original displayed snapshot.
+                        println!("\nQueue updated. Finish or skip the current set to review it.");
+                        print!("Mayi (current set) > ");
+                        io::stdout().flush()?;
+                    }
+                }
+                Ok(())
+            },
+            true,
+        )?;
         let (current_instance, _) = console_snapshot(&path, broker_uid)?;
         if current_instance != instance {
             eprintln!("Mayi broker restarted; queued approvals were invalidated. Refreshing.");
@@ -2415,6 +2876,8 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
             return;
         };
         state.expire();
+        #[cfg(test)]
+        security_regressions::after_expiry_sweep();
         let ids: Vec<String> = state
             .pending
             .values()
@@ -2459,6 +2922,9 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                 }
             }
             let request = state.pending.get_mut(&challenge).unwrap();
+            if expire_request_at(request, Instant::now()) {
+                continue;
+            }
             if let Some(dependency) = blocked_by {
                 request.queue_state = Some(QueueState::Blocked);
                 request.blocking_dependency = Some(dependency.clone());
@@ -2540,12 +3006,12 @@ fn handle(
         .as_ref()
         .map(|peer| peer.uid)
         .unwrap_or(u32::MAX);
-    let v = match read_frame_deadline(&mut s, deadline).and_then(|b| {
+    let (v, terminal_fd) = match read_frame_with_fd(&mut s, deadline).and_then(|(b, fd)| {
         serde_json::from_slice::<Unique>(&b)
-            .map(|u| u.0)
+            .map(|u| (u.0, fd))
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid JSON"))
     }) {
-        Ok(v) => v,
+        Ok(message) => message,
         Err(_) => {
             let mut error = response_error("INVALID_PROTOCOL", "invalid framed JSON");
             let instance = broker
@@ -2562,6 +3028,7 @@ fn handle(
         }
     };
     let role_gid = if approval { approval_gid } else { request_gid };
+    let peer_credentials_snapshot = credentials.as_ref().ok().copied();
     let authorization = match credentials {
         Ok(credentials) => role_authorization(credentials, role_gid, approval),
         Err(error) => Err(response_error(
@@ -2569,18 +3036,84 @@ fn handle(
             &format!("SO_PEERCRED lookup failed: {error}"),
         )),
     };
+    let message_type = v.get("type").and_then(Value::as_str).unwrap_or("");
+    let decision_operation = approval
+        && matches!(
+            message_type,
+            "APPROVE_CHALLENGE" | "DENY_CHALLENGE" | "EXPLAIN_CHALLENGE"
+        );
+    let mut pam_authenticated = false;
+    let mut authentication_error = if decision_operation {
+        let initial_authorization = authorization.clone();
+        let gate_result = approval_authorization_gate(
+            initial_authorization,
+            || {
+                broker
+                    .lock()
+                    .map_err(|_| response_error("INTERNAL_ERROR", "broker state poisoned"))?
+                    .validate_decision(&v, peer)
+            },
+            || match terminal_fd.as_ref() {
+                None => Err(response_error(
+                    "PAM_AUTH_REQUIRED",
+                    "approval decisions require broker-side PAM authentication",
+                )),
+                Some(fd) => match authenticate_through_helper(peer, &v, fd.as_raw_fd()) {
+                    Ok(true) if connection_usable(&s) => Ok(true),
+                    Ok(true) => Err(response_error(
+                        "AUTHENTICATION_CONNECTION_CLOSED",
+                        "approval connection closed during authentication",
+                    )),
+                    Ok(false) | Err(_) => Err(response_error(
+                        "PAM_AUTHENTICATION_FAILED",
+                        "broker-side PAM authentication failed",
+                    )),
+                },
+            },
+            || match peer_credentials_snapshot {
+                Some(credentials) => role_authorization(credentials, role_gid, true),
+                None => Err(response_error(
+                    "INTERNAL_ERROR",
+                    "SO_PEERCRED lookup failed before approval transition",
+                )),
+            },
+        );
+        pam_authenticated = gate_result.is_ok();
+        gate_result.err()
+    } else {
+        None
+    };
+    if terminal_fd.is_some() && !decision_operation {
+        authentication_error = Some(response_error(
+            "UNEXPECTED_AUTH_DESCRIPTOR",
+            "terminal descriptors are accepted only for approval decisions",
+        ));
+    }
     let mut state = broker
         .lock()
         .map_err(|_| io::Error::other("broker state poisoned"))?;
-    let message_type = v.get("type").and_then(Value::as_str).unwrap_or("");
-    let mut r = match authorization {
-        Err(error) => error,
-        Ok(()) if approval => state.authority(&v, peer),
-        Ok(()) if message_type == "CONSUME_APPROVED" => state.consume_request(&v, peer),
-        Ok(()) if message_type == "GET_REQUEST_STATUS" => state.status_request(&v, peer),
-        Ok(()) if message_type == "GET_QUEUE_STATUS" => state.queue_status_request(&v, peer),
-        Ok(()) => state.propose(&v, peer),
+    let mut r = match authentication_error {
+        Some(error) => error,
+        None => match authorization {
+            Err(error) => error,
+            Ok(()) if approval && decision_operation && pam_authenticated => {
+                match state.validate_decision(&v, peer) {
+                    Ok(()) => state.authority(&v, peer),
+                    Err(error) => error,
+                }
+            }
+            Ok(()) if approval && decision_operation => response_error(
+                "PAM_AUTHENTICATION_FAILED",
+                "approval decision lacks successful PAM authentication",
+            ),
+            Ok(()) if approval => state.authority(&v, peer),
+            Ok(()) if message_type == "CONSUME_APPROVED" => state.consume_request(&v, peer),
+            Ok(()) if message_type == "GET_REQUEST_STATUS" => state.status_request(&v, peer),
+            Ok(()) if message_type == "GET_QUEUE_STATUS" => state.queue_status_request(&v, peer),
+            Ok(()) => state.propose(&v, peer),
+        },
     };
+    /*AUTH DISPATCH*/
     let execution = if !approval && message_type == "CONSUME_APPROVED" && r["status"] == "CONSUMED"
     {
         v.get("challenge_id")
@@ -2787,13 +3320,105 @@ pub fn serve(
     Ok(())
 }
 #[cfg(test)]
+#[path = "broker_deadline_tests.rs"]
+mod deadline_regressions;
+
+#[cfg(test)]
+#[path = "broker_security_tests.rs"]
+mod security_regressions;
+
+#[cfg(test)]
 mod tests {
+    fn denied() -> Result<(), serde_json::Value> {
+        Err(serde_json::json!({"ok": false, "code": "DENIED"}))
+    }
+
+    #[test]
+    fn approval_gate_requires_every_step_and_never_overrides_failure() {
+        use super::approval_authorization_gate;
+        use std::cell::Cell;
+
+        for initial in [false, true] {
+            let preflight_called = Cell::new(false);
+            let pam_called = Cell::new(false);
+            let final_called = Cell::new(false);
+            let result = approval_authorization_gate(
+                if initial { Ok(()) } else { denied() },
+                || {
+                    preflight_called.set(true);
+                    Ok(())
+                },
+                || {
+                    pam_called.set(true);
+                    Ok(true)
+                },
+                || {
+                    final_called.set(true);
+                    Ok(())
+                },
+            );
+            assert_eq!(result.is_ok(), initial);
+            assert_eq!(preflight_called.get(), initial);
+            assert_eq!(pam_called.get(), initial);
+            assert_eq!(final_called.get(), initial);
+        }
+
+        for initial_error in [false, true] {
+            let pam_called = Cell::new(false);
+            let result = approval_authorization_gate(
+                if initial_error {
+                    Err(serde_json::json!({"code":"NSS_ERROR"}))
+                } else {
+                    denied()
+                },
+                || Ok(()),
+                || {
+                    pam_called.set(true);
+                    Ok(true)
+                },
+                || Ok(()),
+            );
+            assert!(result.is_err());
+            assert!(
+                !pam_called.get(),
+                "initial authorization failure must stop before PAM"
+            );
+        }
+
+        for pam_result in [
+            Err(serde_json::json!({"code":"PAM_UNAVAILABLE"})),
+            Ok(false),
+        ] {
+            let final_called = Cell::new(false);
+            let result = approval_authorization_gate(
+                Ok(()),
+                || Ok(()),
+                || pam_result.clone(),
+                || {
+                    final_called.set(true);
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert!(!final_called.get());
+        }
+
+        for final_result in [denied(), Err(serde_json::json!({"code":"NSS_ERROR"}))] {
+            assert!(approval_authorization_gate(
+                Ok(()),
+                || Ok(()),
+                || Ok(true),
+                || final_result.clone()
+            )
+            .is_err());
+        }
+    }
     use super::*;
     fn broker() -> Broker {
         Broker::new().unwrap()
     }
     fn proposal() -> Value {
-        json!({"type":"PROPOSE_REQUEST","protocol":5,"target":{"uid":1000,"gid":1000},"operations":[{"type":"file_create","path":"/etc/x","content":"x","expected_result_sha256":"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881","mode":"0644"}]})
+        exec_proposal(json!(["printf", "x"]))
     }
     fn exec_proposal(argv: Value) -> Value {
         json!({"type":"PROPOSE_REQUEST","protocol":5,"target":{"uid":1000,"gid":1000},"operations":[{"type":"exec","executable":"/usr/bin/printf","argv":argv}]})
@@ -2812,6 +3437,37 @@ mod tests {
     }
     fn consume(p: &Value) -> Value {
         json!({"type":"CONSUME_APPROVED","protocol":5,"broker_instance_id":p["broker_instance_id"],"challenge_id":p["challenge_id"],"request_digest":p["request_digest"]})
+    }
+    #[test]
+    fn approval_transport_passes_one_cloexec_descriptor_with_the_frame() {
+        let (mut sender, mut receiver) = UnixStream::pair().unwrap();
+        let terminal = fs::File::open("/dev/null").unwrap();
+        let message = json!({"type":"APPROVE_CHALLENGE","protocol":5});
+        let deadline = Instant::now() + Duration::from_secs(2);
+        send_frame_with_fd(&mut sender, &message, terminal.as_raw_fd(), deadline).unwrap();
+        let (body, received_fd) = read_frame_with_fd(&mut receiver, deadline).unwrap();
+        let fd = received_fd.expect("SCM_RIGHTS descriptor was lost");
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), message);
+        let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
+        assert!(flags >= 0 && flags & libc::FD_CLOEXEC != 0);
+    }
+    #[test]
+    fn approval_transport_rejects_descriptors_after_the_frame_header() {
+        let (mut sender, mut receiver) = UnixStream::pair().unwrap();
+        let body = br#"{"type":"APPROVE_CHALLENGE"}"#;
+        sender
+            .write_all(&(body.len() as u32).to_be_bytes())
+            .unwrap();
+        let terminal = fs::File::open("/dev/null").unwrap();
+        send_frame_with_fd(
+            &mut sender,
+            &json!({"body":"extra"}),
+            terminal.as_raw_fd(),
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
+        let result = read_frame_with_fd(&mut receiver, Instant::now() + Duration::from_secs(2));
+        assert!(result.is_err());
     }
     #[test]
     fn approval_console_preserves_broker_authorization_errors() {
@@ -3028,7 +3684,7 @@ mod tests {
             "EXPLAINED"
         );
         let mut changed = proposal();
-        changed["operations"][0]["path"] = Value::String("/etc/changed".into());
+        changed["operations"][0]["argv"] = json!(["printf", "changed"]);
         let replacement = b.propose(&changed, 1000);
         assert_ne!(replacement["challenge_id"], p["challenge_id"]);
         assert_eq!(replacement["status"], "PENDING_APPROVAL");
@@ -3190,8 +3846,8 @@ mod tests {
         dec["path"] = Value::String("/attacker".into());
         assert_eq!(b.authority(&dec, 9001)["code"], "UNKNOWN_FIELD");
         assert_eq!(
-            b.pending[p["challenge_id"].as_str().unwrap()].ops[0]["path"],
-            "/etc/x"
+            b.pending[p["challenge_id"].as_str().unwrap()].ops[0]["executable"],
+            "/usr/bin/printf"
         );
     }
     #[test]
@@ -3329,7 +3985,12 @@ mod tests {
                 "argv":["foo", "hello world", "$HOME", "; touch /tmp/pwned"]
             }]
         })];
-        let rendered = render_console_component(&rows, &[0]);
+        let rendered = render_console_component(&rows, &[0], false);
+        assert!(rendered.contains("[Space] Show technical details"));
+        assert!(!rendered.contains("request ID:"));
+        let expanded = render_console_component(&rows, &[0], true);
+        assert!(expanded.contains("[Space] Hide technical details"));
+        assert!(expanded.contains("request ID:"));
         assert!(rendered.contains("[0] /usr/bin/foo [argv0=foo]"));
         assert!(rendered.contains("     'hello world' \\\n"));
         assert!(rendered.contains("     '$HOME' \\\n"));

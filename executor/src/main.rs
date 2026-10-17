@@ -345,11 +345,23 @@ fn listener_for(
     p: &std::path::Path,
     gid: u32,
 ) -> io::Result<(std::os::unix::net::UnixListener, fs::Metadata)> {
+    listener_for_with_legacy_owner(p, gid, None)
+}
+
+fn listener_for_with_legacy_owner(
+    p: &std::path::Path,
+    gid: u32,
+    legacy_uid: Option<u32>,
+) -> io::Result<(std::os::unix::net::UnixListener, fs::Metadata)> {
     let socket_path = secure_socket_path(p)?;
+    let safe_existing = |metadata: &fs::Metadata| {
+        safe_socket_metadata(metadata, unsafe { libc::geteuid() }, gid)
+            || legacy_uid.is_some_and(|uid| safe_socket_metadata(metadata, uid, gid))
+    };
     let uid = unsafe { libc::geteuid() };
     match fs::symlink_metadata(&socket_path) {
         Ok(existing) => {
-            if !safe_socket_metadata(&existing, uid, gid) {
+            if !safe_existing(&existing) {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "unsafe existing socket path",
@@ -371,7 +383,7 @@ fn listener_for(
                 }
             }
             let current = fs::symlink_metadata(&socket_path)?;
-            if !safe_socket_metadata(&current, uid, gid)
+            if !safe_existing(&current)
                 || current.dev() != existing.dev()
                 || current.ino() != existing.ino()
             {
@@ -451,21 +463,40 @@ fn approval_console_authenticated(path: PathBuf, broker_uid: u32) -> io::Result<
         ));
     }
 
-    let authenticated = pam_auth::authenticate_current("mayi-approve", uid, tty_fd)?;
-    if !authenticated {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Authentication failed.",
-        ));
-    }
-    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
+    drop(tty);
     broker::approval_console(path, broker_uid)
 }
 
 fn main() {
     let a: Vec<String> = env::args().collect();
+    if a.iter().any(|x| x == "--pam-auth-socket") {
+        let parsed = if a.len() == 7
+            && a[1] == "--pam-auth-socket"
+            && a[3] == "--broker-uid"
+            && a[5] == "--socket-gid"
+        {
+            Some((
+                PathBuf::from(&a[2]),
+                a[4].parse::<u32>().ok(),
+                a[6].parse::<u32>().ok(),
+            ))
+        } else {
+            None
+        };
+        match parsed {
+            Some((path, Some(broker_uid), Some(socket_gid))) => {
+                if let Err(error) = pam_auth::serve(path, broker_uid, socket_gid) {
+                    eprintln!("mayi PAM service: {error}");
+                    std::process::exit(1)
+                }
+                return;
+            }
+            _ => {
+                eprintln!("--pam-auth-socket requires --broker-uid UID --socket-gid GID and accepts no other options");
+                std::process::exit(2)
+            }
+        }
+    }
     if a.iter().any(|x| x == "--approval-console") {
         if a.iter()
             .any(|x| x == "--fake-root" || x == "--dry-run" || x == "--stdio")

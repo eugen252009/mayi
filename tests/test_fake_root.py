@@ -1,6 +1,7 @@
 import os, subprocess, time
 from mayi.mutations import file_patch,file_create
-from mayi.executor import RustExecutorClient
+import pytest
+from mayi.executor import RustExecutorClient, RustApprovalAuthorityClient, ExecutorError
 
 def test_filesystem_mutation_remains_disabled_after_proposal(tmp_path):
     root=tmp_path/'fake-root';target=root/'etc/config';target.parent.mkdir(parents=True);target.write_text('A')
@@ -12,7 +13,9 @@ def test_filesystem_mutation_remains_disabled_after_proposal(tmp_path):
             time.sleep(.01)
         client=RustExecutorClient(socket_path=str(request))
         for op in (file_patch('/etc/config','A','B'),file_create('/etc/new','N')):
-            response=client.submit([op]);assert response['status']=='PENDING_APPROVAL'
+            with pytest.raises(ExecutorError, match='UNSUPPORTED_OPERATION'):
+                client.submit([op])
+        assert RustApprovalAuthorityClient(str(approval)).list_pending()['pending']==[]
         assert target.read_text()=='A' and not (root/'etc/new').exists()
     finally:
         proc.terminate();proc.wait(timeout=3)

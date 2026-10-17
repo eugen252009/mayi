@@ -3,7 +3,7 @@ set -eu
 case "$1" in
     remove|deconfigure)
         if [ -d /run/systemd/system ] && command -v deb-systemd-invoke >/dev/null 2>&1; then
-            deb-systemd-invoke stop mayi-broker.service mayi-privileged-executor.service
+            deb-systemd-invoke stop mayi-broker.service mayi-pam-auth.service mayi-privileged-executor.service
         fi
         ;;
     upgrade|failed-upgrade)

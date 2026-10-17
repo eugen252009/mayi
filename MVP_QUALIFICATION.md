@@ -1,6 +1,59 @@
 # Mayi package and deployment qualification record
 
-> Release/qualification history, not a step-by-step user guide. Mayi's stable runtime baseline is 0.4.1; Debian package revision 0.4.1-1 is published through TPA.run and verified by an isolated APT consumer. Older version sections are historical. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
+> Release/qualification history, not a step-by-step user guide. Supported Debian runtime targets are Debian 11–13 amd64; Debian 10 is not supported despite historical package and binary tests. It remains an acceptable build baseline only. Mayi's stable published baseline is 0.4.1; its known protocol-level PAM bypass remains unchanged and unpublished. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
+
+## Candidate 0.4.1-5 — exact supported-platform qualification PASS
+
+- Exact artifact: `/tmp/mayi-qemu-qualification/artifacts/mayi_0.4.1-5_amd64.deb`; SHA-256 `cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381`. No rebuild or artifact modification occurred during qualification.
+- Debian 11/12/13 were booted as isolated QEMU/KVM guests; tests ran directly under guest systemd, without Docker. Exact artifact fresh install, packaged 0.4.1 upgrade, successful/failed/locked PAM, initial/final NSS denial, missing-auth protocol denial, helper outage (systemd dependency closure), 300-second challenge expiry, concurrent approvals, concurrent one-shot consumption/replay, service lifecycle, runtime identities/capabilities/cgroups/sandbox, package removal/purge, and administrator-account preservation passed. `openat2` with required resolve flags was available on all supported kernels.
+- Build source revision `1da927cc65baf882d557f53e3ddfaf1352dd249f` was dirty; source input tar SHA-256 `77e314f0e3d0477089207428e8553e53de3f5634fc12730087f15c37024e6cb1`. Full results and environment provenance: [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md) and `/tmp/mayi-qemu-qualification/QUALIFICATION-STATUS.md`.
+- **Status: PASS for Debian 11–13; READY FOR INDEPENDENT SECURITY REVIEW.** Not production-ready, not published, and no staging/publication/deployment is authorized. Published 0.4.1's PAM bypass remains a separate concern.
+
+## Historical candidate 0.4.1-4 — old matrix (not current platform policy)
+
+- Exact artifact: `executor/target/debian/mayi_0.4.1-4_amd64.deb`; SHA-256 `0289b3c0bb5f43680a97574ca46f062004992ba71abc74d3d94ce2b6a5e42287` (`mayi`, `0.4.1-4`, `amd64`).
+- Built in disposable Debian 10/Buster with glibc 2.28, GCC 8.3.0, Rust/Cargo 1.95.0, and TPA 0.6.1. The extracted payload matches the final build staging tree; both native binaries require at most `GLIBC_2.28`.
+- The full exact-artifact fresh-install, upgrade, PAM/adversarial, package-failure, and systemd lifecycle matrix passed on Debian 10 Buster, 11 Bullseye, 12 Bookworm, and 13 Trixie. The upgrade matrix includes 0.4.1-3 → 0.4.1-4 migration, legacy helper-account removal, stale socket ownership handling, service restart order, and identity preservation.
+- Tested boundary cases include direct raw decisions without a terminal FD, forged UID fields, same-UID helper access outside the broker's systemd cgroup, invalid/locked PAM credentials, unauthorized UID DAC rejection, helper outage, NSS role revocation during the prompt, one-shot replay, cross-UID view transfer, concurrency, broker restart invalidation, and per-UID failed-PAM throttling. Systemd lifecycle exercised 100 executor restarts, 100 broker restarts, and 10 helper/broker restarts per environment.
+- Local tests: 82 Rust main tests + 5 privileged-executor tests; Clippy (`-D warnings`), formatting, Python syntax, and `git diff --check` passed. These results do not constitute independent review.
+- PAM runs in a separate root-owned service constrained to `CAP_DAC_READ_SEARCH`, `NoNewPrivileges`, strict filesystem protections, narrowly writable runtime paths, and a broker UID + protected systemd-cgroup peer check. The broker remains unprivileged. The exact cgroup path is systemd-specific and fails closed if customized; helper restart resets its in-memory five-failures-per-UID/10-minute throttle.
+- **Status: package matrix PASS; independent source/artifact audit pending. Not release-qualified, production-ready, or publishable.** No TPA staging/publication or production deployment occurred. The 0.4.1-2 artifact remains unchanged and unpublished; filesystem execution remains disconnected.
+
+## Broker-side PAM candidate — 0.4.1-3 (historical; blocked)
+
+- Exact candidate artifact: `executor/target/debian/mayi_0.4.1-3_amd64.deb`, SHA-256 `3c233aae39fc3c763d7ddbaa1c0d73906ec07ac5705e966aaac2b3b16f332802`.
+- Build and package payload identity checks passed. The candidate was installed in one disposable Debian Trixie systemd container; basic package metadata and service topology passed.
+- Positive approval through the packaged console failed with the correct password. Debian `unix_chkpwd` rejected helper UID 23003 authenticating a different account (`check pass; user unknown`). Exact-package qualification stopped at that failure; Debian 10–13 and upgrade matrices did not pass or complete.
+- Local Rust tests: 80 + 5 passed; Python: 52 passed, 9 skipped; Clippy, formatting, Python syntax, and diff checks passed. These tests do not override the failed positive end-to-end PAM path.
+- The candidate is **not qualified, production-ready, or publishable**. The architecture needs an explicitly authorized privileged PAM authority or an acceptable unprivileged PAM backend. No root helper, setuid, capabilities, PAM-policy weakening, host-file changes, staging, or publication was used.
+- The exact `0.4.1-2` artifact remains unchanged and unpublished. No host Mayi service was modified. Filesystem execution remains disconnected/disabled.
+
+
+## Approval-console UX and test-isolation candidate — 0.4.1-2 (package qualification passed; independent review pending)
+
+### Scope and status
+
+The runtime version remains 0.4.1. This package updates approval-console presentation: command rows retain executable/arguments, requester/executor identities, state and dependency context; challenge IDs and request digests are hidden by default and shown/hidden with Space. The package qualification harness verifies that the toggle does not send a broker decision and that explicit decisions still work through the PAM-authenticated persistent console. Separately, a process-local mutex serializes filesystem unit-test fixtures; production filesystem locking and executor behavior are unchanged. Filesystem execution remains disconnected and no filesystem mutation is enabled.
+
+### Exact artifact and build provenance
+
+- Package: `executor/target/debian/mayi_0.4.1-2_amd64.deb` (`mayi 0.4.1-2 amd64`)
+- SHA-256: `4322f6689a76d374511cce53d3ae2315b93859638f01b768b4a09173cfd9722d`
+- Built from the current source snapshot in disposable Debian 10 (Buster), glibc 2.28, using Rust/Cargo 1.95.0 and GCC 8.3.0. Both executables require at most `GLIBC_2.28`.
+- Existing 0.4.1 and 0.4.1-1 artifacts were not overwritten or modified.
+
+### Exact-artifact qualification
+
+The package hash is pinned in `executor/package/qualify-systemd.py`. Debian 10–13 disposable systemd environments passed fresh install, upgrades from 0.4.0, 0.4.1, and 0.4.1-1, mandatory-setup failure handling, and the PAM conffile lifecycle. Bookworm fresh install used APT with the exact local candidate. The suite exercised PAM-authenticated approvals, default-hidden details, both Space toggles, decision actions, role/UID boundaries, exact argv, queue/dependency behavior, socket/lifecycle attacks, and 100 executor plus 100 broker restarts per lifecycle environment.
+
+| Debian | Result |
+| --- | --- |
+| 10 Buster | Fresh; upgrades from 0.4.0, 0.4.1, and 0.4.1-1; PAM/UI/queue/systemd lifecycle PASS. |
+| 11 Bullseye | Fresh; upgrades from 0.4.0, 0.4.1, and 0.4.1-1; PAM/UI/queue/systemd lifecycle PASS. |
+| 12 Bookworm | Fresh APT install; upgrades from 0.4.0, 0.4.1, and 0.4.1-1; all gates PASS. |
+| 13 Trixie | Fresh; upgrades from 0.4.0, 0.4.1, and 0.4.1-1; PAM/UI/queue/systemd lifecycle PASS. |
+
+Rust tests: 77 + 5 passed. Python tests: 52 passed; 9 direct PAM/package-console tests remain skipped outside the disposable package environment, where the corresponding authenticated workflows were run successfully. Formatting, Clippy, syntax, and diff checks passed. No package was staged or published. The targeted independent authorization-plane re-audit remains outstanding; publication and authorization-plane freeze are pending that review. No installed Mayi services were stopped or restarted.
 
 ## MIT/contact metadata packaging revision — 0.4.1-1 (2026-09-27)
 
@@ -163,13 +216,13 @@ All tests ran in disposable containers with systemd as PID 1, no host mounts, an
 | 12 Bookworm | Same gates PASS; fresh install via `apt-get install` on the local artifact, then upgrade from 0.3.1 PASS. |
 | 13 Trixie | Fresh install and upgrades from 0.2.0, 0.2.1, 0.2.2, 0.3.0, and 0.3.1; all installed-manual/runtime/lifecycle gates PASS. |
 
-Repository checks also passed: Python tests 58/58, Rust tests 71 + 5, Clippy with warnings denied, Rust formatting, Python/shell syntax, `git diff --check`, and groff rendering of both manual pages. The real Debian 12.15 host was not accessed or modified for this release. Debian 10 is technically compatible but EOL; Debian 12+ remains the recommended operational baseline.
+Repository checks for that historical release passed: Python tests 58/58, Rust tests 71 + 5, Clippy with warnings denied, Rust formatting, Python/shell syntax, `git diff --check`, and groff rendering of both manual pages. The real Debian 12.15 host was not accessed or modified for this release. Its earlier Debian 10 technical-compatibility claim is superseded; Debian 10 is not a supported runtime. Current supported targets are Debian 11–13.
 
 ## Debian portability / package 0.3.1 release (2026-09-26)
 
 ### Result
 
-Debian 10 (Buster) is the oldest technically compatible Debian release tested for the 0.3.1 package: it was built against glibc 2.28 and Python 3.7.3, then the identical artifact passed fresh-install functional, security, and systemd lifecycle qualification on Debian 10, 11, 12, and 13. Debian 9 (Stretch) is below the Python dependency floor (3.5.3 versus >=3.7); no dependency bypass was attempted. Debian 10 is EOL, so this technical floor must not be confused with a recommendation to run an unsupported OS. Full versions, hashes, matrix, upgrade scope, kernel limitations, and EOL caveats are in [DEBIAN_COMPATIBILITY.md](DEBIAN_COMPATIBILITY.md).
+Historical 0.3.1 artifact evidence: its Debian 10 build (glibc 2.28, Python 3.7.3) passed fresh-install and lifecycle tests on Debian 10–13 under the previous compatibility assumption. This historical package result does not establish current runtime support; Debian 10 is now excluded because installation and GLIBC compatibility alone do not establish required kernel/systemd security behavior. Debian 9's Python 3.5.3 also failed that package's declared >=3.7 dependency. Current supported targets and capability gates are in [DEBIAN_COMPATIBILITY.md](DEBIAN_COMPATIBILITY.md).
 
 The 0.3.0-to-0.3.1 upgrade passed on Debian 13. The 0.3.0 package requires and actually uses GLIBC_2.39 in its privileged executor, so it was not upgrade-installable on Debian 10–12 without bypassing a genuine runtime requirement. The final 0.3.1 native executables require at most GLIBC_2.28; the package declares `libc6 (>= 2.28)` and `python3 (>= 3.7)`. The administrator subsequently reported manual installation and successful queue/dependency/human-approval/privileged-execution/`--wait --fail=0` smoke testing on the real Debian 12.15 host. This consolidation did not access or modify the host. The original 0.3.0 artifact and hash remain unchanged.
 

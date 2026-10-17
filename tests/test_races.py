@@ -2,7 +2,8 @@
 filesystem operation may enter the mutation path (race hooks are disabled).
 """
 import os, subprocess, time
-from mayi.executor import RustExecutorClient
+import pytest
+from mayi.executor import RustExecutorClient, RustApprovalAuthorityClient, ExecutorError
 from pathlib import Path
 from mayi.mutations import file_patch,file_create,file_delete,file_move
 from mayi.protocol import request_document
@@ -16,7 +17,8 @@ def test_all_mutation_types_blocked_without_authority(tmp_path):
             time.sleep(.01)
         ops=[file_patch('/etc/a','A','B'),file_create('/etc/new','N'),file_delete('/etc/a','A'),file_move('/etc/a','/etc/b','A')]
         for i,op in enumerate(ops):
-            r=RustExecutorClient(socket_path=str(sock)).submit([op])
-            assert r['status']=='PENDING_APPROVAL' and r['protocol']==5
+            with pytest.raises(ExecutorError, match='UNSUPPORTED_OPERATION'):
+                RustExecutorClient(socket_path=str(sock)).submit([op])
+        assert RustApprovalAuthorityClient(str(auth)).list_pending()['pending']==[]
         assert (root/'etc/a').read_text()=='A' and not (root/'etc/new').exists() and not (root/'etc/b').exists()
     finally:p.terminate();p.wait(timeout=3)

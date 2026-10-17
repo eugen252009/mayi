@@ -1,7 +1,7 @@
 [Unit]
 Description=Mayi authorization broker
-Requires=mayi-privileged-executor.service
-After=mayi-privileged-executor.service
+Requires=mayi-privileged-executor.service mayi-pam-auth.service
+After=mayi-privileged-executor.service mayi-pam-auth.service
 StartLimitIntervalSec=60s
 StartLimitBurst=300
 

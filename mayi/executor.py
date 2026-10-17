@@ -18,13 +18,21 @@ def _peer_uid(sock):
     import struct
     raw=sock.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,struct.calcsize('3i'))
     return struct.unpack('3i',raw)[1]
-def _exchange(path,doc,timeout,expected_broker_uid=None):
+def _exchange(path,doc,timeout,expected_broker_uid=None,terminal_fd=None):
     raw=json.dumps(doc,ensure_ascii=False,separators=(',',':')).encode()
     if len(raw)>MAX_REQUEST_BYTES:raise ExecutorError('request exceeds size limit')
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         s.settimeout(timeout);s.connect(path)
         if expected_broker_uid is not None and _peer_uid(s)!=expected_broker_uid:raise ExecutorError('unexpected broker peer UID')
-        s.sendall(_frame(raw));n=int.from_bytes(_exact(s,4),'big')
+        frame=_frame(raw)
+        if terminal_fd is None:
+            s.sendall(frame)
+        else:
+            import array
+            sent=s.sendmsg([frame],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array('i',[terminal_fd]))])
+            if sent<=0:raise ExecutorError('failed to send terminal descriptor')
+            if sent<len(frame):s.sendall(frame[sent:])
+        n=int.from_bytes(_exact(s,4),'big')
         if n>MAX_REQUEST_BYTES:raise ExecutorError('response exceeds size limit')
         try:r=json.loads(_exact(s,n))
         except (json.JSONDecodeError,UnicodeDecodeError) as e:raise ExecutorError('invalid broker response') from e
@@ -68,7 +76,11 @@ class RustExecutorClient:
         if result.get('request_id')!=request_id or result.get('state') not in {'PENDING_APPROVAL','APPROVED','WAITING_DEPENDENCY','READY','RUNNING','SUCCEEDED','FAILED','DENIED','EXPLAIN_REQUESTED','EXPIRED','EXECUTION_UNKNOWN','BLOCKED'}:raise ExecutorError('invalid queue status response')
         return result
     def consume_approved(self,broker_instance_id,challenge_id,request_digest):
-        """Consume this request's approval; the broker deliberately performs no execution."""
+        """Claim this approval once; the broker dispatches the stored exact command.
+
+        UNKNOWN is not cancellation: execution may start or finish later. Never
+        automatically replay an ambiguous result. Filesystem ops are unsupported.
+        """
         if not self.socket_path:raise ExecutorError('protocol v5 consumption requires the broker request socket')
         for value,size in ((broker_instance_id,48),(challenge_id,48),(request_digest,64)):
             if not isinstance(value,str) or len(value)!=size or any(c not in '0123456789abcdef' for c in value):
@@ -92,10 +104,11 @@ class RustExecutorClient:
             raise ExecutorError('request status correlation mismatch')
         return result
 class RustApprovalAuthorityClient:
-    """Separate approval-role transport; server authenticates SO_PEERCRED UID."""
+    """Separate authority transport; the broker authenticates the peer with PAM per decision."""
     def __init__(self,socket_path,timeout=5,expected_broker_uid=None):self.socket_path=socket_path;self.timeout=timeout;self.expected_broker_uid=__import__('os').getuid() if expected_broker_uid is None else expected_broker_uid
-    def _call(self,message):
-        r=_exchange(self.socket_path,{'protocol':5,**message},self.timeout,self.expected_broker_uid)
+    def _call(self,message,terminal_fd=None):
+        timeout=max(self.timeout,310) if terminal_fd is not None else self.timeout
+        r=_exchange(self.socket_path,{'protocol':5,**message},timeout,self.expected_broker_uid,terminal_fd)
         if not isinstance(r,dict) or not isinstance(r.get('ok'),bool):raise ExecutorError('invalid authority response')
         if not r['ok']:raise ExecutorError(f"{r.get('code','INTERNAL_ERROR')}: {r.get('message','rejected')}")
         if r.get('protocol')!=5:raise ExecutorError('invalid authority response protocol')
@@ -113,4 +126,9 @@ class RustApprovalAuthorityClient:
     def decide(self,decision,broker_instance_id,challenge_id,request_digest,view_id):
         names={'approve':'APPROVE_CHALLENGE','deny':'DENY_CHALLENGE','explain':'EXPLAIN_CHALLENGE'}
         if decision not in names:raise ValueError('decision must be approve, deny, or explain')
-        return self._call({'type':names[decision],'broker_instance_id':broker_instance_id,'challenge_id':challenge_id,'request_digest':request_digest,'view_id':view_id})
+        import os
+        fd=os.open('/dev/tty',os.O_RDWR|os.O_CLOEXEC)
+        try:
+            return self._call({'type':names[decision],'broker_instance_id':broker_instance_id,'challenge_id':challenge_id,'request_digest':request_digest,'view_id':view_id},fd)
+        finally:
+            os.close(fd)

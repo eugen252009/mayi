@@ -4,7 +4,24 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TPA_BIN=${TPA_BIN:-tpa}
 OUT=${1:-"$ROOT/executor/target/debian"}
 mkdir -p "$OUT"
+ARTIFACT="$OUT/mayi_0.4.1-8_amd64.deb"
+if [ -e "$ARTIFACT" ] || [ -L "$ARTIFACT" ]; then
+  echo "refusing to overwrite existing package identity 0.4.1-8: $ARTIFACT" >&2
+  exit 1
+fi
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1792195200}
+export SOURCE_DATE_EPOCH
+NATIVE_TARGET=$(mktemp -d "$OUT/.mayi-native-target.XXXXXX")
+TEMP_ARTIFACT=$(mktemp "$OUT/.mayi_0.4.1-8_amd64.XXXXXX.deb")
+cleanup() {
+  rm -rf -- "$NATIVE_TARGET"
+  rm -f -- "$TEMP_ARTIFACT"
+}
+trap cleanup EXIT HUP INT TERM
+RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$ROOT=/usr/src/mayi"
+export RUSTFLAGS
 cargo build --manifest-path "$ROOT/executor/Cargo.toml" --locked --release \
+  --target-dir "$NATIVE_TARGET" \
   --bin mayi-executor --bin mayi-privileged-executor
 PKGROOT="$ROOT/executor/target/debian/package-root"
 rm -rf -- "$PKGROOT"
@@ -19,9 +36,9 @@ mkdir -p "$PKGROOT/usr/bin" "$PKGROOT/usr/libexec/mayi" \
   "$PKGROOT/usr/lib/systemd/system" "$PKGROOT/usr/lib/tmpfiles.d" \
   "$PKGROOT/usr/share/man/man1" "$PKGROOT/usr/share/man/man7" \
   "$PKGROOT/etc/pam.d"
-install -m 0755 "$ROOT/executor/target/release/mayi-executor" \
+install -m 0755 "$NATIVE_TARGET/release/mayi-executor" \
   "$PKGROOT/usr/bin/mayi-executor"
-install -m 0755 "$ROOT/executor/target/release/mayi-privileged-executor" \
+install -m 0755 "$NATIVE_TARGET/release/mayi-privileged-executor" \
   "$PKGROOT/usr/libexec/mayi/privileged-executor"
 cp -a "$ROOT/mayi" "$PKGROOT/usr/lib/python3/dist-packages/mayi"
 find "$PKGROOT/usr/lib/python3/dist-packages/mayi" -type d -name __pycache__ -prune -exec rm -rf -- {} +
@@ -32,6 +49,8 @@ cp "$ROOT/executor/package/usr/lib/systemd/system/mayi-privileged-executor.servi
   "$PKGROOT/usr/lib/systemd/system/mayi-privileged-executor.service"
 cp "$ROOT/executor/package/usr/lib/systemd/system/mayi-broker.service" \
   "$PKGROOT/usr/lib/systemd/system/mayi-broker.service"
+cp "$ROOT/executor/package/usr/lib/systemd/system/mayi-pam-auth.service" \
+  "$PKGROOT/usr/lib/systemd/system/mayi-pam-auth.service"
 cp "$ROOT/executor/package/usr/lib/tmpfiles.d/mayi.conf" "$PKGROOT/usr/lib/tmpfiles.d/mayi.conf"
 install -m 0644 "$ROOT/executor/package/etc/pam.d/mayi-approve" "$PKGROOT/etc/pam.d/mayi-approve"
 install -m 0644 "$ROOT/executor/package/usr/share/doc/mayi/copyright" \
@@ -48,6 +67,9 @@ for script in postinst prerm postrm; do
   cp "$ROOT/executor/package/DEBIAN/$script" "$PKGROOT/DEBIAN/$script"
   chmod 0755 "$PKGROOT/DEBIAN/$script"
 done
+find "$PKGROOT" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 "$TPA_BIN" build -in="$PKGROOT" \
-  -out="$OUT/mayi_0.4.1-1_amd64.deb"
-sha256sum "$OUT/mayi_0.4.1-1_amd64.deb"
+  -out="$TEMP_ARTIFACT"
+python3 "$ROOT/executor/package/verify_abi.py" "$TEMP_ARTIFACT"
+mv -- "$TEMP_ARTIFACT" "$ARTIFACT"
+sha256sum "$ARTIFACT"

@@ -19,10 +19,13 @@ WRONG_PASSWORD = secrets.token_urlsafe(32)
 SYSTEMD_MODE = os.environ.get("MAYI_TEST_SYSTEMD", "0") == "1"
 APT_MODE = os.environ.get("MAYI_TEST_APT", "0") == "1"
 KEEP_PACKAGE = os.environ.get("MAYI_TEST_KEEP_PACKAGE", "0") == "1"
-if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040", "upgrade041"}:
-    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031|upgrade032|upgrade040|upgrade041 are required")
-if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1", "0.4.1-1"}:
-    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, 0.3.2, 0.4.0, 0.4.1, or 0.4.1-1")
+MENU_MARKER = b"[a] Allow all pending" if TARGET_VERSION in {"0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"} else b"[a] allow all"
+if not NAME or MODE not in {"fresh", "upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040", "upgrade041", "upgrade0411", "upgrade0412", "upgrade0413", "upgrade0415"}:
+    raise SystemExit("MAYI_TEST_CONTAINER and MAYI_TEST_MODE=fresh|upgrade020|upgrade021|upgrade022|upgrade030|upgrade031|upgrade032|upgrade040|upgrade041|upgrade0411|upgrade0412|upgrade0413 are required")
+if TARGET_VERSION not in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"}:
+    raise SystemExit("MAYI_TARGET_VERSION must be 0.2.1, 0.2.2, 0.3.0, 0.3.1, 0.3.2, 0.4.0, 0.4.1, 0.4.1-1, 0.4.1-2, 0.4.1-3, or 0.4.1-4")
+if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"} and not SYSTEMD_MODE:
+    raise SystemExit("0.4.1-6 qualification requires systemd service/cgroup isolation")
 
 USERS = {
     "both": (1000, 1000, (23011, 23013)),
@@ -31,6 +34,8 @@ USERS = {
     "unauthorized": (1003, 1003, ()),
     "primary_requester": (1004, 23011, ()),
     "primary_approver": (1005, 23013, ()),
+    "locked_approver": (1006, 1006, (23013,)),
+    "rate_limited": (1007, 1007, (23013,)),
 }
 
 
@@ -109,18 +114,24 @@ def approve_actions(actions, identity="both", on_decision=None):
     uid, gid, groups = USERS[identity]
     master, slave = pty.openpty()
     proc = subprocess.Popen(
-        ["docker", "exec", "-it", "--env", "TERM=xterm-256color", NAME, *setpriv_args(uid, gid, groups, no_new_privs=TARGET_VERSION not in {"0.4.0", "0.4.1", "0.4.1-1"}), "/usr/bin/mayi-approve"],
+        ["docker", "exec", "-it", "--env", "TERM=xterm-256color", NAME, *setpriv_args(uid, gid, groups, no_new_privs=TARGET_VERSION not in {"0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2", "0.4.1-3"}), "/usr/bin/mayi-approve"],
         stdin=slave, stdout=slave, stderr=slave, close_fds=True,
     )
     os.close(slave)
     output = bytearray()
+    passwords_sent = 0
     def wait_marker(marker, count=1):
-        deadline = time.monotonic() + 30
+        nonlocal passwords_sent
+        deadline = time.monotonic() + 310
         while time.monotonic() < deadline and output.count(marker) < count and proc.poll() is None:
             ready, _, _ = select.select([master], [], [], 0.1)
             if ready:
                 try:
                     output.extend(os.read(master, 4096))
+                    if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"}:
+                        while output.count(b"Password:") > passwords_sent:
+                            passwords_sent += 1
+                            os.write(master, APPROVER_PASSWORD.encode() + b"\n")
                 except OSError:
                     break
         if output.count(marker) < count:
@@ -128,11 +139,21 @@ def approve_actions(actions, identity="both", on_decision=None):
     try:
         controls = 0
         acknowledgements = {}
-        if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
+        if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2", "0.4.1-3"}:
             wait_marker(b"Password:")
             os.write(master, APPROVER_PASSWORD.encode() + b"\n")
-        wait_marker(b"[a] allow all")
+        wait_marker(MENU_MARKER)
         controls = 1
+        if TARGET_VERSION in {"0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"}:
+            assert b"challenge ID:" not in output and b"request digest:" not in output
+            os.write(master, b" ")
+            wait_marker(b"[Space] Hide technical details")
+            assert b"challenge ID: " in output and b"request digest: " in output, output.decode(errors="replace")
+            os.write(master, b" ")
+            wait_marker(b"[Space] Show technical details", 2)
+            current_screen = output[output.rfind(b"\x1b[2J\x1b[H"):]
+            assert b"challenge ID:" not in current_screen and b"request digest:" not in current_screen
+        controls = output.count(MENU_MARKER)
         for action_index, (action, subset) in enumerate(actions):
             action = {"y": "a", "n": "d", "e": "f"}.get(action, action)
             os.write(master, action.encode() + b"\n")
@@ -141,7 +162,7 @@ def approve_actions(actions, identity="both", on_decision=None):
                 wait_marker(prompt)
                 os.write(master, (subset or "all").encode() + b"\n")
             if action == "s":
-                wait_marker(b"[a] allow all", controls + 1)
+                wait_marker(MENU_MARKER, controls + 1)
                 controls += 1
             else:
                 marker = {"a": b"Approved:", "d": b"Denied:", "f": b"Follow-up requested:"}.get(action, b"Approved:")
@@ -150,10 +171,10 @@ def approve_actions(actions, identity="both", on_decision=None):
                 if on_decision is not None:
                     on_decision(action_index)
                 if action != actions[-1][0] and len(actions) > 1:
-                    wait_marker(b"[a] allow all", controls + 1)
+                    wait_marker(MENU_MARKER, controls + 1)
                     controls += 1
         if any(action == "s" for action, _ in actions):
-            wait_marker(b"[a] allow all", controls + 1)
+            wait_marker(MENU_MARKER, controls + 1)
         os.write(master, b"q\n")
         try:
             proc.wait(timeout=8)
@@ -162,11 +183,16 @@ def approve_actions(actions, identity="both", on_decision=None):
             raise RuntimeError(f"persistent approval console did not quit: {output.decode(errors='replace')}")
         if proc.returncode != 0:
             raise RuntimeError(f"approval console failed: rc={proc.returncode}, output={output.decode(errors='replace')}")
-        if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
+        if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"}:
+            assert passwords_sent == output.count(b"Password:") and passwords_sent >= sum(action != "s" for action, _ in actions), output
+            assert b"Authenticated." not in output and b"APPROVAL_AUTH_SUCCESS" not in output
+            assert APPROVER_PASSWORD.encode() not in output
+        elif TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2"}:
             assert output.count(b"Password:") == 1 and b"Authenticated." not in output, output
             assert b"APPROVAL_AUTH_SUCCESS" not in output
             assert APPROVER_PASSWORD.encode() not in output, "PAM password was echoed to the terminal"
-            assert output.count(b"\x1b[2J\x1b[H") == sum(action != "s" for action, _ in actions), output
+            expected_refreshes = sum(action != "s" for action, _ in actions) + (2 if TARGET_VERSION in {"0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"} else 0)
+            assert output.count(b"\x1b[2J\x1b[H") == expected_refreshes, output
             assert b"\x1b[3J" not in output, "visible refresh must not erase terminal scrollback"
         while True:
             ready, _, _ = select.select([master], [], [], 0)
@@ -271,7 +297,7 @@ def approval_console_probe(identity="both", password=APPROVER_PASSWORD, env=None
             while password is not None and sent < prompts:
                 os.write(master, password.encode() + b"\n")
                 sent += 1
-            if b"Waiting for Mayi requests..." in output or b"[a] allow all" in output:
+            if b"Waiting for Mayi requests..." in output or b"[a] Allow all pending" in output or b"[a] allow all" in output:
                 os.write(master, b"q\n")
                 proc.wait(timeout=5)
                 break
@@ -371,6 +397,181 @@ r=c.list_pending(); v=c.get_challenge(r["broker_instance_id"],sys.argv[1],sys.ar
     return json.loads(python_as(identity, source, proposal["challenge_id"], proposal["request_digest"]).stdout)
 
 
+def direct_client_decision(identity, proposal, view_id, password, before_password=None):
+    uid, gid, groups = USERS[identity]
+    source = '''import json,sys
+from mayi.executor import RustApprovalAuthorityClient
+c=RustApprovalAuthorityClient("/run/mayi/approval/broker.sock",expected_broker_uid=23002)
+try:
+ r=c.decide("approve",*sys.argv[1:5]); print("DIRECT_RESULT "+json.dumps({"ok":True,"status":r.get("status")}))
+except Exception as e: print("DIRECT_RESULT "+json.dumps({"ok":False,"error":str(e)}))'''
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        ["docker", "exec", "-it", NAME, *setpriv_args(uid, gid, groups),
+         "python3", "-c", source, proposal["broker_instance_id"], proposal["challenge_id"],
+         proposal["request_digest"], view_id],
+        stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    )
+    os.close(slave)
+    output = bytearray()
+    sent = 0
+    deadline = time.monotonic() + 320
+    try:
+        while time.monotonic() < deadline and proc.poll() is None:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    output.extend(os.read(master, 4096))
+                except OSError:
+                    break
+                if password is not None:
+                    while output.count(b"Password:") > sent:
+                        if before_password is not None:
+                            before_password()
+                        sent += 1
+                        os.write(master, password.encode() + b"\n")
+        if proc.poll() is None:
+            proc.kill(); proc.wait()
+            raise RuntimeError(f"direct authority client timed out: {output.decode(errors='replace')}")
+        text = output.decode("utf-8", "replace")
+        marker = "DIRECT_RESULT "
+        result = next((json.loads(line.split(marker, 1)[1]) for line in text.splitlines() if marker in line), None)
+        if result is None:
+            raise RuntimeError(f"direct authority client emitted no result: {text}")
+        return result, text, sent
+    finally:
+        if proc.poll() is None:
+            proc.kill(); proc.wait()
+        os.close(master)
+
+
+def concurrent_direct_approvals(proposal, view_id):
+    uid, gid, groups = USERS["approver"]
+    source = '''import json,sys
+from mayi.executor import RustApprovalAuthorityClient
+c=RustApprovalAuthorityClient("/run/mayi/approval/broker.sock",expected_broker_uid=23002)
+try:
+ r=c.decide("approve",*sys.argv[1:5]); print("DIRECT_RESULT "+json.dumps({"ok":True,"status":r.get("status")}))
+except Exception as e: print("DIRECT_RESULT "+json.dumps({"ok":False,"error":str(e)}))'''
+    children = []
+    for _ in range(2):
+        master, slave = pty.openpty()
+        proc = subprocess.Popen(
+            ["docker", "exec", "-it", NAME, *setpriv_args(uid, gid, groups),
+             "python3", "-c", source, proposal["broker_instance_id"], proposal["challenge_id"],
+             proposal["request_digest"], view_id],
+            stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+        )
+        os.close(slave)
+        children.append({"master": master, "proc": proc, "output": bytearray(), "sent": 0})
+    deadline = time.monotonic() + 320
+    try:
+        while time.monotonic() < deadline and any(child["proc"].poll() is None for child in children):
+            for child in children:
+                if child["proc"].poll() is not None:
+                    continue
+                ready, _, _ = select.select([child["master"]], [], [], 0.02)
+                if ready:
+                    try:
+                        child["output"].extend(os.read(child["master"], 4096))
+                    except OSError:
+                        continue
+                    while child["output"].count(b"Password:") > child["sent"]:
+                        child["sent"] += 1
+                        os.write(child["master"], APPROVER_PASSWORD.encode() + b"\n")
+        if any(child["proc"].poll() is None for child in children):
+            raise RuntimeError("concurrent PAM approvals timed out")
+        # The PTY can still contain the result written just before process exit.
+        for child in children:
+            while select.select([child["master"]], [], [], 0)[0]:
+                try:
+                    child["output"].extend(os.read(child["master"], 4096))
+                except OSError:
+                    break
+        results = []
+        for child in children:
+            text = child["output"].decode("utf-8", "replace")
+            marker = "DIRECT_RESULT "
+            result = next((json.loads(line.split(marker, 1)[1]) for line in text.splitlines() if marker in line), None)
+            if result is None or child["sent"] != 1:
+                raise RuntimeError(f"concurrent approval produced no authenticated result: {text}")
+            results.append(result)
+        return results
+    finally:
+        for child in children:
+            if child["proc"].poll() is None:
+                child["proc"].kill(); child["proc"].wait()
+            os.close(child["master"])
+
+
+def raw_decision_without_pam(identity, proposal, view_id):
+    source = '''import json,sys
+from mayi.executor import _exchange
+m={"type":"APPROVE_CHALLENGE","protocol":5,"broker_instance_id":sys.argv[1],"challenge_id":sys.argv[2],"request_digest":sys.argv[3],"view_id":sys.argv[4]}
+print(json.dumps(_exchange("/run/mayi/approval/broker.sock",m,5,23002)))'''
+    return json.loads(python_as(identity, source, proposal["broker_instance_id"], proposal["challenge_id"], proposal["request_digest"], view_id).stdout)
+
+
+def raw_decision_with_forged_uid(proposal, view_id):
+    source = '''import json,sys
+from mayi.executor import _exchange
+m={"type":"APPROVE_CHALLENGE","protocol":5,"broker_instance_id":sys.argv[1],"challenge_id":sys.argv[2],"request_digest":sys.argv[3],"view_id":sys.argv[4],"peer_uid":1000}
+print(json.dumps(_exchange("/run/mayi/approval/broker.sock",m,5,23002)))'''
+    return json.loads(python_as("approver", source, proposal["broker_instance_id"], proposal["challenge_id"], proposal["request_digest"], view_id).stdout)
+
+
+def request_status(proposal):
+    source = '''import json,sys
+from mayi.executor import RustExecutorClient
+c=RustExecutorClient(socket_path="/run/mayi/request/broker.sock",expected_broker_uid=23002)
+print(json.dumps(c.request_status(*sys.argv[1:])))'''
+    return json.loads(python_as("requester", source, proposal["broker_instance_id"], proposal["challenge_id"], proposal["request_digest"]).stdout)
+
+
+def direct_helper_oracle_probe():
+    source = '''import array,json,socket,os,struct,sys
+fd=os.open("/dev/tty",os.O_RDWR|os.O_CLOEXEC)
+s=socket.socket(socket.AF_UNIX);s.settimeout(10);s.connect("/run/mayi/pam-auth/auth.sock")
+m={"type":"PAM_AUTHENTICATE","protocol":1,"peer_uid":1002,"operation":"APPROVE_CHALLENGE","broker_instance_id":"a"*48,"challenge_id":"b"*48,"request_digest":"c"*64,"view_id":"d"*48}
+b=json.dumps(m,separators=(",",":")).encode();f=struct.pack(">I",len(b))+b
+s.sendmsg([f],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array("i",[fd]))])
+def exact(n):
+ d=b""
+ while len(d)<n:d+=s.recv(n-len(d))
+ return d
+n=struct.unpack(">I",exact(4))[0];print("HELPER_RESULT "+exact(n).decode())'''
+    uid, gid, _ = 23002, 23012, ()
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        ["docker", "exec", "-it", NAME, *setpriv_args(uid, gid, ()), "python3", "-c", source],
+        stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    )
+    os.close(slave)
+    output = bytearray()
+    deadline = time.monotonic() + 15
+    try:
+        while time.monotonic() < deadline and proc.poll() is None:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    output.extend(os.read(master, 4096))
+                except OSError:
+                    break
+        if proc.poll() is None:
+            proc.kill(); proc.wait()
+            raise RuntimeError("direct PAM-helper oracle probe timed out")
+        text = output.decode("utf-8", "replace")
+        marker = "HELPER_RESULT "
+        response = next((json.loads(line.split(marker, 1)[1]) for line in text.splitlines() if marker in line), None)
+        if response is None:
+            raise RuntimeError(f"direct PAM-helper probe returned no response: {text}")
+        return response, text
+    finally:
+        if proc.poll() is None:
+            proc.kill(); proc.wait()
+        os.close(master)
+
+
 def unauthorized_cli(identity, injected_group):
     uid, gid, _ = USERS[identity]
     result = docker_as(uid, gid, (injected_group,), "/usr/bin/mayi", "/usr/bin/id", check=False)
@@ -394,17 +595,17 @@ except (OSError,TimeoutError) as e: print(json.dumps({"closed":True,"error":str(
 
 def start_services():
     if SYSTEMD_MODE:
-        docker("systemctl", "start", "mayi-privileged-executor.service", "mayi-broker.service")
-        assert docker("systemctl", "is-active", "mayi-privileged-executor.service", "mayi-broker.service").returncode == 0
+        docker("systemctl", "start", "mayi-privileged-executor.service", "mayi-pam-auth.service", "mayi-broker.service")
+        assert docker("systemctl", "is-active", "mayi-privileged-executor.service", "mayi-pam-auth.service", "mayi-broker.service").returncode == 0
         return
-    docker("sh", "-eu", "-c", 'setpriv --no-new-privs --reuid=0 --regid=23012 --clear-groups /usr/libexec/mayi/privileged-executor >/tmp/executor.log 2>&1 & echo $! >/tmp/executor.pid; i=0; while [ ! -S /run/mayi/executor/executor.sock ]; do i=$((i+1)); [ "$i" -lt 100 ]; sleep .1; done; setpriv --no-new-privs --reuid=23002 --regid=23012 --groups=23011,23013 /usr/bin/mayi-executor --request-socket /run/mayi/request/broker.sock --request-gid 23011 --approval-socket /run/mayi/approval/broker.sock --approval-gid 23013 >/tmp/broker.log 2>&1 & echo $! >/tmp/broker.pid; i=0; while [ ! -S /run/mayi/request/broker.sock ] || [ ! -S /run/mayi/approval/broker.sock ]; do i=$((i+1)); [ "$i" -lt 100 ]; sleep .1; done')
+    docker("sh", "-eu", "-c", 'setpriv --no-new-privs --reuid=0 --regid=23012 --clear-groups /usr/libexec/mayi/privileged-executor >/tmp/executor.log 2>&1 & echo $! >/tmp/executor.pid; i=0; while [ ! -S /run/mayi/executor/executor.sock ]; do i=$((i+1)); [ "$i" -lt 100 ]; sleep .1; done; setpriv --reuid=23003 --regid=23012 --clear-groups /usr/bin/mayi-executor --pam-auth-socket /run/mayi/pam-auth/auth.sock --broker-uid 23002 --socket-gid 23012 >/tmp/pam-auth.log 2>&1 & echo $! >/tmp/pam-auth.pid; i=0; while [ ! -S /run/mayi/pam-auth/auth.sock ]; do i=$((i+1)); [ "$i" -lt 100 ]; sleep .1; done; setpriv --no-new-privs --reuid=23002 --regid=23012 --groups=23011,23013 /usr/bin/mayi-executor --request-socket /run/mayi/request/broker.sock --request-gid 23011 --approval-socket /run/mayi/approval/broker.sock --approval-gid 23013 >/tmp/broker.log 2>&1 & echo $! >/tmp/broker.pid; i=0; while [ ! -S /run/mayi/request/broker.sock ] || [ ! -S /run/mayi/approval/broker.sock ]; do i=$((i+1)); [ "$i" -lt 100 ]; sleep .1; done')
 
 
 def stop_services():
     if SYSTEMD_MODE:
-        docker("systemctl", "stop", "mayi-broker.service", "mayi-privileged-executor.service")
+        docker("systemctl", "stop", "mayi-broker.service", "mayi-pam-auth.service", "mayi-privileged-executor.service")
         return
-    docker("sh", "-eu", "-c", 'kill $(cat /tmp/broker.pid) 2>/dev/null || true; kill $(cat /tmp/executor.pid) 2>/dev/null || true; sleep .3; rm -f /run/mayi/request/broker.sock /run/mayi/approval/broker.sock /run/mayi/executor/executor.sock /run/mayi/executor/executor.lock')
+    docker("sh", "-eu", "-c", 'kill $(cat /tmp/broker.pid) 2>/dev/null || true; kill $(cat /tmp/pam-auth.pid) 2>/dev/null || true; kill $(cat /tmp/executor.pid) 2>/dev/null || true; sleep .3; rm -f /run/mayi/request/broker.sock /run/mayi/approval/broker.sock /run/mayi/pam-auth/auth.sock /run/mayi/executor/executor.sock /run/mayi/executor/executor.lock')
 
 
 def create_human_roles():
@@ -422,25 +623,40 @@ usermod -aG mayi-approver mayi-approver-only
 ''')
     docker("usermod", "-aG", "mayi-requester", "mayi-primary-requester-user")
     docker("usermod", "-aG", "mayi-approver", "mayi-primary-approver-user")
-    if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
-        accounts = ("mayi-both", "mayi-approver-only", "mayi-primary-approver-user")
+    if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"}:
+        docker("groupadd", "-g", "1006", "mayi-locked-approver")
+        docker("useradd", "-u", "1006", "-g", "mayi-locked-approver", "-M", "-s", "/usr/sbin/nologin", "mayi-locked-approver")
+        docker("usermod", "-aG", "mayi-approver", "mayi-locked-approver")
+        docker("passwd", "-l", "mayi-locked-approver")
+        docker("groupadd", "-g", "1007", "mayi-rate-limited")
+        docker("useradd", "-u", "1007", "-g", "mayi-rate-limited", "-M", "-s", "/usr/sbin/nologin", "mayi-rate-limited")
+        docker("usermod", "-aG", "mayi-approver", "mayi-rate-limited")
+    if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"}:
+        accounts = ["mayi-both", "mayi-approver-only", "mayi-primary-approver-user"]
+        if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"}:
+            accounts.append("mayi-rate-limited")
         docker("chpasswd", input="".join(f"{account}:{APPROVER_PASSWORD}\n" for account in accounts).encode())
-        docker("chpasswd", input=f"mayi-unrelated:{WRONG_PASSWORD}\n".encode())
+        unrelated_password = APPROVER_PASSWORD if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"} else WRONG_PASSWORD
+        docker("chpasswd", input=f"mayi-unrelated:{unrelated_password}\n".encode())
 
 
 def check_roles_and_topology():
     docker("sh", "-eu", "-c", '''
 grep -q -- '--request-gid 23011' /usr/lib/systemd/system/mayi-broker.service
 grep -q -- '--approval-gid 23013' /usr/lib/systemd/system/mayi-broker.service
+grep -q 'mayi-pam-auth.service' /usr/lib/systemd/system/mayi-broker.service
+grep -q -- '--pam-auth-socket /run/mayi/pam-auth/auth.sock' /usr/lib/systemd/system/mayi-pam-auth.service
 ! grep -q -- '--request-uid' /usr/lib/systemd/system/mayi-broker.service
 ! grep -q -- '--approval-uid' /usr/lib/systemd/system/mayi-broker.service
 test "$(id -u mayi-broker)" = 23002
 test "$(id -g mayi-broker)" = 23012
+! getent passwd mayi-pam-auth
 test "$(getent group mayi-requester | cut -d: -f3)" = 23011
 test "$(getent group mayi-approver | cut -d: -f3)" = 23013
 test "$(getent group mayi-broker-socket | cut -d: -f3)" = 23012
 test "$(stat -c %u:%g:%a /run/mayi/request)" = 23002:23011:750
 test "$(stat -c %u:%g:%a /run/mayi/approval)" = 23002:23013:750
+test "$(stat -c %u:%g:%a /run/mayi/pam-auth)" = 0:23012:750
 test "$(stat -c %u:%g:%a /run/mayi/executor)" = 0:23012:750
 ''')
     names = {"both": "mayi-both", "requester": "mayi-requester-only", "approver": "mayi-approver-only", "unauthorized": "mayi-unrelated"}
@@ -502,8 +718,8 @@ def manpage_qualification():
 
 
 def install_for_mode():
-    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040", "upgrade041"}:
-        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1", "upgrade032": "0.3.2", "upgrade040": "0.4.0", "upgrade041": "0.4.1"}.get(MODE, "0.2.0")
+    if MODE in {"upgrade", "upgrade020", "upgrade021", "upgrade022", "upgrade030", "upgrade031", "upgrade032", "upgrade040", "upgrade041", "upgrade0411", "upgrade0412", "upgrade0413", "upgrade0415"}:
+        baseline = {"upgrade021": "0.2.1", "upgrade022": "0.2.2", "upgrade030": "0.3.0", "upgrade031": "0.3.1", "upgrade032": "0.3.2", "upgrade040": "0.4.0", "upgrade041": "0.4.1", "upgrade0411": "0.4.1-1", "upgrade0412": "0.4.1-2", "upgrade0413": "0.4.1-3", "upgrade0415": "0.4.1-5"}.get(MODE, "0.2.0")
         install_package(baseline)
         create_human_roles()
         requester_groups = docker("id", "-G", "mayi-both").stdout
@@ -516,6 +732,7 @@ def install_for_mode():
         if SYSTEMD_MODE:
             ready_before = journal_events(b"event=EXECUTOR_READY ")
             socket_before = docker("stat", "-c", "%d:%i", "/run/mayi/executor/executor.sock").stdout.strip()
+            broker_pid_before = docker("systemctl", "show", "mayi-broker.service", "-p", "MainPID", "--value").stdout.strip()
         upgraded = docker("dpkg", "-i", package_path(TARGET_VERSION), timeout=120) if SYSTEMD_MODE else docker("apt-get", "install", "-y", package_path(TARGET_VERSION), timeout=120)
         output = upgraded.stdout + upgraded.stderr
         assert b"addgroup with two arguments" not in output, output
@@ -531,19 +748,22 @@ def install_for_mode():
             assert docker("test", "-S", "/run/mayi/executor/executor.sock", check=False).returncode == 0
             assert docker("stat", "-c", "%d:%i", "/run/mayi/executor/executor.sock").stdout.strip() != socket_before, "upgrade did not replace the old executor socket"
             assert journal_events(b"event=EXECUTOR_READY ") > ready_before, "systemd did not restart executor after upgrade"
-            assert docker("systemctl", "is-active", "mayi-privileged-executor.service", "mayi-broker.service").returncode == 0
+            assert docker("systemctl", "is-active", "mayi-privileged-executor.service", "mayi-pam-auth.service", "mayi-broker.service").returncode == 0
+            if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"} and baseline in {"0.4.1-2", "0.4.1-3"}:
+                broker_pid_after = docker("systemctl", "show", "mayi-broker.service", "-p", "MainPID", "--value").stdout.strip()
+                assert broker_pid_after != broker_pid_before, "upgrade left the vulnerable pre-authentication broker process running"
         print(f"UPGRADE {baseline} -> {TARGET_VERSION}; MEMBERSHIPS AND LEGACY ACCOUNTS PRESERVED: PASS")
     else:
         install_package(TARGET_VERSION)
-        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1", "0.4.1-1"}:
+        if TARGET_VERSION in {"0.2.1", "0.2.2", "0.3.0", "0.3.1", "0.3.2", "0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"}:
             assert docker("getent", "passwd", "mayi-requester", check=False).returncode != 0
             assert docker("getent", "passwd", "mayi-approver", check=False).returncode != 0
         create_human_roles()
         method = "APT" if APT_MODE else "dpkg"
         print(f"FRESH INSTALL {TARGET_VERSION} VIA {method}: PASS")
-    if TARGET_VERSION in {"0.3.2", "0.4.0", "0.4.1", "0.4.1-1"}:
+    if TARGET_VERSION in {"0.3.2", "0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"}:
         manpage_qualification()
-    if TARGET_VERSION == "0.4.1-1":
+    if TARGET_VERSION in {"0.4.1-1", "0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"}:
         version = docker("dpkg-query", "-W", "-f=${Version}", "mayi").stdout.decode().strip()
         maintainer = docker("dpkg-deb", "-f", package_path(TARGET_VERSION), "Maintainer").stdout.decode().strip()
         copyright = docker("cat", "/usr/share/doc/mayi/copyright").stdout.decode()
@@ -634,10 +854,9 @@ def queue_qualification():
 
     before = execution_request_ids()
     first = queue_command(command_path("true"))
-    second = queue_command(command_path("true"))
+    second = queue_command("/usr/bin/id")
     skipped_display = approve_actions([("s", None), ("a", None)])
-    displayed_ids = [request_id for request_id in (first, second) if skipped_display.count(request_id) >= 2]
-    assert displayed_ids, "skipped set did not resurface after cycling"
+    assert "/usr/bin/id" in skipped_display and "Commands: 1" in skipped_display, "skipped set did not resurface after cycling"
     approve("a")
     assert wait_jobs([first, second]).returncode == 0
     assert len(execution_request_ids()) == len(before) + 2
@@ -676,7 +895,140 @@ def queue_qualification():
     print("FAIL-INSTANT RETURNS WITHOUT CANCELLING OTHER JOB: PASS")
 
 
+def broker_pam_authentication_qualification():
+    docker("test", "-f", "/etc/pam.d/mayi-approve")
+    locked = docker("passwd", "-S", "mayi-locked-approver").stdout.decode()
+    assert locked.split()[1] == "L", locked
+    before = count_started()
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    raw = raw_decision_without_pam("approver", proposal, view["view_id"])
+    assert raw.get("ok") is False and raw.get("code") == "PAM_AUTH_REQUIRED", raw
+    forged = raw_decision_with_forged_uid(proposal, view["view_id"])
+    assert forged.get("ok") is False and forged.get("code") == "UNKNOWN_FIELD", forged
+    direct_helper, helper_output = direct_helper_oracle_probe()
+    assert direct_helper.get("ok") is False and direct_helper.get("authenticated") is False
+    assert "Password:" not in helper_output
+    assert request_status(proposal)["status"] == "PENDING"
+    assert count_started() == before
+    display = approve("a", identity="approver")
+    assert display.count("Password:") == 1 and APPROVER_PASSWORD not in display
+    assert count_call(proposal["broker_instance_id"], proposal["challenge_id"], proposal["request_digest"], identity="requester")["ok"]
+    assert count_started() == before + 1
+    print("RAW / FORGED-IDENTITY DECISIONS DENIED; HELPER REJECTS SAME-UID PROCESS OUTSIDE BROKER SERVICE: PASS")
+
+    before = count_started()
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    denied, output, prompts = direct_client_decision("approver", proposal, view["view_id"], WRONG_PASSWORD)
+    assert denied["ok"] is False and "PAM_AUTHENTICATION_FAILED" in denied["error"], (denied, output)
+    assert prompts == 1 and WRONG_PASSWORD not in output
+    assert request_status(proposal)["status"] == "PENDING" and count_started() == before
+    print("AUTHORIZED GROUP + FAILED PAM: DENIED WITHOUT APPROVAL SIDE EFFECT")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    docker("mv", "/run/mayi/pam-auth/auth.sock", "/run/mayi/pam-auth/auth.sock.hidden")
+    try:
+        unavailable, output, prompts = direct_client_decision("approver", proposal, view["view_id"], APPROVER_PASSWORD)
+    finally:
+        docker("mv", "/run/mayi/pam-auth/auth.sock.hidden", "/run/mayi/pam-auth/auth.sock")
+    assert unavailable["ok"] is False and "PAM_AUTHENTICATION_FAILED" in unavailable["error"]
+    assert prompts == 0 and request_status(proposal)["status"] == "PENDING"
+    assert count_started() == before
+    print("HELPER UNAVAILABLE: FAIL-CLOSED, NO APPROVAL SIDE EFFECT")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("locked_approver", proposal)
+    denied, output, prompts = direct_client_decision("locked_approver", proposal, view["view_id"], APPROVER_PASSWORD)
+    assert denied["ok"] is False and "PAM_AUTHENTICATION_FAILED" in denied["error"], (denied, output)
+    assert prompts == 1 and request_status(proposal)["status"] == "PENDING"
+    assert count_started() == before
+    print("AUTHORIZED GROUP + LOCKED PASSWORD: DENIED UNDER COMMON-AUTH POLICY")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    denied, output, prompts = direct_client_decision("unauthorized", proposal, view["view_id"], APPROVER_PASSWORD)
+    assert denied["ok"] is False and "Permission denied" in denied["error"], (denied, output)
+    assert prompts == 0 and "Password:" not in output
+    assert request_status(proposal)["status"] == "PENDING" and count_started() == before
+    print("UNAUTHORIZED UID: DENIED BY APPROVAL-SOCKET DAC BEFORE PAM")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    revoked = False
+    def revoke_role_before_pam_response():
+        nonlocal revoked
+        if not revoked:
+            docker("gpasswd", "-d", "mayi-approver-only", "mayi-approver")
+            revoked = True
+    try:
+        denied, output, prompts = direct_client_decision(
+            "approver", proposal, view["view_id"], APPROVER_PASSWORD,
+            before_password=revoke_role_before_pam_response,
+        )
+    finally:
+        if revoked:
+            docker("usermod", "-aG", "mayi-approver", "mayi-approver-only")
+    assert denied["ok"] is False and "UNAUTHORIZED_APPROVER" in denied["error"] and prompts == 1
+    assert request_status(proposal)["status"] == "PENDING" and count_started() == before
+    print("NSS ROLE REVOKED DURING PAM PROMPT: RECHECK DENIES APPROVAL")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    approved, output, prompts = direct_client_decision("approver", proposal, view["view_id"], APPROVER_PASSWORD)
+    assert approved["ok"] is True and approved["status"] == "APPROVED" and prompts == 1, (approved, output)
+    replay, replay_output, replay_prompts = direct_client_decision("approver", proposal, view["view_id"], APPROVER_PASSWORD)
+    assert replay["ok"] is False and replay_prompts == 0 and "VIEW_ALREADY_USED" in replay["error"], (replay, replay_output)
+    assert request_status(proposal)["status"] == "APPROVED" and count_started() == before
+    result = count_call(proposal["broker_instance_id"], proposal["challenge_id"], proposal["request_digest"], identity="requester")
+    assert result["ok"] and count_started() == before + 1
+    assert not count_call(proposal["broker_instance_id"], proposal["challenge_id"], proposal["request_digest"], identity="requester")["ok"]
+    print("DIRECT RUST AUTHORITY CLIENT + PAM, PEER/VIEW BINDING, AND ONE-SHOT REPLAY DENIAL: PASS")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("both", proposal)
+    transferred, output, prompts = direct_client_decision("approver", proposal, view["view_id"], APPROVER_PASSWORD)
+    assert transferred["ok"] is False and "VIEW_BINDING_MISMATCH" in transferred["error"] and prompts == 0
+    assert request_status(proposal)["status"] == "PENDING" and count_started() == before + 1
+    print("AUTHENTICATION/VIEW CANNOT TRANSFER BETWEEN APPROVER UIDS: PASS")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    broker_restart()
+    stale, output, prompts = direct_client_decision("approver", proposal, view["view_id"], APPROVER_PASSWORD)
+    assert stale["ok"] is False and prompts == 0 and count_started() == before + 1
+    print("BROKER RESTART INVALIDATES CHALLENGE; NO PAM SESSION SURVIVES: PASS")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("approver", proposal)
+    results = concurrent_direct_approvals(proposal, view["view_id"])
+    assert sum(bool(result.get("ok")) for result in results) == 1, results
+    assert request_status(proposal)["status"] == "APPROVED"
+    assert count_started() == before + 1
+    assert count_call(proposal["broker_instance_id"], proposal["challenge_id"], proposal["request_digest"], identity="requester")["ok"]
+    assert count_started() == before + 2
+    print("CONCURRENT PAM AUTHENTICATIONS SERIALIZE; ONE APPROVAL WINNER ONLY: PASS")
+
+    proposal = propose(command_path("true"), ["true"], identity="requester")
+    view = list_and_view("rate_limited", proposal)
+    for _ in range(5):
+        denied, output, prompts = direct_client_decision("rate_limited", proposal, view["view_id"], WRONG_PASSWORD)
+        assert denied["ok"] is False and prompts == 1, (denied, output)
+    throttled, output, prompts = direct_client_decision("rate_limited", proposal, view["view_id"], APPROVER_PASSWORD)
+    assert throttled["ok"] is False and prompts == 0 and "PAM_AUTHENTICATION_FAILED" in throttled["error"]
+    assert request_status(proposal)["status"] == "PENDING" and count_started() == before + 2
+    print("FAILED PAM ATTEMPTS RATE-LIMITED PER UID; AUTH NOT REUSED: PASS")
+    # Remove the intentionally still-pending throttled challenge before the
+    # broader lifecycle tests, so their "all" decisions remain deterministic.
+    broker_restart()
+
+
 def authentication_qualification():
+    if TARGET_VERSION in {"0.4.1-4", "0.4.1-6"}:
+        broker_pam_authentication_qualification()
+        return
     docker("test", "-f", "/etc/pam.d/mayi-approve")
     pam_config = docker("cat", "/etc/pam.d/mayi-approve").stdout
     assert b"@include common-auth" in pam_config and b"@include common-account" in pam_config
@@ -741,11 +1093,13 @@ def authentication_qualification():
     display = approve_actions([("a", "all"), ("d", "all")], identity="both", on_decision=submit_new_request_after_first_decision)
     assert display.count("Password:") == 1 and "Authenticated." not in display, display
     assert "APPROVAL_AUTH_SUCCESS" not in display
-    assert display.count("\x1b[2J\x1b[H") == 2 and "\x1b[3J" not in display, display
-    first_clear = display.index("\x1b[2J\x1b[H")
+    clear_positions = [i for i in range(len(display)) if display.startswith("\x1b[2J\x1b[H", i)]
+    expected_clears = 4 if TARGET_VERSION in {"0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"} else 2
+    assert len(clear_positions) == expected_clears and "\x1b[3J" not in display, display
+    first_clear = clear_positions[-2]
     first_ack = display.index("Approved:")
     second_request = display.index("Commands:", first_ack)
-    second_clear = display.index("\x1b[2J\x1b[H", first_clear + 1)
+    second_clear = clear_positions[-1]
     deny_ack = display.index("Denied:", second_request)
     assert first_clear < first_ack < second_request < second_clear < deny_ack, display
     assert len(later_ids) == 1
@@ -784,7 +1138,7 @@ def run():
     assert code != 0 and "MAYI_UNAUTHORIZED_APPROVER" in error, (code, error)
     assert count_started() == before
     print("REQUESTER/APPROVER GROUP AUTHORIZATION AND CLEAR ERRORS: PASS")
-    if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1"}:
+    if TARGET_VERSION in {"0.4.0", "0.4.1", "0.4.1-1", "0.4.1-2", "0.4.1-3", "0.4.1-4", "0.4.1-6"}:
         authentication_qualification()
 
     # Supplementary requester A and approver B; other members cannot consume A's request.
@@ -804,7 +1158,7 @@ def run():
     assert not other["ok"] and "UNAUTHORIZED_REQUESTER" in other["error"]
     assert count_started() == before
     result = count_call(p["broker_instance_id"], p["challenge_id"], p["request_digest"], identity="requester")
-    assert result["ok"] and bytes.fromhex(result["stdout_hex"]) == b"A"
+    assert result["ok"] and bytes.fromhex(result.get("stdout_hex", "")) == b"A", result
     assert count_started() == before + 1
     print("ACTUAL REQUESTER/APPROVER UID BINDING AND CROSS-CONSUME DENIAL: PASS")
 

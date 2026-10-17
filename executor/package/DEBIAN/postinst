@@ -1,23 +1,39 @@
 #!/bin/sh
 set -eu
+collision_error() {
+    echo "Mayi identity collision: $*; resolve the conflicting NSS account/group and retry package configuration. Mayi will not delete or rename existing identities." >&2
+    exit 1
+}
 ensure_group() {
     name=$1 gid=$2
     if entry=$(getent group "$name"); then
         actual=$(printf '%s\n' "$entry" | cut -d: -f3)
-        [ "$actual" = "$gid" ] || { echo "group $name has unexpected gid $actual" >&2; exit 1; }
+        [ "$actual" = "$gid" ] || collision_error "group '$name' uses GID $actual, expected $gid"
+        by_gid=$(getent group "$gid" || true)
+        [ "$(printf '%s\n' "$by_gid" | cut -d: -f1)" = "$name" ] || collision_error "GID $gid is also assigned to another group"
+        echo "Mayi: using existing group '$name' (GID $gid); verify it is the intended Mayi service/role group." >&2
     else
+        by_gid=$(getent group "$gid" || true)
+        [ -z "$by_gid" ] || collision_error "GID $gid belongs to '$(printf '%s\n' "$by_gid" | cut -d: -f1)'"
         addgroup --system --gid "$gid" "$name"
     fi
 }
 ensure_user() {
     name=$1 uid=$2 group=$3
+    expected_gid=$(getent group "$group" | cut -d: -f3)
     if entry=$(getent passwd "$name"); then
         actual_uid=$(printf '%s\n' "$entry" | cut -d: -f3)
         actual_gid=$(printf '%s\n' "$entry" | cut -d: -f4)
-        expected_gid=$(getent group "$group" | cut -d: -f3)
-        [ "$actual_uid" = "$uid" ] || { echo "user $name has unexpected uid $actual_uid" >&2; exit 1; }
-        [ "$actual_gid" = "$expected_gid" ] || { echo "user $name has unexpected primary gid $actual_gid" >&2; exit 1; }
+        shell=$(printf '%s\n' "$entry" | cut -d: -f7)
+        [ "$actual_uid" = "$uid" ] || collision_error "user '$name' uses UID $actual_uid, expected $uid"
+        [ "$actual_gid" = "$expected_gid" ] || collision_error "user '$name' uses primary GID $actual_gid, expected $expected_gid"
+        [ "$shell" = /usr/sbin/nologin ] || collision_error "user '$name' has unexpected login shell"
+        by_uid=$(getent passwd "$uid" || true)
+        [ "$(printf '%s\n' "$by_uid" | cut -d: -f1)" = "$name" ] || collision_error "UID $uid is also assigned to another user"
+        echo "Mayi: using existing service account '$name' (UID $uid); verify it is the intended Mayi broker identity." >&2
     else
+        by_uid=$(getent passwd "$uid" || true)
+        [ -z "$by_uid" ] || collision_error "UID $uid belongs to '$(printf '%s\n' "$by_uid" | cut -d: -f1)'"
         adduser --system --uid "$uid" --ingroup "$group" --no-create-home \
             --disabled-password --shell /usr/sbin/nologin "$name"
     fi
@@ -42,19 +58,22 @@ ensure_membership mayi-broker mayi-approver
 install -d -o root -g root -m 0755 /run/mayi
 install -d -o mayi-broker -g mayi-requester -m 0750 /run/mayi/request
 install -d -o mayi-broker -g mayi-approver -m 0750 /run/mayi/approval
+install -d -o root -g mayi-broker-socket -m 0750 /run/mayi/pam-auth
 install -d -o root -g mayi-broker-socket -m 0750 /run/mayi/executor
 install -d -o root -g root -m 0700 /var/lib/mayi-privileged-executor
-deb-systemd-helper enable mayi-privileged-executor.service mayi-broker.service >/dev/null
+deb-systemd-helper enable mayi-privileged-executor.service mayi-pam-auth.service mayi-broker.service >/dev/null
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
     if [ -n "${2:-}" ]; then
-        # Older packages stop services in prerm during upgrade. Restart the
-        # executor (which also starts it if already stopped), then restore the
-        # broker after executor readiness. deb-systemd-invoke respects policy.
+        # The prior package's mayi-pam-auth account is no longer used. Retain
+        # it: account name/UID/GID do not prove package ownership.
         deb-systemd-invoke restart mayi-privileged-executor.service
+        deb-systemd-invoke stop mayi-broker.service mayi-pam-auth.service
+        deb-systemd-invoke start mayi-pam-auth.service
         deb-systemd-invoke start mayi-broker.service
     else
         deb-systemd-invoke start mayi-privileged-executor.service
+        deb-systemd-invoke start mayi-pam-auth.service
         deb-systemd-invoke start mayi-broker.service
     fi
 fi

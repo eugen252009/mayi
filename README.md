@@ -19,6 +19,10 @@ privileged executor
 
 **STABLE / MAINTENANCE — Mayi 0.4.1 is the current stable feature baseline.** The qualified Debian package revision 0.4.1-1 corrects maintainer/license metadata and carries the current documentation; it does not claim a runtime feature change. It is published through TPA.run and verified by an isolated APT consumer. Mayi is maintained, not abandoned.
 
+Candidate 0.4.1-5 moves PAM verification into a separate broker-verifiable authority and requires authentication for every decision. The exact artifact passed direct-systemd qualification on the supported Debian 11–13 targets and is **READY FOR INDEPENDENT SECURITY REVIEW**; this is not production readiness or publication authorization. See [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md) for the capability requirements and exact-artifact evidence. The prior 0.4.1-4 Debian 10–13 result is historical and does not establish current Debian 10 support.
+
+**Security limitation in published 0.4.1:** PAM is enforced by the supplied console, not by the broker protocol. A direct approval-socket client can bypass console-local PAM while satisfying broker group/view checks. Do not treat the published package as requiring PAM for every protocol approval; see [`SECURITY_BOUNDARY.md`](SECURITY_BOUNDARY.md).
+
 - Feature development is frozen unless driven by a concrete requirement.
 - Bug fixes, security fixes, and documentation fixes remain allowed.
 - New platforms are on demand; breaking changes require explicit justification.
@@ -34,7 +38,7 @@ An agent can prepare and submit a request without holding root credentials. A hu
 
 - `mayi` submits an executable and structured argv; it does not send a shell command string, requester environment, working directory, or file descriptors. The command token resolves to a canonical executable in Mayi's fixed trusted system directories. The supplied argv, including argv[0], remains part of the request.
 - The Rust broker authenticates local peer UIDs with `SO_PEERCRED`, checks requester/approver group membership through NSS, and owns the immutable request and approval state. Requester identity is bound to the request; the broker independently checks the approver's peer identity and authorization.
-- Before it connects to the broker or displays requests, `mayi-approve` checks the caller's approver-group membership and authenticates that same account through PAM. It requires an interactive controlling terminal. Passwords are read from the terminal with echo disabled, not from argv, environment variables, or piped stdin. Successful authentication is process-local; starting a new console requires authentication again.
+- In candidate **0.4.1-5**, `mayi-approve` checks group membership and requires an interactive controlling terminal. Each decision passes one terminal descriptor to the broker; the unprivileged broker invokes a separate, narrowly sandboxed root PAM authority for the exact peer UID and rechecks group membership before changing state. The helper is restricted to the broker UID in the fixed systemd service cgroup. No password or reusable PAM assertion is sent through broker JSON. The exact artifact passed the Debian 11–13 direct-systemd matrix and is ready for independent review; published 0.4.1 lacks this broker-side gate.
 - An approval is one-shot and applies to broker-owned request state. The renderer displays that state; **renderer output is not execution input**. The executor receives the broker's stored operation, not text copied from the terminal.
 - The separate privileged executor accepts requests only from the configured broker UID, revalidates the operation, and executes the exact executable + argv without shell mediation. Direct executor access is not an authorization path.
 - Mayi runs an approved command as UID 0 / primary GID 23012. It is a broad human-gated command MVP—not a semantic safety analyzer or command allowlist. The approver must assess the executable and every argument. An explicitly requested shell executable can interpret its own arguments.
@@ -45,7 +49,7 @@ The display shows the resolved executable and argv[0] separately. For example, i
 
 The Debian package revision 0.4.1-1 is available from the public TPA.run `bootstrap` APT repository. Verify that APT advertises this revision from the bootstrap repository before using it. Package availability is separate from local role configuration: installing Mayi does **not** add users to either role group.
 
-On a supported Debian amd64 system with the signed TPA.run `bootstrap` APT source already configured, refresh package metadata, confirm the exact 0.4.1-1 candidate, and install that package revision:
+On a supported Debian 11–13 amd64 system with the signed TPA.run `bootstrap` APT source already configured, refresh package metadata, confirm the exact 0.4.1-1 candidate, and install that package revision. Debian 10 is not a supported runtime target; its historical installation/binary compatibility did not establish the required kernel/systemd security properties.
 
 ```sh
 sudo apt update
@@ -66,7 +70,7 @@ adduser HUMAN_LOGIN mayi-approver
 
 Run account-management commands as an authorized system administrator. For one account in both roles, add that login to both groups.
 
-For a single-account setup, that account may belong to both groups. Group membership alone does not create an authenticated approval session: every new `mayi-approve` process still requires interactive PAM authentication. The package installs the `mayi-approve` PAM service at `/etc/pam.d/mayi-approve`, including the host's common authentication and account policies. Log out and back in (or otherwise refresh the account's supplementary groups) after membership changes, then verify the effective groups before use. Check package group IDs for collisions before deployment. Do not weaken the host's PAM policy to make approval succeed.
+For a single-account setup, that account may belong to both groups. Group membership alone does not authorize protocol decisions: each approve, deny, or follow-up decision requires interactive PAM authentication. The package installs the `mayi-approve` PAM service at `/etc/pam.d/mayi-approve`, including the host's common authentication and account policies. Log out and back in (or otherwise refresh the account's supplementary groups) after membership changes, then verify the effective groups before use. Check package group IDs for collisions before deployment. Do not weaken the host's PAM policy to make approval succeed.
 
 ## Requester workflow
 
@@ -116,11 +120,14 @@ Run one persistent console in the human approver's interactive terminal:
 
 ```text
 $ mayi-approve
-Password:
 Waiting for Mayi requests...
+
+[0] /usr/bin/systemctl reload nginx
+Mayi > a
+Password:
 ```
 
-Successful authentication proceeds directly to the waiting/request display—there is no `Authenticated.` banner. The console authenticates before connecting to the broker or displaying a request. It presents the resolved executable, argv[0], remaining arguments, requester UID, request IDs, dependencies, and executor identity. For example, a command appears in this form (the state and IDs vary):
+The console displays requests before decision authentication. A fresh PAM authentication prompt is shown for each approve, deny, or follow-up decision; there is no reusable authenticated console session. It presents the resolved executable, argv[0], remaining arguments, requester UID, request IDs, dependencies, and executor identity. For example, a command appears in this form (the state and IDs vary):
 
 ```text
 Commands: 1
@@ -131,6 +138,16 @@ Commands: 1
 ```
 
 The arguments are separate display values, not shell input. Dependency chains are shown in topological order; linear dependencies use a downward arrow and branching dependencies list their prerequisite indices. The renderer does not turn its output back into an execution request.
+
+### UI preview (not finally qualified)
+
+The working-tree console refresh keeps the exact executable, argv[0], every argument,
+requester UID, privileged executor identity, states, and dependency/blocking information
+visible. Technical request/challenge IDs and digests are collapsed by default; press
+**Space** at an empty main prompt to toggle them without making a decision. Actions
+still require **Enter**. New arrivals show a notification rather than another set of
+selectable indices; finish or skip the current set to review the updated queue.
+This preview has not been packaged, deployed, or finally qualified.
 
 Controls at the main prompt:
 
@@ -162,12 +179,12 @@ Approved commands run with a cleared environment, fixed `PATH`, `LANG`, `LC_ALL`
 
 | Qualification | Result |
 |---|---|
-| Debian 10, 11, 12, 13 | Package revision 0.4.1-1 qualified in disposable systemd environments; runtime baseline 0.4.1 |
+| Debian 11 Bullseye, 12 Bookworm, 13 Trixie | Supported runtime targets; candidate 0.4.1-5 exact artifact passed direct-systemd qualification; independent review remains required |
 | Released architecture | `amd64` only |
-| Recommended operational baseline | Debian 12 or newer; Debian 10 is technically qualified but end-of-life, and Debian 11 is also end-of-life |
+| Capability-based runtime requirements | Linux Unix-domain `SO_PEERCRED` and `SCM_RIGHTS`; working NSS/PAM; systemd service cgroups with the broker at `/system.slice/mayi-broker.service`; PAM helper `CAP_DAC_READ_SEARCH` + `NoNewPrivileges`; required PAM-helper sandbox directives enforced |
 | Ubuntu, Arch, Fedora, ARM/ARM64, Synology DSM, other systems | Not currently qualified; this is not a claim of incompatibility |
 
-Qualification evidence concerns the exact 0.4.1-1 package, not every locally rebuilt binary or host configuration. The package's technical libc/Python floors and lifecycle caveats are in [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md).
+Debian 10 is excluded from supported runtime targets. The `openat2` path-resolution primitive is used only by the disconnected/incomplete filesystem executor; it is not on the enabled Mayi 0.4.1-5 execution path. systemd `RestrictSUIDSGID` is optional defense-in-depth for the PAM helper; effective confinement also relies on `NoNewPrivileges`, a `CAP_DAC_READ_SEARCH`-only capability set, filesystem protections, and the helper's no-command-execution design. Historical compatibility results do not override this policy. See [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md) for evidence and limitations.
 
 ## Stable release and maintenance
 

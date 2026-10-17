@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real systemd package/authentication/socket qualification in Debian 10–13 containers."""
+"""Legacy container harness; supported Debian suites are Bullseye, Bookworm, and Trixie."""
 import os
 import pathlib
 import subprocess
@@ -9,6 +9,9 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE_DIR = ROOT / "executor/target/debian"
 SUITE = os.environ.get("MAYI_DEBIAN_SUITE", "trixie")
+SUPPORTED_SUITES = {"bullseye", "bookworm", "trixie"}
+if SUITE not in SUPPORTED_SUITES:
+    raise SystemExit(f"unsupported qualification suite {SUITE!r}; supported runtime suites: {', '.join(sorted(SUPPORTED_SUITES))}")
 IMAGE = f"mayi-systemd-qualification:{SUITE}"
 SYSTEMD_IMAGE = ROOT / "executor/package/systemd-qualification"
 SCRIPT = ROOT / "executor/package/qualify-mvp.py"
@@ -22,8 +25,14 @@ PACKAGES = {
     "0.4.0": PACKAGE_DIR / "mayi_0.4.0_amd64.deb",
     "0.4.1": PACKAGE_DIR / "mayi_0.4.1_amd64.deb",
     "0.4.1-1": PACKAGE_DIR / "mayi_0.4.1-1_amd64.deb",
+    "0.4.1-2": PACKAGE_DIR / "mayi_0.4.1-2_amd64.deb",
+    "0.4.1-3": PACKAGE_DIR / "mayi_0.4.1-3_amd64.deb",
+    "0.4.1-4": PACKAGE_DIR / "mayi_0.4.1-4_amd64.deb",
+    "0.4.1-5": PACKAGE_DIR / "mayi_0.4.1-5_amd64.deb",
+    "0.4.1-6": PACKAGE_DIR / "mayi_0.4.1-6_amd64.deb",
 }
 UNIT_EXECUTOR = "mayi-privileged-executor.service"
+UNIT_PAM_AUTH = "mayi-pam-auth.service"
 UNIT_BROKER = "mayi-broker.service"
 SOCKET = "/run/mayi/executor/executor.sock"
 
@@ -103,6 +112,7 @@ def assert_topology(name):
     expected = {
         "/run/mayi/request": "mayi-broker:mayi-requester:750",
         "/run/mayi/approval": "mayi-broker:mayi-approver:750",
+        "/run/mayi/pam-auth": "root:mayi-broker-socket:750",
         "/run/mayi/executor": "root:mayi-broker-socket:750",
         SOCKET: "root:mayi-broker-socket:660",
     }
@@ -112,8 +122,17 @@ def assert_topology(name):
             raise AssertionError(f"wrong owner/group/mode for {path}: {actual}, expected {value}")
     if daemon_count(name, "/usr/libexec/mayi/privileged-executor") != 1:
         raise AssertionError("executor process count is not exactly one")
-    if daemon_count(name, "/usr/bin/mayi-executor") != 1:
-        raise AssertionError("broker process count is not exactly one")
+    if daemon_count(name, "/usr/bin/mayi-executor") != 2:
+        raise AssertionError("broker and PAM-auth process count is not exactly two")
+    pam_user = dexec(name, "systemctl", "show", UNIT_PAM_AUTH, "-p", "User", "--value").stdout.strip()
+    pam_caps = dexec(name, "systemctl", "show", UNIT_PAM_AUTH, "-p", "CapabilityBoundingSet", "--value").stdout.strip()
+    if pam_user not in {"", "root"} or pam_caps != "cap_dac_read_search":
+        raise AssertionError(f"PAM helper privilege boundary is too broad: User={pam_user!r}, caps={pam_caps!r}")
+    helper_pid = dexec(name, "systemctl", "show", UNIT_PAM_AUTH, "-p", "MainPID", "--value").stdout.strip()
+    helper_status = dexec(name, "sh", "-c", f"grep -E '^(Cap(Inh|Prm|Eff|Bnd|Amb)|NoNewPrivs):' /proc/{helper_pid}/status").stdout
+    capability = f"{1 << 2:016x}"
+    if any(not line.endswith(capability) for line in helper_status.splitlines() if line.startswith("Cap")) or "NoNewPrivs:\t1" not in helper_status:
+        raise AssertionError(f"PAM helper runtime capabilities are not restricted: {helper_status}")
     execstart = dexec(name, "systemctl", "show", UNIT_BROKER, "-p", "ExecStart", "--value").stdout
     if "--request-uid" in execstart or "--approval-uid" in execstart:
         raise AssertionError(f"stale broker unit is loaded: {execstart}")
@@ -122,7 +141,7 @@ def assert_topology(name):
     service_type = dexec(name, "systemctl", "show", UNIT_EXECUTOR, "-p", "Type", "--value").stdout.strip()
     if service_type != "notify":
         raise AssertionError(f"executor is not readiness-gated (Type={service_type})")
-    for unit in (UNIT_EXECUTOR, UNIT_BROKER):
+    for unit in (UNIT_EXECUTOR, UNIT_PAM_AUTH, UNIT_BROKER):
         assert_active(name, unit)
 
 
@@ -147,6 +166,7 @@ def assert_broker_sockets(name):
     for path, expected in (
         ("/run/mayi/request/broker.sock", "mayi-broker:mayi-requester:660"),
         ("/run/mayi/approval/broker.sock", "mayi-broker:mayi-approver:660"),
+        ("/run/mayi/pam-auth/auth.sock", "root:mayi-broker-socket:660"),
     ):
         actual = dexec(name, "stat", "-c", "%U:%G:%a", path).stdout.strip()
         if actual != expected:
@@ -220,7 +240,7 @@ p=sys.argv[1]; gid=int(sys.argv[2]); s=socket.socket(socket.AF_UNIX); s.bind(p);
             raise AssertionError(f"broker SIGKILL did not leave {path}")
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        if unit_status(name, UNIT_BROKER) == "active" and daemon_count(name, "/usr/bin/mayi-executor") == 1:
+        if unit_status(name, UNIT_BROKER) == "active" and daemon_count(name, "/usr/bin/mayi-executor") == 2:
             break
         time.sleep(0.1)
     else:
@@ -300,9 +320,16 @@ def restart_stress(name):
     for index in range(100):
         dexec(name, "systemctl", "restart", UNIT_BROKER, timeout=40)
         assert_active(name, UNIT_BROKER)
-        if daemon_count(name, "/usr/bin/mayi-executor") != 1:
-            raise AssertionError(f"broker duplicate/missing after restart {index + 1}")
+        if daemon_count(name, "/usr/bin/mayi-executor") != 2:
+            raise AssertionError(f"broker/PAM-auth process duplicate/missing after restart {index + 1}")
     print("SYSTEMD BROKER RESTARTS: 100/100 PASS")
+    for index in range(10):
+        dexec(name, "systemctl", "restart", UNIT_PAM_AUTH, UNIT_BROKER, timeout=40)
+        assert_active(name, UNIT_PAM_AUTH)
+        assert_active(name, UNIT_BROKER)
+        if daemon_count(name, "/usr/bin/mayi-executor") != 2:
+            raise AssertionError(f"broker/PAM-auth process duplicate/missing after PAM-auth restart {index + 1}")
+    print("SYSTEMD PAM-AUTH/BROKER RESTARTS: 10/10 PASS")
 
 
 def expect_unit_start_failure(name, label):
@@ -478,7 +505,7 @@ def restart_qualification(name):
 def install_failure_gate(name):
     # Wrong pre-existing group GID simulates a mandatory package-account setup failure.
     dexec(name, "groupadd", "-g", "23010", "mayi-requester")
-    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.4.1-1'].name}", check=False, timeout=120)
+    result = dexec(name, "dpkg", "-i", f"/root/{PACKAGES['0.4.1-6'].name}", check=False, timeout=120)
     if result.returncode == 0:
         raise AssertionError("mandatory account setup conflict incorrectly configured package")
     status = dexec(name, "dpkg-query", "-W", "-f=${db:Status-Status}", "mayi", check=False)
@@ -492,7 +519,7 @@ def install_failure_gate(name):
 
 def pam_conffile_lifecycle(name):
     config = "/etc/pam.d/mayi-approve"
-    package = f"/root/{PACKAGES['0.4.1-1'].name}"
+    package = f"/root/{PACKAGES['0.4.1-6'].name}"
     original = dexec(name, "cat", config).stdout
     if "@include common-auth" not in original or "@include common-account" not in original:
         raise AssertionError(f"unexpected installed PAM policy: {original!r}")
@@ -519,7 +546,7 @@ def qualify_environment(name, mode):
     env.update({
         "MAYI_TEST_CONTAINER": name,
         "MAYI_TEST_MODE": mode,
-        "MAYI_TARGET_VERSION": "0.4.1-1",
+        "MAYI_TARGET_VERSION": "0.4.1-6",
         "MAYI_TEST_SYSTEMD": "1",
         "MAYI_TEST_APT": "1" if SUITE == "bookworm" and mode == "fresh" else "0",
         "MAYI_TEST_KEEP_PACKAGE": "1",
@@ -554,12 +581,19 @@ def main():
     expected_040 = "d0a28d1e0e46837f395bc687b93f76742a91056a33358a5201b5a6ca28946f86"
     expected_041 = "22409abd977d4d14113ee34e47ed78f94a4e975da84e9606f5fe704116f59ab0"
     expected_041_1 = "665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8"
-    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032), ("0.4.0", expected_040), ("0.4.1", expected_041), ("0.4.1-1", expected_041_1)):
+    expected_041_2 = "4322f6689a76d374511cce53d3ae2315b93859638f01b768b4a09173cfd9722d"
+    expected_041_3 = "3c233aae39fc3c763d7ddbaa1c0d73906ec07ac5705e966aaac2b3b16f332802"
+    expected_041_4 = "0289b3c0bb5f43680a97574ca46f062004992ba71abc74d3d94ce2b6a5e42287"
+    expected_041_5 = "cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381"
+    expected_041_6 = os.environ.get("MAYI_EXPECTED_041_6_SHA256", "")
+    if len(expected_041_6) != 64:
+        raise SystemExit("MAYI_EXPECTED_041_6_SHA256 must pin the exact candidate artifact")
+    for version, expected in (("0.2.0", expected_020), ("0.2.1", expected_021), ("0.2.2", expected_022), ("0.3.0", expected_030), ("0.3.1", expected_031), ("0.3.2", expected_032), ("0.4.0", expected_040), ("0.4.1", expected_041), ("0.4.1-1", expected_041_1), ("0.4.1-2", expected_041_2), ("0.4.1-3", expected_041_3), ("0.4.1-4", expected_041_4), ("0.4.1-5", expected_041_5), ("0.4.1-6", expected_041_6)):
         actual = subprocess.check_output(["sha256sum", str(PACKAGES[version])], text=True).split()[0]
         if actual != expected:
             raise SystemExit(f"{version} package hash mismatch: {actual}")
     run(["docker", "build", "--build-arg", f"DEBIAN_SUITE={SUITE}", "-t", IMAGE, SYSTEMD_IMAGE], timeout=900, capture=False)
-    modes = ("fresh", "upgrade040", "upgrade041")
+    modes = ("fresh", "upgrade040", "upgrade041", "upgrade0411", "upgrade0412", "upgrade0413", "upgrade0415")
     suffixes = (*modes, "failure")
     names = [f"mayi-systemd-{SUITE}-{os.getpid()}-{suffix}" for suffix in suffixes]
     passed = False

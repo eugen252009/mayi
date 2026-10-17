@@ -1645,6 +1645,18 @@ mod tests {
         },
     };
 
+    // flock ownership is attached to an open file description. A subprocess
+    // spawned by another test inherits that description until successful exec,
+    // even with O_CLOEXEC, so dropping a context would not release its lock yet.
+    // Isolate whole test lifetimes, not individual fixtures (tests may nest
+    // fixtures). Internal racer threads remain concurrent. Child helper tests
+    // acquire their own process-local guard, never the parent's mutex.
+    static TEST_ISOLATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn isolate_test() -> std::sync::MutexGuard<'static, ()> {
+        TEST_ISOLATION.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     struct Fixture(PathBuf);
     struct ExternalCleanup(PathBuf);
     impl Drop for ExternalCleanup {
@@ -1701,6 +1713,7 @@ mod tests {
 
     #[test]
     fn concurrent_race_stress_10000_each() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -1777,6 +1790,7 @@ mod tests {
 
     #[test]
     fn secondary_race_stress_100_each() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -1979,6 +1993,7 @@ mod tests {
 
     #[test]
     fn fake_root_pins_and_rejects_root_and_same_uid() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2007,6 +2022,7 @@ mod tests {
 
     #[test]
     fn pinned_root_lock_prevents_two_live_executor_contexts() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2022,6 +2038,7 @@ mod tests {
 
     #[test]
     fn requester_cannot_observe_staging_through_readable_descendant_directories() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2038,6 +2055,7 @@ mod tests {
 
     #[test]
     fn bind_mount_child_helper() {
+        let _isolation = isolate_test();
         let Some(root) = std::env::var_os("MAYI_QUAL_BIND_ROOT") else {
             return;
         };
@@ -2124,6 +2142,7 @@ mod tests {
 
     #[test]
     fn bind_mounts_are_live_rejected_in_private_mount_namespace() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2157,6 +2176,7 @@ mod tests {
 
     #[test]
     fn capability_fixture_child_helper() {
+        let _isolation = isolate_test();
         let Some(path) = std::env::var_os("MAYI_QUAL_CAP_PATH") else {
             return;
         };
@@ -2185,6 +2205,7 @@ mod tests {
 
     #[test]
     fn live_capability_bearing_target_is_rejected() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2245,6 +2266,7 @@ mod tests {
 
     #[test]
     fn live_acl_bearing_files_and_ancestry_are_rejected() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2316,6 +2338,7 @@ mod tests {
 
     #[test]
     fn openat2_rejects_symlinks_and_mount_profile_is_enforced() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2338,6 +2361,7 @@ mod tests {
 
     #[test]
     fn checked_arithmetic_and_patch_ambiguity_fail_closed() {
+        let _isolation = isolate_test();
         assert_eq!(
             checked_end(usize::MAX, 1, usize::MAX),
             Err("PATCH_DOES_NOT_APPLY")
@@ -2378,6 +2402,7 @@ mod tests {
 
     #[test]
     fn patch_derives_exact_result_and_rejects_stale_or_changed_base() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2408,6 +2433,7 @@ mod tests {
 
     #[test]
     fn patch_h1_same_inode_change_before_commit_is_rejected() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2433,6 +2459,7 @@ mod tests {
 
     #[test]
     fn pinned_root_ignores_replaced_configuration_path() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2472,6 +2499,7 @@ mod tests {
 
     #[test]
     fn deterministic_race_stress_1000_each() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2527,6 +2555,7 @@ mod tests {
 
     #[test]
     fn anonymous_tmpfile_has_no_path_before_commit_and_atomic_replace_succeeds() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2554,6 +2583,7 @@ mod tests {
 
     #[test]
     fn create_is_no_replace_and_move_destination_is_no_replace() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2591,6 +2621,7 @@ mod tests {
 
     #[test]
     fn delete_and_move_recheck_content_and_identity_before_commit() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2640,6 +2671,7 @@ mod tests {
 
     #[test]
     fn parent_moved_outside_root_is_rejected_and_no_commit_occurs() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2673,6 +2705,7 @@ mod tests {
 
     #[test]
     fn rejects_hardlinks_special_files_metadata_and_fifo_without_blocking() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2861,6 +2894,7 @@ mod tests {
 
     #[test]
     fn temp_regular_or_symlink_substitution_never_commits() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2914,6 +2948,7 @@ mod tests {
 
     #[test]
     fn create_race_precommit_failure_and_deadline_fail_closed() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -2962,6 +2997,7 @@ mod tests {
 
     #[test]
     fn delete_and_move_pathname_replacement_is_rejected() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3006,6 +3042,7 @@ mod tests {
 
     #[test]
     fn ext_family_matrix_executes_all_four_direct_operations() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3050,6 +3087,7 @@ mod tests {
 
     #[test]
     fn kernel_enforces_no_xdev_and_no_magiclinks() {
+        let _isolation = isolate_test();
         let slash_raw = unsafe {
             libc::open(
                 c"/".as_ptr(),
@@ -3093,6 +3131,7 @@ mod tests {
 
     #[test]
     fn memory_and_path_limits_accept_boundary_and_reject_plus_one() {
+        let _isolation = isolate_test();
         let result_hash = digest(b"x");
         for len in [MAX_RESULT_SIZE - 1, MAX_RESULT_SIZE] {
             let op = FsOperation::FileCreate {
@@ -3151,6 +3190,7 @@ mod tests {
 
     #[test]
     fn resource_bounds_and_special_collision_fail_closed() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3231,6 +3271,7 @@ mod tests {
 
     #[test]
     fn unsupported_operations_and_strict_json_mapping_fail_closed() {
+        let _isolation = isolate_test();
         assert_eq!(
             FsOperation::from_json(
                 &serde_json::json!({"type":"exec","executable":"/bin/sh","args":[]})
@@ -3259,6 +3300,7 @@ mod tests {
 
     #[test]
     fn create_failure_points_preserve_no_replace_and_commit_outcomes() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3344,6 +3386,7 @@ mod tests {
 
     #[test]
     fn interrupted_stage_cleanup_is_reported_by_artifact_and_reaped_on_restart() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3368,6 +3411,7 @@ mod tests {
 
     #[test]
     fn deterministic_patch_failpoints_match_namespace_state() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3440,6 +3484,7 @@ mod tests {
 
     #[test]
     fn delete_and_move_precommit_failure_points_preserve_sources() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3483,6 +3528,7 @@ mod tests {
 
     #[test]
     fn delete_and_cross_directory_move_fsync_failures_are_committed_uncertain() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3535,6 +3581,7 @@ mod tests {
 
     #[test]
     fn committed_durability_failure_is_not_reported_as_not_committed() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3555,6 +3602,7 @@ mod tests {
 
     #[test]
     fn crash_child_qualification_helper() {
+        let _isolation = isolate_test();
         let Some(root) = std::env::var_os("MAYI_QUAL_CRASH_ROOT") else {
             return;
         };
@@ -3586,6 +3634,7 @@ mod tests {
 
     #[test]
     fn subprocess_crashes_and_restart_staging_recovery() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3677,6 +3726,7 @@ mod tests {
 
     #[test]
     fn rss_child_helper() {
+        let _isolation = isolate_test();
         if std::env::var_os("MAYI_QUAL_RSS_RUN").is_none() {
             return;
         }
@@ -3766,6 +3816,7 @@ mod tests {
 
     #[test]
     fn rss_resource_stress_measured_in_subprocess() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -3793,6 +3844,7 @@ mod tests {
 
     #[test]
     fn fd_count_stays_bounded_across_rejected_operations() {
+        let _isolation = isolate_test();
         if unsafe { libc::geteuid() } == 0 {
             return;
         }

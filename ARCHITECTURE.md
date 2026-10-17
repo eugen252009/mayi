@@ -1,4 +1,8 @@
-# Mayi architecture (stable baseline 0.4.1)
+# Mayi architecture — published baseline 0.4.1 and candidate 0.4.1-5
+
+**Current runtime policy:** Debian 11–13 amd64 only. Debian 10's historical install/binary tests do not establish security compatibility; it remains an acceptable build baseline only. Candidate 0.4.1-5 passed direct-systemd qualification on Debian 11–13 and is ready for independent security review, not production use or publication.
+
+**Published-release limitation:** published 0.4.1 enforces PAM only in the supplied console client; direct protocol approvals can bypass it.
 
 Mayi is a local exact-command privilege broker. The requester does not hold root credentials; it submits a proposal. The human enters through a PAM-authenticated approval console. The broker owns request and approval state, and a separate privileged executor accepts only broker-authorized stored operations.
 
@@ -9,7 +13,7 @@ agent / requester
 Rust broker ── immutable request, peer-UID/NSS role checks
         │ fresh one-shot view
         ▼
-human approval console ── approver-group check, then PAM on controlling TTY
+human approval console ── decision + controlling-TTY descriptor
         │ one-shot decision, actual peer UID
         ▼
 Rust broker ── independently validates and consumes stored operation
@@ -25,9 +29,9 @@ process as UID 0 / primary GID 23012
 
 1. `mayi` resolves a command name through fixed trusted system directories or accepts an absolute executable path. It sends one structured `exec` operation. Mayi does not pass requester environment, cwd, descriptors, or a shell command string. The resolved canonical executable path and supplied argv are separate stored values; the supplied command token is argv[0].
 2. The Rust broker obtains peer credentials from `SO_PEERCRED`, resolves the UID through NSS, checks requester-group authorization, validates the closed schema and executable/argv bounds, and stores immutable request state bound to the actual requester UID. Client-provided approval fields do not grant authority.
-3. Before any broker connection or request display, `mayi-approve` requires an interactive controlling TTY, checks the calling UID's NSS approver-group membership, then authenticates the same account through PAM service `mayi-approve`. Passwords are read from `/dev/tty` with echo disabled; argv, environment, and piped stdin are not credential channels. Successful authentication exists only in that console process.
-4. The console fetches fresh broker-owned views and displays the executable, argv, requester identity and queue dependencies. The renderer is presentation only: its text is not execution input. Decisions are correlated with the fresh one-shot view and bound to the authenticated peer UID. Skip is local navigation only; deny and follow-up do not execute.
-5. The broker independently validates peer UID/group/view/decision state. It consumes the immutable approved operation at most once. For a queued operation, dispatch additionally requires every dependency to have succeeded; a terminal unsuccessful dependency blocks descendants.
+3. The console fetches fresh broker-owned views and displays the executable, argv, requester identity and queue dependencies. The renderer is presentation only: its text is not execution input. Skip is local navigation only; deny and follow-up do not execute.
+4. In candidate 0.4.1-4, each decision carries one terminal descriptor over `SCM_RIGHTS`. The broker verifies peer UID/group and active-view binding, forwards the correlated decision tuple and descriptor to a separate root-owned PAM authority, and rechecks NSS group membership and decision state after PAM succeeds and before applying the transition. The broker remains unprivileged. The helper is bounded to `CAP_DAC_READ_SEARCH`, `NoNewPrivileges`, and systemd sandboxing; it accepts only broker UID 23002 from `/system.slice/mayi-broker.service`, authenticates the exact broker-derived peer UID and PAM account policy for every decision, and returns a correlated response. Passwords and reusable assertions never enter broker JSON. The fixed cgroup check is systemd-specific and fails closed if customized.
+5. The broker consumes the immutable approved operation at most once. For a queued operation, dispatch additionally requires every dependency to have succeeded; a terminal unsuccessful dependency blocks descendants.
 6. The executor authenticates the exact broker UID with `SO_PEERCRED`, revalidates the operation, journals the one-shot request ID before spawn, clears the inherited environment, and launches directly without shell mediation. It does not accept requester or approver authority as a path to execution.
 
 ## Synchronous and queued operation
