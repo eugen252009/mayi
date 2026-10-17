@@ -1933,7 +1933,7 @@ fn read_tty_frame() -> io::Result<Vec<u8>> {
 fn read_tty_frame_with_poll<F: FnMut() -> io::Result<()>>(mut on_poll: F) -> io::Result<Vec<u8>> {
     read_tty_frame_with_details(|_| on_poll(), false)
 }
-fn read_tty_frame_with_details<F: FnMut(bool) -> io::Result<()>>(
+fn read_tty_frame_with_details<F: FnMut(Option<u8>) -> io::Result<()>>(
     mut on_event: F,
     allow_details: bool,
 ) -> io::Result<Vec<u8>> {
@@ -1954,7 +1954,7 @@ fn read_tty_frame_with_details<F: FnMut(bool) -> io::Result<()>>(
         }
         let wait_ms = remaining.as_millis().min(1000) as i32;
         if !poll_input(fd, wait_ms)? {
-            on_event(false)?;
+            on_event(None)?;
             continue;
         }
         let read = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), byte.len()) };
@@ -1971,9 +1971,15 @@ fn read_tty_frame_with_details<F: FnMut(bool) -> io::Result<()>>(
                 "terminal closed",
             ));
         }
-        if allow_details && byte[0] == b' ' && frame.is_empty() {
+        if byte[0] == 3 {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "UI canceled; no decision sent",
+            ));
+        }
+        if allow_details && matches!(byte[0], b' ' | b'[' | b']') && frame.is_empty() {
             // Navigation only: do not return a decision or fetch another view.
-            on_event(true)?;
+            on_event(Some(byte[0]))?;
             continue;
         }
         if byte[0] == b'\n' || byte[0] == b'\r' {
@@ -2447,101 +2453,11 @@ fn write_console_decision_feedback<W: Write>(
     output.flush()
 }
 
-fn render_console_component(rows: &[Value], component: &[usize], details: bool) -> String {
-    let mut output = format!(
-        "\nMAYI  /  Review commands\n------------------------------------------------------------\nCommands: {}\nExecutor: UID 0 / GID 23012  (privileged)\nExact arguments below are display notation, not shell input.\n\n",
-        component.len()
-    );
-    let mut index_by_id = HashMap::new();
-    for (index, row_index) in component.iter().enumerate() {
-        if let Some(id) = rows[*row_index]["request_id"].as_str() {
-            index_by_id.insert(id.to_owned(), index);
-        }
-    }
-    let mut outdegree = vec![0usize; component.len()];
-    for row_index in component {
-        for dep in rows[*row_index]["dependencies"].as_array().unwrap() {
-            if let Some(parent) = index_by_id.get(dep.as_str().unwrap()) {
-                outdegree[*parent] += 1;
-            }
-        }
-    }
-    let linear = component.iter().enumerate().all(|(i, row_index)| {
-        let deps = rows[*row_index]["dependencies"].as_array().unwrap();
-        deps.len() <= 1 && outdegree[i] <= 1
-    });
-    for (index, row_index) in component.iter().enumerate() {
-        let row = &rows[*row_index];
-        let operation = &row["operations"][0];
-        let executable =
-            render_console_arg(operation["executable"].as_str().unwrap_or("<invalid>"));
-        let argv = operation["argv"].as_array();
-        let argv0 = argv
-            .and_then(|args| args.first())
-            .and_then(Value::as_str)
-            .unwrap_or("<invalid>");
-        output.push_str(&format!(
-            "[{}] {} [argv0={}]  ({})\n",
-            index,
-            executable,
-            render_console_arg(argv0),
-            row["queue_state"].as_str().unwrap_or("UNKNOWN")
-        ));
-        if let Some(args) = argv {
-            for arg in args.iter().skip(1) {
-                output.push_str("     ");
-                output.push_str(&render_console_arg(arg.as_str().unwrap_or("<invalid>")));
-                output.push_str(" \\\n");
-            }
-            if args.len() > 1 {
-                output.push('\n');
-            }
-        }
-        output.push_str(&format!("     requester UID: {}\n", row["requester_uid"]));
-        if details {
-            for (key, label) in [
-                ("request_id", "request ID"),
-                ("challenge_id", "challenge ID"),
-                ("request_digest", "request digest"),
-            ] {
-                if let Some(value) = row[key].as_str() {
-                    output.push_str(&format!("     {label}: {}\n", terminal_safe(value)));
-                }
-            }
-        }
-        let dependency_indexes: Vec<String> = row["dependencies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|dep| index_by_id.get(dep.as_str()?).map(ToString::to_string))
-            .collect();
-        if !dependency_indexes.is_empty() && !linear {
-            output.push_str(&format!("     after: {}\n", dependency_indexes.join(",")));
-        }
-        if row["queue_state"] == "BLOCKED" {
-            output.push_str(&format!(
-                "     blocked by: {}\n",
-                terminal_safe(row["blocking_dependency"].as_str().unwrap_or("unknown"))
-            ));
-        }
-        if linear && index + 1 < component.len() {
-            output.push_str("     ↓\n");
-        }
-    }
-    output.push_str("\n------------------------------------------------------------\n[a] Allow all pending   [d] Deny   [f] Follow-up\n[s] Skip for now        [q] Quit without deciding\n");
-    output.push_str(if details {
-        "[Space] Hide technical details\n"
-    } else {
-        "[Space] Show technical details (IDs and digest)\n"
-    });
-    output.push_str("Select indices 0-9 (e.g. 012) to allow a subset.\nType an action, then Enter. Input is not echoed.\n\nMayi > ");
-    output
-}
-
-fn print_console_component(rows: &[Value], component: &[usize], details: bool) {
-    print!("{}", render_console_component(rows, component, details));
-    let _ = io::stdout().flush();
-}
+#[path = "approval_ui.rs"]
+mod approval_ui;
+#[cfg(test)]
+#[path = "ui_pty_tests.rs"]
+mod ui_pty_tests;
 fn parse_console_subset(
     input: &str,
     rows: &[Value],
@@ -2608,6 +2524,7 @@ fn decide_console_row(
         "deny" => "DENY_CHALLENGE",
         _ => "EXPLAIN_CHALLENGE",
     };
+    println!("Waiting for broker decision / PAM authentication; use your own terminal.\nNo approval is assumed until the broker confirms it.");
     let result = approval_decision_call(
         path,
         broker_uid,
@@ -2673,18 +2590,33 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
             continue;
         };
         let signature = console_signature(&rows, &component);
-        let mut details = false;
-        print_console_component(&rows, &component, details);
+        let mut view = approval_ui::View {
+            details: false,
+            page: 0,
+        };
+        view.draw(&rows, &component, None);
+        let started = Instant::now();
+        let mut tick = 0u64;
+        let mut dimensions = approval_ui::dimensions();
         let mut announced = HashSet::from([signature.clone()]);
         let input = read_tty_frame_with_details(
             |toggle| {
-                if toggle {
-                    details = !details;
-                    if visible_screen_clear_supported() {
-                        io::stdout().write_all(CLEAR_VISIBLE_SCREEN)?;
-                    }
-                    print_console_component(&rows, &component, details);
+                if toggle.is_some() {
+                    view.draw(&rows, &component, toggle);
                     return Ok(());
+                }
+                let latest_dimensions = approval_ui::dimensions();
+                if latest_dimensions != dimensions {
+                    dimensions = latest_dimensions;
+                    view.draw(&rows, &component, None);
+                }
+                tick += 1;
+                if visible_screen_clear_supported() {
+                    print!(
+                        "\r\x1b[2K{}",
+                        approval_ui::waiting(tick, started.elapsed().as_secs())
+                    );
+                    io::stdout().flush()?;
                 }
                 let (_, pending) = console_snapshot(&path, broker_uid)?;
                 let latest_components = console_components(&pending)?;
@@ -3985,18 +3917,18 @@ mod tests {
                 "argv":["foo", "hello world", "$HOME", "; touch /tmp/pwned"]
             }]
         })];
-        let rendered = render_console_component(&rows, &[0], false);
+        let rendered = approval_ui::render(&rows, &[0], false, 0, 100, 100).0;
         assert!(rendered.contains("[Space] Show technical details"));
         assert!(!rendered.contains("request ID:"));
-        let expanded = render_console_component(&rows, &[0], true);
+        let expanded = approval_ui::render(&rows, &[0], true, 0, 100, 100).0;
         assert!(expanded.contains("[Space] Hide technical details"));
-        assert!(expanded.contains("request ID:"));
-        assert!(rendered.contains("[0] /usr/bin/foo [argv0=foo]"));
-        assert!(rendered.contains("     'hello world' \\\n"));
-        assert!(rendered.contains("     '$HOME' \\\n"));
-        assert!(rendered.contains("     '; touch /tmp/pwned' \\\n"));
-        assert!(rendered.contains("requester UID: 1001"));
-        assert!(!rendered.contains("argv[1]"));
+        assert!(expanded.contains("request_id"));
+        assert!(rendered.contains("[0] Program: foo"));
+        assert!(expanded.contains("hello world"));
+        assert!(expanded.contains("$HOME"));
+        assert!(expanded.contains("; touch /tmp/pwned"));
+        assert!(rendered.contains("Requester UID: 1001"));
+        assert!(rendered.contains("argv[1]"));
         assert!(!rendered.contains("\nfeed"));
     }
 

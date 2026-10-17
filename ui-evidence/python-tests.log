@@ -1,0 +1,395 @@
+....................sssssssss....FF..............F..........F..FF.sss... [ 93%]
+.....                                                                    [100%]
+=================================== FAILURES ===================================
+___________ test_filesystem_mutation_remains_disabled_after_proposal ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-eugen/pytest-8/test_filesystem_mutation_remai0')
+
+    def test_filesystem_mutation_remains_disabled_after_proposal(tmp_path):
+        root=tmp_path/'fake-root';target=root/'etc/config';target.parent.mkdir(parents=True);target.write_text('A')
+        request=tmp_path/'request.sock';approval=tmp_path/'approval.sock'
+>       proc=subprocess.Popen(['executor/target/debug/mayi-executor','--request-socket',str(request),'--approval-socket',str(approval),'--request-gid',str(os.getgid()),'--approval-gid',str(os.getgid()),'--development-same-uid'])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_fake_root.py:9: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/lib/python3.13/subprocess.py:1857: in _execute_child
+    self._posix_spawn(args, executable, env, restore_signals, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: None args: ['executor/target/debug/mayi-executor', '--re...>
+args = ['executor/target/debug/mayi-executor', '--request-socket', '/tmp/pytest-of-eugen/pytest-8/test_filesystem_mutation_re...-approval-socket', '/tmp/pytest-of-eugen/pytest-8/test_filesystem_mutation_remai0/approval.sock', '--request-gid', ...]
+executable = 'executor/target/debug/mayi-executor', env = None
+restore_signals = True, close_fds = True, p2cread = -1, p2cwrite = -1
+c2pread = -1, c2pwrite = -1, errread = -1, errwrite = -1
+
+    def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
+                     p2cread, p2cwrite,
+                     c2pread, c2pwrite,
+                     errread, errwrite):
+        """Execute program using os.posix_spawn()."""
+        kwargs = {}
+        if restore_signals:
+            # See _Py_RestoreSignals() in Python/pylifecycle.c
+            sigset = []
+            for signame in ('SIGPIPE', 'SIGXFZ', 'SIGXFSZ'):
+                signum = getattr(signal, signame, None)
+                if signum is not None:
+                    sigset.append(signum)
+            kwargs['setsigdef'] = sigset
+    
+        file_actions = []
+        for fd in (p2cwrite, c2pread, errread):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        for fd, fd2 in (
+            (p2cread, 0),
+            (c2pwrite, 1),
+            (errwrite, 2),
+        ):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+    
+        if close_fds:
+            file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
+    
+        if file_actions:
+            kwargs['file_actions'] = file_actions
+    
+>       self.pid = os.posix_spawn(executable, args, env, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'executor/target/debug/mayi-executor'
+
+/usr/lib/python3.13/subprocess.py:1801: FileNotFoundError
+________________ test_fake_root_dry_run_combination_is_rejected ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-eugen/pytest-8/test_fake_root_dry_run_combina0')
+
+    def test_fake_root_dry_run_combination_is_rejected(tmp_path):
+        root=tmp_path/'fake-root';root.mkdir();target=root/'new'
+>       p=subprocess.run(['executor/target/debug/mayi-executor','--dry-run','--fake-root',str(root)],input=b'{}',capture_output=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_fake_root.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/subprocess.py:554: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/lib/python3.13/subprocess.py:1857: in _execute_child
+    self._posix_spawn(args, executable, env, restore_signals, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: None args: ['executor/target/debug/mayi-executor', '--dr...>
+args = ['executor/target/debug/mayi-executor', '--dry-run', '--fake-root', '/tmp/pytest-of-eugen/pytest-8/test_fake_root_dry_run_combina0/fake-root']
+executable = 'executor/target/debug/mayi-executor', env = None
+restore_signals = True, close_fds = True, p2cread = 11, p2cwrite = 12
+c2pread = 13, c2pwrite = 14, errread = 15, errwrite = 16
+
+    def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
+                     p2cread, p2cwrite,
+                     c2pread, c2pwrite,
+                     errread, errwrite):
+        """Execute program using os.posix_spawn()."""
+        kwargs = {}
+        if restore_signals:
+            # See _Py_RestoreSignals() in Python/pylifecycle.c
+            sigset = []
+            for signame in ('SIGPIPE', 'SIGXFZ', 'SIGXFSZ'):
+                signum = getattr(signal, signame, None)
+                if signum is not None:
+                    sigset.append(signum)
+            kwargs['setsigdef'] = sigset
+    
+        file_actions = []
+        for fd in (p2cwrite, c2pread, errread):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        for fd, fd2 in (
+            (p2cread, 0),
+            (c2pwrite, 1),
+            (errwrite, 2),
+        ):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+    
+        if close_fds:
+            file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
+    
+        if file_actions:
+            kwargs['file_actions'] = file_actions
+    
+>       self.pid = os.posix_spawn(executable, args, env, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'executor/target/debug/mayi-executor'
+
+/usr/lib/python3.13/subprocess.py:1801: FileNotFoundError
+___________ test_fake_root_execution_requires_independent_authority ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-eugen/pytest-8/test_fake_root_execution_requi0')
+
+    def test_fake_root_execution_requires_independent_authority(tmp_path):
+        root=tmp_path/'root';root.mkdir();doc=request_document([file_create('/new','x')])
+>       p=subprocess.run(['executor/target/debug/mayi-executor','--stdio'],input=json.dumps(doc),text=True,capture_output=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_openat2.py:9: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/subprocess.py:554: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/lib/python3.13/subprocess.py:1857: in _execute_child
+    self._posix_spawn(args, executable, env, restore_signals, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: None args: ['executor/target/debug/mayi-executor', '--st...>
+args = ['executor/target/debug/mayi-executor', '--stdio']
+executable = 'executor/target/debug/mayi-executor', env = None
+restore_signals = True, close_fds = True, p2cread = 11, p2cwrite = 12
+c2pread = 13, c2pwrite = 14, errread = 15, errwrite = 16
+
+    def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
+                     p2cread, p2cwrite,
+                     c2pread, c2pwrite,
+                     errread, errwrite):
+        """Execute program using os.posix_spawn()."""
+        kwargs = {}
+        if restore_signals:
+            # See _Py_RestoreSignals() in Python/pylifecycle.c
+            sigset = []
+            for signame in ('SIGPIPE', 'SIGXFZ', 'SIGXFSZ'):
+                signum = getattr(signal, signame, None)
+                if signum is not None:
+                    sigset.append(signum)
+            kwargs['setsigdef'] = sigset
+    
+        file_actions = []
+        for fd in (p2cwrite, c2pread, errread):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        for fd, fd2 in (
+            (p2cread, 0),
+            (c2pwrite, 1),
+            (errwrite, 2),
+        ):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+    
+        if close_fds:
+            file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
+    
+        if file_actions:
+            kwargs['file_actions'] = file_actions
+    
+>       self.pid = os.posix_spawn(executable, args, env, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'executor/target/debug/mayi-executor'
+
+/usr/lib/python3.13/subprocess.py:1801: FileNotFoundError
+______________ test_all_mutation_types_blocked_without_authority _______________
+
+tmp_path = PosixPath('/tmp/pytest-of-eugen/pytest-8/test_all_mutation_types_blocke0')
+
+    def test_all_mutation_types_blocked_without_authority(tmp_path):
+        root=tmp_path/'root'; (root/'etc').mkdir(parents=True);(root/'etc/a').write_text('A')
+>       sock=tmp_path/'request.sock';auth=tmp_path/'approval.sock';p=subprocess.Popen(['executor/target/debug/mayi-executor','--request-socket',str(sock),'--approval-socket',str(auth),'--request-gid',str(os.getgid()),'--approval-gid',str(os.getgid()),'--development-same-uid'])
+                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_races.py:13: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/lib/python3.13/subprocess.py:1857: in _execute_child
+    self._posix_spawn(args, executable, env, restore_signals, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: None args: ['executor/target/debug/mayi-executor', '--re...>
+args = ['executor/target/debug/mayi-executor', '--request-socket', '/tmp/pytest-of-eugen/pytest-8/test_all_mutation_types_blo...-approval-socket', '/tmp/pytest-of-eugen/pytest-8/test_all_mutation_types_blocke0/approval.sock', '--request-gid', ...]
+executable = 'executor/target/debug/mayi-executor', env = None
+restore_signals = True, close_fds = True, p2cread = -1, p2cwrite = -1
+c2pread = -1, c2pwrite = -1, errread = -1, errwrite = -1
+
+    def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
+                     p2cread, p2cwrite,
+                     c2pread, c2pwrite,
+                     errread, errwrite):
+        """Execute program using os.posix_spawn()."""
+        kwargs = {}
+        if restore_signals:
+            # See _Py_RestoreSignals() in Python/pylifecycle.c
+            sigset = []
+            for signame in ('SIGPIPE', 'SIGXFZ', 'SIGXFSZ'):
+                signum = getattr(signal, signame, None)
+                if signum is not None:
+                    sigset.append(signum)
+            kwargs['setsigdef'] = sigset
+    
+        file_actions = []
+        for fd in (p2cwrite, c2pread, errread):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        for fd, fd2 in (
+            (p2cread, 0),
+            (c2pwrite, 1),
+            (errwrite, 2),
+        ):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+    
+        if close_fds:
+            file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
+    
+        if file_actions:
+            kwargs['file_actions'] = file_actions
+    
+>       self.pid = os.posix_spawn(executable, args, env, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'executor/target/debug/mayi-executor'
+
+/usr/lib/python3.13/subprocess.py:1801: FileNotFoundError
+_________________ test_stdio_validation_never_mutates_fixture __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-eugen/pytest-8/test_stdio_validation_never_mu0')
+
+    def test_stdio_validation_never_mutates_fixture(tmp_path):
+        root=tmp_path/'fake-root';(root/'etc').mkdir(parents=True);(root/'etc/config').write_text('A')
+        before=tree_digest(root)
+        ops=[file_patch('/etc/config','A','B'),file_create('/etc/new','X'),file_delete('/etc/config','A'),file_move('/etc/config','/etc/moved','A')]
+        for i,op in enumerate(ops):
+            doc=request_document([op])
+>           p=subprocess.run(['executor/target/debug/mayi-executor','--stdio'],input=json.dumps(doc),text=True,capture_output=True,check=True)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_remediation_gates.py:22: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/subprocess.py:554: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/lib/python3.13/subprocess.py:1857: in _execute_child
+    self._posix_spawn(args, executable, env, restore_signals, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: None args: ['executor/target/debug/mayi-executor', '--st...>
+args = ['executor/target/debug/mayi-executor', '--stdio']
+executable = 'executor/target/debug/mayi-executor', env = None
+restore_signals = True, close_fds = True, p2cread = 11, p2cwrite = 12
+c2pread = 13, c2pwrite = 14, errread = 15, errwrite = 16
+
+    def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
+                     p2cread, p2cwrite,
+                     c2pread, c2pwrite,
+                     errread, errwrite):
+        """Execute program using os.posix_spawn()."""
+        kwargs = {}
+        if restore_signals:
+            # See _Py_RestoreSignals() in Python/pylifecycle.c
+            sigset = []
+            for signame in ('SIGPIPE', 'SIGXFZ', 'SIGXFSZ'):
+                signum = getattr(signal, signame, None)
+                if signum is not None:
+                    sigset.append(signum)
+            kwargs['setsigdef'] = sigset
+    
+        file_actions = []
+        for fd in (p2cwrite, c2pread, errread):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        for fd, fd2 in (
+            (p2cread, 0),
+            (c2pwrite, 1),
+            (errwrite, 2),
+        ):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+    
+        if close_fds:
+            file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
+    
+        if file_actions:
+            kwargs['file_actions'] = file_actions
+    
+>       self.pid = os.posix_spawn(executable, args, env, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'executor/target/debug/mayi-executor'
+
+/usr/lib/python3.13/subprocess.py:1801: FileNotFoundError
+____________ test_exec_and_service_are_rejected_by_executor_schema _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-eugen/pytest-8/test_exec_and_service_are_reje0')
+
+    def test_exec_and_service_are_rejected_by_executor_schema(tmp_path):
+        for op in (Operation(Kind.EXEC,'/bin/echo',('x',)),Operation(Kind.SERVICE_RESTART,'example.service')):
+            doc=request_document([op])
+>           p=subprocess.run(['executor/target/debug/mayi-executor','--stdio'],input=json.dumps(doc),text=True,capture_output=True,check=True)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_remediation_gates.py:29: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.13/subprocess.py:554: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/subprocess.py:1039: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/lib/python3.13/subprocess.py:1857: in _execute_child
+    self._posix_spawn(args, executable, env, restore_signals, close_fds,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: None args: ['executor/target/debug/mayi-executor', '--st...>
+args = ['executor/target/debug/mayi-executor', '--stdio']
+executable = 'executor/target/debug/mayi-executor', env = None
+restore_signals = True, close_fds = True, p2cread = 11, p2cwrite = 12
+c2pread = 13, c2pwrite = 14, errread = 15, errwrite = 16
+
+    def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
+                     p2cread, p2cwrite,
+                     c2pread, c2pwrite,
+                     errread, errwrite):
+        """Execute program using os.posix_spawn()."""
+        kwargs = {}
+        if restore_signals:
+            # See _Py_RestoreSignals() in Python/pylifecycle.c
+            sigset = []
+            for signame in ('SIGPIPE', 'SIGXFZ', 'SIGXFSZ'):
+                signum = getattr(signal, signame, None)
+                if signum is not None:
+                    sigset.append(signum)
+            kwargs['setsigdef'] = sigset
+    
+        file_actions = []
+        for fd in (p2cwrite, c2pread, errread):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_CLOSE, fd))
+        for fd, fd2 in (
+            (p2cread, 0),
+            (c2pwrite, 1),
+            (errwrite, 2),
+        ):
+            if fd != -1:
+                file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+    
+        if close_fds:
+            file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
+    
+        if file_actions:
+            kwargs['file_actions'] = file_actions
+    
+>       self.pid = os.posix_spawn(executable, args, env, **kwargs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'executor/target/debug/mayi-executor'
+
+/usr/lib/python3.13/subprocess.py:1801: FileNotFoundError
+=========================== short test summary info ============================
+FAILED tests/test_fake_root.py::test_filesystem_mutation_remains_disabled_after_proposal
+FAILED tests/test_fake_root.py::test_fake_root_dry_run_combination_is_rejected
+FAILED tests/test_openat2.py::test_fake_root_execution_requires_independent_authority
+FAILED tests/test_races.py::test_all_mutation_types_blocked_without_authority
+FAILED tests/test_remediation_gates.py::test_stdio_validation_never_mutates_fixture
+FAILED tests/test_remediation_gates.py::test_exec_and_service_are_rejected_by_executor_schema
+6 failed, 59 passed, 12 skipped in 0.46s

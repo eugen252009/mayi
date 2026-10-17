@@ -116,14 +116,18 @@ fn valid_exec_terminal_controls_are_rendered_as_inert_text() {
     assert_eq!(accepted["status"], "PENDING_APPROVAL");
     let id = accepted["challenge_id"].as_str().unwrap();
     let rendered = b.render(&b.pending[id], "unused", now() + 60);
-    let console = render_console_component(
+    let console = approval_ui::render(
         &b.authority(&json!({"type":"LIST_PENDING","protocol":VERSION}), 9001)["pending"]
             .as_array()
             .unwrap()
             .clone(),
         &[0],
-        false,
-    );
+        true,
+        0,
+        100,
+        100,
+    )
+    .0;
     for output in [rendered, console] {
         assert!(!output.contains('\u{1b}'));
         assert!(!output.contains('\u{7}'));

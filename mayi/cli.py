@@ -9,6 +9,7 @@ from .executor import ExecutorError, RustExecutorClient
 from .operations import Kind, Operation
 from .parser import ShellSyntaxError
 from .policy import default_policy
+from .progress import Waiting
 
 BROKER_SOCKET = "/run/mayi/request/broker.sock"
 BROKER_UID = 23002
@@ -155,28 +156,32 @@ def _execute_request(argv):
     challenge = proposal["challenge_id"]
     digest = proposal["request_digest"]
     print("MAYI_REQUEST_PENDING: waiting for human approval", file=sys.stderr, flush=True)
-    while True:
-        try:
-            status = client.request_status(instance, challenge, digest)["status"]
-        except (ExecutorError, OSError) as error:
-            text = str(error)
-            code = 11 if "EXPIRED" in text else 13 if isinstance(error, PermissionError) or any(item in text for item in ("BROKER_INSTANCE", "CHALLENGE_NOT_FOUND", "UNAUTHORIZED")) else 15
-            prefix = "MAYI_REQUEST_EXPIRED" if code == 11 else "MAYI_AUTHORIZATION_ERROR" if code == 13 else "MAYI_BROKER_ERROR"
-            return _mayi_error(f"{prefix}: {text}", code)
-        if status == "PENDING":
-            time.sleep(0.2)
-            continue
-        if status == "DENIED":
-            return _mayi_error("MAYI_APPROVAL_DENIED", 10)
-        if status == "EXPLAINED":
-            return _mayi_error("MAYI_EXPLAIN_REQUESTED", 20)
-        if status == "EXPIRED":
-            return _mayi_error("MAYI_REQUEST_EXPIRED", 11)
-        if status == "CONSUMED":
-            return _mayi_error("MAYI_EXECUTION_UNKNOWN", 16)
-        if status != "APPROVED":
-            return _mayi_error("MAYI_AUTHORIZATION_ERROR", 13)
-        break
+    with Waiting() as progress:
+        while True:
+            try:
+                status = client.request_status(instance, challenge, digest)["status"]
+            except (ExecutorError, OSError) as error:
+                progress.stop()
+                text = str(error)
+                code = 11 if "EXPIRED" in text else 13 if isinstance(error, PermissionError) or any(item in text for item in ("BROKER_INSTANCE", "CHALLENGE_NOT_FOUND", "UNAUTHORIZED")) else 15
+                prefix = "MAYI_REQUEST_EXPIRED" if code == 11 else "MAYI_AUTHORIZATION_ERROR" if code == 13 else "MAYI_BROKER_ERROR"
+                return _mayi_error(f"{prefix}: {text}", code)
+            if status == "PENDING":
+                progress.tick()
+                time.sleep(0.2)
+                continue
+            progress.stop()
+            if status == "DENIED":
+                return _mayi_error("MAYI_APPROVAL_DENIED", 10)
+            if status == "EXPLAINED":
+                return _mayi_error("MAYI_EXPLAIN_REQUESTED", 20)
+            if status == "EXPIRED":
+                return _mayi_error("MAYI_REQUEST_EXPIRED", 11)
+            if status == "CONSUMED":
+                return _mayi_error("MAYI_EXECUTION_UNKNOWN", 16)
+            if status != "APPROVED":
+                return _mayi_error("MAYI_AUTHORIZATION_ERROR", 13)
+            break
 
     try:
         result = client.consume_approved(instance, challenge, digest)
