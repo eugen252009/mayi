@@ -3918,17 +3918,17 @@ mod tests {
             }]
         })];
         let rendered = approval_ui::render(&rows, &[0], false, 0, 100, 100).0;
-        assert!(rendered.contains("[Space] Show technical details"));
+        assert!(rendered.contains("[Space] More information"));
         assert!(!rendered.contains("request ID:"));
         let expanded = approval_ui::render(&rows, &[0], true, 0, 100, 100).0;
-        assert!(expanded.contains("[Space] Hide technical details"));
+        assert!(expanded.contains("[Space] Less information"));
         assert!(expanded.contains("request_id"));
-        assert!(rendered.contains("[0] Program: foo"));
+        assert!(rendered.contains("foo  -> root"));
         assert!(expanded.contains("hello world"));
         assert!(expanded.contains("$HOME"));
         assert!(expanded.contains("; touch /tmp/pwned"));
-        assert!(rendered.contains("Requester UID: 1001"));
-        assert!(rendered.contains("argv[1]"));
+        assert!(rendered.contains("Requested by UID 1001"));
+        assert!(!rendered.contains("argv[1]"));
         assert!(!rendered.contains("\nfeed"));
     }
 

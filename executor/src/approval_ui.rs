@@ -50,16 +50,12 @@ pub(super) fn render(
         let row = &rows[*row_index];
         let op = &row["operations"][0];
         let path = op["executable"].as_str().unwrap_or("");
-        body.push_str(&format!("[{index}] Program: {}\n", program(path)));
-        body.push_str("Action: Execute program with arguments\n");
-        body.push_str(&format!(
-            "Requester UID: {} | privileged UID 0 / GID 23012\n",
-            row["requester_uid"]
-        ));
-        body.push_str(&format!(
-            "State: {}\n",
-            render_console_arg(row["queue_state"].as_str().unwrap_or("UNKNOWN"))
-        ));
+        let label = if component.len() == 1 {
+            String::new()
+        } else {
+            format!("[{index}] ")
+        };
+        body.push_str(&format!("{label}{}  -> root\n", program(path)));
         let basename = path.rsplit('/').next().unwrap_or("");
         let wrapper = [
             "sh", "bash", "dash", "zsh", "fish", "env", "sudo", "su", "busybox", "xargs", "find",
@@ -68,28 +64,49 @@ pub(super) fn render(
         .contains(&basename)
             || basename.starts_with("python");
         if wrapper {
-            body.push_str("CAUTION: interpreter/wrapper; supplied code or programs may run.\n");
+            body.push_str("Interprets commands or runs other programs\n");
         }
         if let Some(args) = op["argv"].as_array() {
-            body.push_str(&format!(
-                "Arguments: {} (including argv[0]); preview:\n",
-                args.len()
-            ));
-            for (i, arg) in args.iter().take(3).enumerate() {
+            let arguments = args
+                .iter()
+                .skip(1)
+                .map(|arg| render_console_arg(arg.as_str().unwrap_or("<invalid>")))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let limit = width.clamp(12, 100).saturating_sub(5).min(68);
+            if arguments.len() > limit {
                 body.push_str(&format!(
-                    "  argv[{i}]: {}\n",
-                    preview(arg.as_str().unwrap_or("<invalid>"))
+                    "  {}\n  ... more in details\n",
+                    &arguments[..limit]
                 ));
+            } else if !arguments.is_empty() {
+                body.push_str(&format!("  {arguments}\n"));
             }
-            if args.len() > 3 {
-                body.push_str("  ... more arguments in details\n");
+            let argv0 = args.first().and_then(Value::as_str).unwrap_or("");
+            if argv0 != path && argv0 != basename {
+                body.push_str("Custom argv[0] -- inspect details\n");
             }
         }
-        body.push_str("Authorization: one-time consumption; broker enforces expiry.\n");
+        body.push_str(&format!(
+            "Requested by UID {} | One use\n",
+            row["requester_uid"]
+        ));
         if let Some(expires) = row["expires_at"].as_i64() {
-            body.push_str(&format!("Consumption deadline (Unix seconds): {expires}\nRemaining at render: {}s (broker authoritative)\n", expires.saturating_sub(now()).max(0)));
+            let seconds = expires.saturating_sub(now()).max(0);
+            body.push_str(&format!(
+                "Time left at display: {:02}:{:02}\n",
+                seconds / 60,
+                seconds % 60
+            ));
+        }
+        if row["queue_state"] != "PENDING_APPROVAL" {
+            body.push_str(&format!(
+                "State: {}\n",
+                render_console_arg(row["queue_state"].as_str().unwrap_or("UNKNOWN"))
+            ));
         }
         if details {
+            body.push_str("Executor: UID 0 / GID 23012\n");
             body.push_str("More information: exact broker fields (JSON notation)\n");
             // Includes complete path, argv[0], dependencies, IDs, digest and deadlines.
             // JSON escapes newlines; terminal_safe additionally escapes non-ASCII/bidi.
@@ -116,21 +133,33 @@ pub(super) fn render(
     let pages = lines.len().div_ceil(count).max(1);
     let page = page.min(pages - 1);
     let mut output = format!(
-        "\nMAYI / Approval\nPage {}/{}; {} request(s)\n",
-        page + 1,
-        pages,
-        component.len()
+        "\nMAYI  /  Permission requested{}\n\n",
+        if component.len() > 1 {
+            format!(" ({})", component.len())
+        } else {
+            String::new()
+        }
     );
     for line in lines.iter().skip(page * count).take(count) {
         output.push_str(line);
         output.push('\n');
     }
     output.push_str(if details {
-        "[Space] Hide technical details\n"
+        "[Space] Less information\n"
     } else {
-        "[Space] Show technical details\n"
+        "[Space] More information\n"
     });
-    output.push_str("[ / ]: page\n[a] Allow ALL pending; [d] Deny; [f] Follow-up\n[s] Skip; [q] Quit; digits: subset\nAction + Enter (no default): ");
+    if pages > 1 {
+        output.push_str(&format!("Page {}/{}  [ / ] Browse\n", page + 1, pages));
+    }
+    if details {
+        output.push_str("[f] Follow-up  [s] Skip  [0-9] Subset\n");
+    }
+    output.push_str(if component.len() == 1 {
+        "\n[d] Deny   [a] Approve   [q] Quit\nAction + Enter: "
+    } else {
+        "\n[d] Deny   [a] Approve ALL pending   [q] Quit\nAction + Enter: "
+    });
     // Wrap chrome as well as data on narrow terminals. No bytes are hidden.
     output = output
         .lines()
@@ -176,7 +205,7 @@ impl View {
 
 pub(super) fn waiting(tick: u64, elapsed: u64) -> String {
     format!(
-        "{} Awaiting decision; elapsed {}s (not broker health)",
+        "{} Your decision? ({}s)  Action + Enter: ",
         ["|", "/", "-", "\\"][(tick % 4) as usize],
         elapsed
     )
@@ -201,7 +230,7 @@ mod tests {
             json!({"requester_uid":1001,"queue_state":"PENDING_APPROVAL","operations":[{"type":"exec","executable":"/usr/bin/bash","argv":["bash","-c",arg]}]}),
         ];
         let (compact, _) = render(&rows, &[0], false, 0, 80, 100);
-        assert!(compact.contains("CAUTION"));
+        assert!(compact.contains("Interprets commands"));
         assert!(!compact.contains("/usr/bin/bash"));
         assert!(compact.contains("more in details"));
         let (_, pages) = render(&rows, &[0], true, 0, 20, 12);
@@ -214,6 +243,38 @@ mod tests {
         assert!(all.lines().all(|line| line.len() <= 19));
         assert!(pages > 100);
     }
+    #[test]
+    fn ordinary_request_is_one_short_screen() {
+        let rows = vec![json!({
+            "requester_uid":1001, "queue_state":"PENDING_APPROVAL",
+            "expires_at":now()+300, "request_digest":"a".repeat(64),
+            "operations":[{"type":"exec","executable":"/usr/bin/bash",
+                "argv":["bash","-c","echo hello"]}]
+        })];
+        let (text, pages) = render(&rows, &[0], false, 0, 80, 24);
+        assert_eq!(pages, 1);
+        assert!(text.lines().count() <= 15, "{text}");
+        assert!(text.contains("bash  -> root"));
+        assert!(text.contains("-c 'echo hello'"));
+        assert!(text.contains("Interprets commands"));
+        for noise in [
+            "argv[",
+            "PENDING_APPROVAL",
+            "request_digest",
+            "Unix",
+            "Page 1/1",
+            "/usr/bin/bash",
+            "Follow-up",
+            "Subset",
+            "broker",
+        ] {
+            assert!(!text.contains(noise), "{noise}: {text}");
+        }
+        let (expanded, _) = render(&rows, &[0], true, 0, 100, 100);
+        assert!(expanded.contains("/usr/bin/bash"));
+        assert!(expanded.contains("request_digest"));
+    }
+
     #[test]
     fn non_utf8_is_rejected_by_existing_json_representation() {
         assert!(serde_json::from_slice::<Value>(b"{\"path\":\"\xff\"}").is_err());
