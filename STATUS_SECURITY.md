@@ -1,0 +1,11 @@
+# Status security
+
+Read permission: existing mayi-approver NSS role via kernel peer UID and approval socket ACL. Global aggregate is narrower than existing role-authorized LIST_PENDING full request visibility. No ordinary requester access to unrelated request details; requester socket rejects QUEUE_STATUS. JSON accepts no UID/name/scope selector. No new root service, ACL/group/setuid/polkit/sudo change or PAM bypass. Reading deliberately does not open a terminal, authenticate, create a console session/view, renew a session, expire state, consume or approve.
+
+Snapshot is data-only and bounded (128 retained records, <=8 current synchronous request workers; dependency edges bounded by existing protocol). No IO under the broker mutex; role checks outside. Existing worker/transaction limits remain. CLI min0.5s poll interval, default1s; no successful per-poll audit noise. Trusted role clients could already request larger LIST_PENDING payloads; status is cheaper, not a new untrusted enumeration surface.
+
+Queue RUNNING dispatch was not evidence of actual spawn. Opt-in nonblocking root spawn observation is metadata only, on the same authenticated executor channel. Start is after durable claim + successful spawn. No notification can grant authority, change op/argv, bypass PAM/TTL/NSS, renew sessions, requeue or replay. Lost start/final result cannot be called success; unknown is not cancellation. Original one-way consumption time/command binding checks remain. The source guard for stored-op handoff now names the explicit observation callback, not a different operation source.
+
+No requester-controlled strings enter presentation. The client rejects unknown fields, control-bearing/malformed broker IDs, bool/string/negative/overflow counters and inconsistent sums. Server errors become bounded static messages. No payload, argv/output/environment, capability/view/session tokens or UID lists are returned. Console health omitted. Root/compromised broker/executor trust is unchanged.
+
+The history viewer remains journal-backed and historical; status never reads journal data or restores anything from it. Filesystem execution remains disconnected/incomplete; broker restart persistence remains NOT CLAIMED. Physical child state after an unknown/lost response cannot be determined by these counters.

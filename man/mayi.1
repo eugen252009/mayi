@@ -11,6 +11,15 @@ mayi --help
 mayi inspect|check COMMAND_TEXT
 mayi -u USER inspect|check COMMAND_TEXT
 .fi
+.SH LIVE APPROVAL STATUS
+.B mayi-approve status
+reads aggregate current broker state under the existing approver role without PAM,
+creating views or starting the interactive console. Options: --json, --watch,
+--interval SECONDS (0.5..60, watch only). Human watch needs a supported TTY;
+--watch --json emits line-oriented JSON for pipes. Dispatching is not confirmed
+child start; running means actual spawn observed, final outcome still awaited.
+Unknown outcome does not mean a child was canceled. Snapshot is not persistent.
+See /usr/share/doc/mayi/STATUS_JSON_SCHEMA.md and QUEUE_STATE_MAPPING.md.
 .SH HISTORY
 .B mayi history
 reads recent native Journald metadata using existing system-journal permissions.

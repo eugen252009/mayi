@@ -1,5 +1,7 @@
 # Mayi Protocol 5 — approval, status, and one-shot execution
 
+Development status1 adds strict approver-only read-only `QUEUE_STATUS`; see STATUS_PROTOCOL.md. An opt-in same-channel executor spawn observation distinguishes dispatching from actually started work without changing authority/claims or replay semantics.
+
 > **Development 0.4.1-9~ui3:** explicit, broker-enforced five-minute sliding console authentication sessions are now implemented. Successful decisions renew the window; reads do not. This supersedes per-decision password claims below for the new console only. Legacy clients still use per-decision PAM. See [AUTHENTICATION_SESSIONS.md](AUTHENTICATION_SESSIONS.md) for protocol, threat-model changes and test limits. Not packaged, deployed or production-qualified.
 
 ## Security semantics

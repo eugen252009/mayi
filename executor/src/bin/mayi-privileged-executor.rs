@@ -499,7 +499,9 @@ fn trusted_executable(path: &str) -> io::Result<PathBuf> {
 }
 
 fn validate_request(req: &ExecRequest) -> io::Result<([u8; 16], PathBuf)> {
-    if req.r#type != "EXEC_REQUEST" || req.protocol != VERSION {
+    if !matches!(req.r#type.as_str(), "EXEC_REQUEST" | "EXEC_REQUEST_OBSERVE")
+        || req.protocol != VERSION
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "unsupported executor request",
@@ -551,7 +553,12 @@ fn read_capped<R: Read>(mut reader: R) -> io::Result<(Vec<u8>, bool)> {
     Ok((output, truncated))
 }
 
-fn run<'a>(req: &'a ExecRequest, executable: &Path, journal: &mut Journal) -> ExecResponse<'a> {
+fn run<'a>(
+    req: &'a ExecRequest,
+    executable: &Path,
+    journal: &mut Journal,
+    started: impl FnOnce(),
+) -> ExecResponse<'a> {
     let id = match parse_request_id(&req.request_id) {
         Ok(id) => id,
         Err(_) => return failure(req, "EXECUTION_FAILED"),
@@ -579,6 +586,7 @@ fn run<'a>(req: &'a ExecRequest, executable: &Path, journal: &mut Journal) -> Ex
         Ok(child) => child,
         Err(_) => return failure(req, "EXECUTION_FAILED"),
     };
+    started();
     audit::emit(
         "EXECUTION_STARTED",
         &[
@@ -675,6 +683,24 @@ fn write_response(stream: &mut UnixStream, value: &ExecResponse<'_>) -> io::Resu
     stream.write_all(&body)
 }
 
+// Observation only: one nonblocking syscall, no retry, no execution/claim effect.
+// A dropped/partial frame can yield UNKNOWN at the broker; never replay.
+fn send_started(stream: &UnixStream, request_id: &str) {
+    let body =
+        serde_json::json!({"type":"EXEC_STARTED","protocol":VERSION,"request_id":request_id})
+            .to_string();
+    let mut packet = Vec::with_capacity(body.len() + 4);
+    packet.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    packet.extend_from_slice(body.as_bytes());
+    unsafe {
+        libc::send(
+            stream.as_raw_fd(),
+            packet.as_ptr().cast(),
+            packet.len(),
+            libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+        );
+    }
+}
 fn handle(mut stream: UnixStream, journal: &mut Journal) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -704,7 +730,11 @@ fn handle(mut stream: UnixStream, journal: &mut Journal) -> io::Result<()> {
     })?;
     let (id, executable) = validate_request(&req)?;
     let _ = id;
-    let response = run(&req, &executable, journal);
+    let response = run(&req, &executable, journal, || {
+        if req.r#type == "EXEC_REQUEST_OBSERVE" {
+            send_started(&stream, &req.request_id);
+        }
+    });
     stream.set_write_timeout(Some(Duration::from_secs(300)))?;
     write_response(&mut stream, &response)
 }
@@ -841,6 +871,32 @@ mod tests {
     fn only_trusted_executable_directories_are_allowed() {
         assert!(trusted_executable("/tmp/mayi-test").is_err());
         assert!(trusted_executable("/usr/bin/true").is_ok());
+    }
+    #[test]
+    fn execution_start_frame_is_opt_in_bounded_and_nonblocking() {
+        let (sender, mut receiver) = UnixStream::pair().unwrap();
+        send_started(&sender, &"a".repeat(32));
+        let mut prefix = [0; 4];
+        receiver.read_exact(&mut prefix).unwrap();
+        let n = u32::from_be_bytes(prefix) as usize;
+        assert!(n < 192);
+        let mut bytes = vec![0; n];
+        receiver.read_exact(&mut bytes).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"type":"EXEC_STARTED","protocol":1,"request_id":"a".repeat(32)})
+        );
+        drop(receiver);
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            send_started(&sender, &"a".repeat(32));
+        }
+        assert!(start.elapsed() < Duration::from_secs(2));
+        let mut r:ExecRequest=serde_json::from_str(r#"{"type":"EXEC_REQUEST_OBSERVE","protocol":1,"request_id":"00000000000000000000000000000001","executable":"/usr/bin/true","argv":["true"]}"#).unwrap();
+        assert!(validate_request(&r).is_ok());
+        r.r#type = "ROOT_STATUS".into();
+        assert!(validate_request(&r).is_err());
     }
     #[test]
     fn output_is_bounded_and_drained() {

@@ -33,6 +33,6 @@ def test_protocol5_broker_hands_only_stored_exec_to_privileged_boundary():
     broker=Path('executor/src/broker.rs').read_text()
     assert 'ExecutionContext' not in broker
     assert 'filesystem::' not in broker
-    assert 'call_privileged_executor(&challenge, &operation)' in broker
+    assert 'call_privileged_executor(&challenge, &operation, notify_started)' in broker
     assert 'PRIVILEGED_EXECUTOR_SOCKET' in broker
     assert 'r["execution"] = Value::String("EXECUTION_DISABLED".into())' in broker

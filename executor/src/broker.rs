@@ -361,6 +361,13 @@ struct ApprovalView {
     expires: i64,
     state: ViewState,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExecutionPhase {
+    Idle,
+    Dispatching,
+    Started,
+    Finished,
+}
 #[derive(Clone)]
 struct Request {
     instance: String,
@@ -380,6 +387,7 @@ struct Request {
     child_exit_status: Option<i32>,
     mayi_result: Option<i32>,
     blocking_dependency: Option<String>,
+    execution_phase: ExecutionPhase,
 }
 fn request_audit_fields(r: &Request) -> Vec<(crate::audit::Field, String)> {
     use crate::audit::Field as F;
@@ -476,8 +484,16 @@ mod console_session_tests;
 #[path = "console_sessions.rs"]
 mod console_sessions;
 
+#[path = "queue_snapshot.rs"]
+mod queue_snapshot;
+#[cfg(test)]
+#[path = "queue_snapshot_tests.rs"]
+mod queue_snapshot_tests;
 struct Broker {
     console_sessions: console_sessions::Sessions,
+    // Observation-only entries bounded by the request worker pool. Keep normal
+    // consumed-request retention/authorization quotas completely unchanged.
+    synchronous_executions: HashMap<String, ExecutionPhase>,
     instance: String,
     challenge_counter: u64,
     view_counter: u64,
@@ -746,6 +762,7 @@ impl Broker {
     fn new() -> io::Result<Self> {
         Ok(Self {
             console_sessions: console_sessions::Sessions::default(),
+            synchronous_executions: HashMap::new(),
             instance: random_id()?,
             challenge_counter: 0,
             view_counter: 0,
@@ -964,6 +981,7 @@ impl Broker {
             child_exit_status: None,
             mayi_result: None,
             blocking_dependency: None,
+            execution_phase: ExecutionPhase::Idle,
         };
         let mut req = req;
         if transition(&mut req.state, State::Pending).is_err() {
@@ -2859,9 +2877,13 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
 const PRIVILEGED_EXECUTOR_SOCKET: &str = "/run/mayi/executor/executor.sock";
 const EXECUTOR_MAX_FRAME: usize = 300 * 1024;
 
-fn call_privileged_executor(identity: &str, operation: &Value) -> (Value, bool) {
+fn call_privileged_executor(
+    identity: &str,
+    operation: &Value,
+    started: impl FnOnce(),
+) -> (Value, bool) {
     let mut completed = false;
-    let outcome = call_privileged_executor_observed(identity, operation, &mut completed);
+    let outcome = call_privileged_executor_observed(identity, operation, &mut completed, started);
     (outcome, completed)
 }
 fn broker_execution_event(queued: bool, outcome: &str, completed: bool) -> &'static str {
@@ -2878,6 +2900,7 @@ fn call_privileged_executor_observed(
     identity: &str,
     operation: &Value,
     audit_completed: &mut bool,
+    started: impl FnOnce(),
 ) -> Value {
     *audit_completed = false;
     let request_id = if valid_request_id(identity) {
@@ -2886,7 +2909,7 @@ fn call_privileged_executor_observed(
         &identity[..32]
     };
     let message = json!({
-        "type": "EXEC_REQUEST",
+        "type": "EXEC_REQUEST_OBSERVE",
         "protocol": 1,
         "request_id": request_id,
         "executable": operation["executable"],
@@ -2909,17 +2932,7 @@ fn call_privileged_executor_observed(
     {
         return json!({"execution":"UNKNOWN"});
     }
-    let response = read_frame_deadline(&mut stream, deadline).and_then(|bytes| {
-        if bytes.len() > EXECUTOR_MAX_FRAME {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "executor response frame too large",
-            ));
-        }
-        serde_json::from_slice::<Unique>(&bytes)
-            .map(|value| value.0)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid executor response"))
-    });
+    let response = read_executor_response(&mut stream, deadline, request_id, started);
     let Ok(response) = response else {
         return json!({"execution":"UNKNOWN"});
     };
@@ -2945,8 +2958,6 @@ fn call_privileged_executor_observed(
         return json!({"execution":"UNKNOWN"});
     }
     let status = response["status"].as_str().unwrap_or("");
-    // Observability only: EXECUTED is the existing response after child wait.
-    // The flag never influences authority, response fields, retry or state.
     *audit_completed = status == "EXECUTED";
     let execution = match status {
         "EXECUTION_UNKNOWN" => "UNKNOWN",
@@ -2955,14 +2966,54 @@ fn call_privileged_executor_observed(
         "EXECUTED" => "FAILED",
         _ => "UNKNOWN",
     };
-    json!({
-        "execution": execution,
-        "exit_code": response["exit_code"],
-        "stdout_hex": response["stdout_hex"],
-        "stderr_hex": response["stderr_hex"],
-        "stdout_truncated": response["stdout_truncated"],
-        "stderr_truncated": response["stderr_truncated"]
-    })
+    json!({"execution":execution,"exit_code":response["exit_code"],"stdout_hex":response["stdout_hex"],"stderr_hex":response["stderr_hex"],"stdout_truncated":response["stdout_truncated"],"stderr_truncated":response["stderr_truncated"]})
+}
+fn read_executor_response(
+    stream: &mut UnixStream,
+    deadline: Instant,
+    request_id: &str,
+    started: impl FnOnce(),
+) -> io::Result<Value> {
+    let read = |stream: &mut UnixStream| {
+        read_frame_deadline(stream, deadline).and_then(|bytes| {
+            if bytes.len() > EXECUTOR_MAX_FRAME {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "executor response frame too large",
+                ));
+            }
+            serde_json::from_slice::<Unique>(&bytes)
+                .map(|value| value.0)
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "invalid executor response")
+                })
+        })
+    };
+    let first = read(stream)?;
+    if first["type"] == "EXEC_STARTED" {
+        if !first
+            .as_object()
+            .is_some_and(|o| only_keys(o, &["type", "protocol", "request_id"]))
+            || first["protocol"] != 1
+            || first["request_id"] != request_id
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid execution start observation",
+            ));
+        }
+        started();
+        let final_response = read(stream)?;
+        if final_response["type"] == "EXEC_STARTED" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "duplicate execution start observation",
+            ));
+        }
+        Ok(final_response)
+    } else {
+        Ok(first)
+    }
 }
 
 fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
@@ -3040,6 +3091,7 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
             } else if all_succeeded {
                 if request.queue_state != Some(QueueState::Running) {
                     request.queue_state = Some(QueueState::Running);
+                    request.execution_phase = ExecutionPhase::Dispatching;
                     audit_request(
                         request,
                         "QUEUE_DISPATCH_STARTED",
@@ -3064,8 +3116,20 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
         let spawn = std::thread::Builder::new()
             .name("mayi-queued-exec".into())
             .spawn(move || {
+                let notify_started =
+                    || {
+                        if let Ok(mut state) = worker_broker.lock() {
+                            if let Some(r) = state.pending.values_mut().find(|r| {
+                                r.request_id.as_deref() == Some(worker_request_id.as_str())
+                            }) {
+                                if r.queue_state == Some(QueueState::Running) {
+                                    r.execution_phase = ExecutionPhase::Started;
+                                }
+                            }
+                        }
+                    };
                 let (outcome, audit_completed) =
-                    call_privileged_executor(&worker_request_id, &operation);
+                    call_privileged_executor(&worker_request_id, &operation, notify_started);
                 let execution = outcome["execution"].as_str().unwrap_or("UNKNOWN");
                 let child = outcome["exit_code"]
                     .as_i64()
@@ -3083,6 +3147,7 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                                 "INTERNAL_ERROR" | "EXECUTION_DISABLED" => (QueueState::Failed, 15),
                                 _ => (QueueState::ExecutionUnknown, 16),
                             };
+                            request.execution_phase = ExecutionPhase::Finished;
                             request.queue_state = Some(queue_state);
                             request.mayi_result = Some(code);
                             request.child_exit_status = child;
@@ -3194,6 +3259,31 @@ fn handle_with_auth(
             &format!("SO_PEERCRED lookup failed: {error}"),
         )),
     };
+    if v["type"] == "QUEUE_STATUS" {
+        let response = if !approval {
+            response_error(
+                "UNAUTHORIZED_ROLE",
+                "queue snapshot requires approval socket",
+            )
+        } else if let Err(error) = authorization {
+            error
+        } else if terminal_fd.is_some()
+            || !v
+                .as_object()
+                .is_some_and(|o| only_keys(o, &["type", "protocol"]))
+            || v["protocol"] != VERSION
+        {
+            response_error("INVALID_PROTOCOL", "invalid queue snapshot message")
+        } else {
+            broker
+                .lock()
+                .map_err(|_| io::Error::other("broker state poisoned"))?
+                .queue_snapshot()
+        };
+        let mut response = response;
+        response["response_to"] = json!("QUEUE_STATUS");
+        return write_frame_deadline(&mut s, &response, deadline);
+    }
     if authorization.is_err() {
         if let Some(peer) = peer_credentials_snapshot {
             broker
@@ -3429,12 +3519,44 @@ fn handle_with_auth(
             }
         }
     }
+    if execution.is_some() {
+        if let Some(id) = v["challenge_id"].as_str() {
+            state
+                .synchronous_executions
+                .insert(id.to_owned(), ExecutionPhase::Dispatching);
+        }
+        if let Some(request) = v["challenge_id"]
+            .as_str()
+            .and_then(|id| state.pending.get_mut(id))
+        {
+            request.execution_phase = ExecutionPhase::Dispatching;
+        }
+    }
     drop(state);
     if let Some((challenge, operation, mut fields)) = execution {
         use crate::audit::Field as F;
         fields.push((F::ExecutionId, challenge[..32].into()));
         crate::audit::emit("EXECUTION_DISPATCH_STARTED", &fields);
-        let (outcome, audit_completed) = call_privileged_executor(&challenge, &operation);
+        let notify_started = || {
+            if let Ok(mut state) = broker.lock() {
+                if let Some(phase) = state.synchronous_executions.get_mut(&challenge) {
+                    *phase = ExecutionPhase::Started;
+                }
+                if let Some(r) = state.pending.get_mut(&challenge) {
+                    if r.execution_phase == ExecutionPhase::Dispatching {
+                        r.execution_phase = ExecutionPhase::Started;
+                    }
+                }
+            }
+        };
+        let (outcome, audit_completed) =
+            call_privileged_executor(&challenge, &operation, notify_started);
+        if let Ok(mut state) = broker.lock() {
+            state.synchronous_executions.remove(&challenge);
+            if let Some(r) = state.pending.get_mut(&challenge) {
+                r.execution_phase = ExecutionPhase::Finished;
+            }
+        }
         fields.retain(|(key, _)| *key != F::State);
         if let Some(value) = outcome["execution"].as_str() {
             fields.push((F::State, value.into()));
