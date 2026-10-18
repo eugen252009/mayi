@@ -1,5 +1,14 @@
 # Mayi
 
+**STABLE — ACTIVELY MAINTAINED.** The qualified development baseline is
+**0.4.1-11**, frozen commit `c5477fb19e1b979be980b451b6242e3565c9425a`.
+See [PROJECT_STATUS.md](PROJECT_STATUS.md) for exact provenance, continuing
+development policy and central signing/publication prerequisites. Current usage:
+[UX_USAGE.md](UX_USAGE.md) and [AUTHENTICATION_SESSIONS.md](AUTHENTICATION_SESSIONS.md).
+Earlier version-labelled development notes and published-package examples below
+are historical; they do not establish publication of 0.4.1-11 or supersede its
+qualified interface/session behavior. The immutable release is not a project shutdown.
+
 > Epoch extension (`0.4.1-10~status4`): see [BROKER_EPOCH.md](BROKER_EPOCH.md),
 > [RESTART_INVALIDATION.md](RESTART_INVALIDATION.md) and
 > [UPDATE_PREFLIGHT.md](UPDATE_PREFLIGHT.md). New queued IDs use authenticated
@@ -34,14 +43,14 @@ privileged executor
 
 ## Status
 
-**STABLE / MAINTENANCE — Mayi 0.4.1 is the current stable feature baseline.** The qualified Debian package revision 0.4.1-1 corrects maintainer/license metadata and carries the current documentation; it does not claim a runtime feature change. It is published through TPA.run and verified by an isolated APT consumer. Mayi is maintained, not abandoned.
+**STABLE — ACTIVELY MAINTAINED — Mayi 0.4.1-11 is the qualified development baseline.** Current requirements are satisfied and there is no immediate feature need. Security, correctness, compatibility, demonstrated usability and measured performance work continue; new capabilities are welcome when concrete operational needs justify them. Feature completeness is not a permanent development restriction. Source-push status is separate from centralized signing, admission, staging and Debian publication. Historical release assessments follow.
 
 Candidate 0.4.1-5 moves PAM verification into a separate broker-verifiable authority and requires authentication for every decision. The exact artifact passed direct-systemd qualification on the supported Debian 11–13 targets and is **READY FOR INDEPENDENT SECURITY REVIEW**; this is not production readiness or publication authorization. See [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md) for the capability requirements and exact-artifact evidence. The prior 0.4.1-4 Debian 10–13 result is historical and does not establish current Debian 10 support.
 
 **Security limitation in published 0.4.1:** PAM is enforced by the supplied console, not by the broker protocol. A direct approval-socket client can bypass console-local PAM while satisfying broker group/view checks. Do not treat the published package as requiring PAM for every protocol approval; see [`SECURITY_BOUNDARY.md`](SECURITY_BOUNDARY.md).
 
-- Feature development is frozen unless driven by a concrete requirement.
-- Bug fixes, security fixes, and documentation fixes remain allowed.
+- Future development remains explicitly permitted when a concrete requirement justifies it.
+- Address bugs, security issues, documentation, relevant compatibility, demonstrated usability and measured performance needs.
 - New platforms are on demand; breaking changes require explicit justification.
 - Synology DSM is **not supported** and is deferred pending platform/vendor answers.
 
@@ -203,7 +212,7 @@ Approved commands run with a cleared environment, fixed `PATH`, `LANG`, `LC_ALL`
 
 Debian 10 is excluded from supported runtime targets. The `openat2` path-resolution primitive is used only by the disconnected/incomplete filesystem executor; it is not on the enabled Mayi 0.4.1-5 execution path. systemd `RestrictSUIDSGID` is optional defense-in-depth for the PAM helper; effective confinement also relies on `NoNewPrivileges`, a `CAP_DAC_READ_SEARCH`-only capability set, filesystem protections, and the helper's no-command-execution design. Historical compatibility results do not override this policy. See [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md) for evidence and limitations.
 
-## Stable release and maintenance
+## Historical published baseline (0.4.1)
 
 - Stable feature baseline: **0.4.1**, release tag `v0.4.1`, release commit `9b3c69a292a36155d5994fa8b55da5cdc7f67ac4`.
 - Published package revision: **0.4.1-1**, a packaging/documentation correction to maintainer/license metadata; the application/runtime remains 0.4.1. Publication and isolated APT consumer verification are recorded in [`MVP_QUALIFICATION.md`](MVP_QUALIFICATION.md).
@@ -227,7 +236,7 @@ Release workflow at a high level: source → build on a portable baseline → qu
 
 ## Development and maintenance
 
-Feature development is paused. For a concrete bug or security report, include the affected version, reproduction steps, and whether the issue changes a documented guarantee. Runtime and packaging changes require explicit justification and appropriate requalification; a documentation-only cleanup must not be presented as a new feature release.
+Mayi is stable and actively maintained. For a concrete problem or capability request, record the affected version, actual use case, reproduction/acceptance criteria and impact on guarantees. Evaluate security, maintenance cost, architectural fit, testability and compatibility; implement the smallest appropriate change and requalify affected targets. No continuous feature backlog is required and future features are not prohibited. Documentation-only changes do not create a new release identity. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 `pyproject.toml`, `mayi.__version__`, and `executor/Cargo.toml` describe internal Python/Rust source components; their component versions and development dependency requirements are not Mayi's Debian release version or runtime dependency floor. The Debian package metadata in `executor/package/tpa.json` and the qualified `.deb` define the released product.
 

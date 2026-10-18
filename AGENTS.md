@@ -7,9 +7,9 @@
 - Mayi request submission and approval are separate authorities. During actual operations, an agent may submit a request when authorized but must not invoke or automate the human approver's PAM authentication, request/accept an approver password, or handle/replay credentials. The approver must use their own interactive TTY; passwords must never be placed in argv, environment variables, or piped stdin. Automated authentication tests are allowed only in disposable qualification environments with synthetic accounts and credentials; never use real credentials or the real host.
 - Approval-console authentication is per process. Do not claim authentication survives exit/restart; do not bypass it using direct broker access or another identity.
 
-# Mayi maintenance status
+# Mayi project status
 
-- Mayi 0.4.1 is the stable feature baseline and the project is in maintenance mode, not archived. Feature work/new platforms require a concrete requirement; bug, security, and documentation fixes remain allowed. Breaking changes need explicit justification.
+- Mayi 0.4.1-11 is the qualified stable development baseline: **STABLE — ACTIVELY MAINTAINED**. The release is immutable; the project is not shut down or indefinitely frozen. Security/correctness fixes, relevant compatibility, demonstrated usability and measured performance work continue. Future features/new platforms remain permitted when a concrete requirement justifies security impact, maintenance cost, architectural fit and testability. Feature completeness is a current assessment, not a permanent restriction. Breaking changes need explicit justification and qualification. See PROJECT_STATUS.md.
 - Documentation-only work must not change runtime semantics, move release tags, rebuild/replace historical package identities, or create a new version solely for documentation. Preserve `v0.4.1` and the qualified published artifact; publication is not deployment.
 - Queue/result persistence across broker restart remains **NOT CLAIMED**. The filesystem executor remains **DISCONNECTED / INCOMPLETE**. Synology DSM is not currently supported and is deferred.
 
