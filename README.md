@@ -1,5 +1,7 @@
 # Mayi
 
+> **CLI metadata development:** `0.4.1-10~status2` adds local `--version`/`-V` and help to both entrypoints. Executable arguments remain unchanged and approval-gated; use `--` for names colliding with internal commands/options. See CLI_DISPATCH_DESIGN.md, CLI_COMPATIBILITY.md and FINAL_DECISION.md. No automatic installation or release publication.
+
 > **Live status development:** `0.4.1-10~status1` adds `mayi-approve status [--json] [--watch] [--interval SECONDS]`. See STATUS_DESIGN.md, QUEUE_STATE_MAPPING.md and FINAL_DECISION.md. This queries live broker state; `mayi history` remains historical. No automatic installation or release publication.
 
 > **Native audit development:** this isolated worktree adds native Journald fields and read-only `mayi history` in 0.4.1-10~journald6. See HISTORY_DESIGN.md and HISTORY_SCHEMA.md for usage, access limits and JSON. See JOURNALD_SCHEMA.md, REQUEST_CORRELATION.md and FINAL_DECISION.md for tested scope and limits. It does not replace or publish qualified 0.4.1-9.

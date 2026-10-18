@@ -1,47 +1,48 @@
-# Status1 package verification
+# CLI package verification
 
-Artifact: /home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~status1_amd64.deb
+Artifact: /home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~status2_amd64.deb.
 
-Two identical builds: first/second SHA-2564ce927013fb811ffa21d9540ac007ff5f47cfff1d9f0c8d2fe3f8e6632e3aab4; cmp PASS. Source archive from90a65fd6d8432f5b6c1e297b24dc91bd80a18f1a, clean release target per build, locked offline Cargo, SOURCE_DATE_EPOCH=1792195200, established Mayi/TPA pipeline. Debian11 toolchain Rust/Cargo1.95.0,GCC10.2.1,GLIBC2.31; exact TPA SHA4da9418be15d2d5e212e21ff399a33519ca342522633afaed6341705765370a7. Both ELF maxGLIBC2.30 with existing hardening/library ABI gate before final atomic artifact rename. No host/native stale binaries or overwritten prior identities.
+Two independent clean Cargo target/output builds from source ce624dc1bcc1eb0f493794c54c38d2e84c104242, existing Mayi/TPA pipeline, Debian11 Rust/Cargo1.95.0/GCC10.2.1/GLIBC2.31, locked offline dependencies, SOURCE_DATE_EPOCH=1792195200. Identical first/rebuild SHA-256af371f6e80b1e7df4366913e7b8ed282a3824c782380cc73fffb50adc055a50f; cmp PASS. Mandatory exact-package ABI/hardening gate before atomic final artifact rename; maxGLIBC2.30. No stale binary reuse or old identity overwritten.
 
-dpkg --compare-versions '0.4.1-10~status1' gt '0.4.1-10~journald6' PASS. Package/version/amd64/dependencies inspected; modules and six shipped status design/protocol/schema/security/watch/state-mapping docs exactly source bytes; all members root:root, no setuid/setgid bits or shipped pyc. Final installed services/role tests/actual native emission/status/watch/history and dpkg verification/remove/reinstall PASS on all three distros.
+Package control/version/architecture inspected, dpkg version order status2 >status1 PASS. Build script derives identity/filename/stamp from tpa.json (no shell hardcoded package version). Embedded _build_version exactly 0.4.1-10~status2 newline, matching control. Five modified/new Python modules and two shipped CLI design/compat docs match source; all members root:root, no setuid/setgid/pyc, existing dependencies unchanged. Actual installed version/helper outputs verified on all three distros including broker offline.
 
-Qualification raw/ABI/build/identity/package member/source/rebuild evidence: /home/eugen/projekte/mayi-qualification/status-0.4.1-10-status1. Reproduced package retained as reproduced.deb there. Four original/staged pinned version8/9 manifests, stage wrappers and policy unchanged; original dirty checkout/status/index exact saved baseline comparison; operator journald6 dpkg -V PASS. No host installation or deployment.
+Evidence: /home/eugen/projekte/mayi-qualification/cli-0.4.1-10-status2, source.tar, builder/build-twice.log/.exit, candidate.deb, reproduced.deb, abi.json/.exit, package-validation.json, package-identity/files, independent-audit-final.json, primary/retry raw qualification. First/rebuild/VM-payload hash invariant PASS. Report-only later commits do not alter packaged code/docs/build inputs.
 
-## Separate local installation approval required
+## Installation (separate approval; NOT performed)
 
-Not performed by the agent. Keep the human's approval console in its own interactive TTY; never automate the real approver's PAM/password.
+Human keeps mayi-approve in their own interactive TTY and performs any PAM authentication themselves. In another terminal, only after explicit approval:
 
 ```sh
 mayi-approve
-# Another terminal, only after explicit installation approval:
-mayi /usr/bin/systemd-run --unit=mayi-install-status1 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~status1_amd64.deb
+# Separate terminal:
+mayi /usr/bin/systemd-run --unit=mayi-install-status2 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~status2_amd64.deb
 ```
 
-Transient installer unit avoids stopping its own parent Mayi executor during package replacement. Submission/ambiguous Mayi result is not proof installation completed; do not retry automatically or force an existing unit name. Inspect read-only results:
+The transient installer avoids stopping its own Mayi executor during replacement. Submission or ambiguous Mayi result is not proof of install completion; do not auto-repeat or bypass a rejection. Read-only verification:
 
 ```sh
 dpkg-query -W -f='${Version}\n' mayi
 dpkg -V mayi
+mayi --version
+mayi-approve --version
 systemctl is-active mayi-broker mayi-pam-auth mayi-privileged-executor
-journalctl -u mayi-install-status1 --no-pager
-mayi-approve status --json
+journalctl -u mayi-install-status2 --no-pager
 ```
 
-Status still requires the existing approver role; journal diagnostics require existing reader permissions. No automatic group/ACL change or privilege fallback.
+## Rollback (also requires approval)
 
-## Verified rollback (also needs explicit approval)
-
-Exact existing journald6 package preserved in dist/rollback/mayi_0.4.1-10~journald6_amd64.deb. SHA-256 7149d79e8aec0f8a7c119a9f8aa0f9ede00f7120cd2674c6b3754d2d8bccb51a. No rebuild, purge or configuration deletion:
+Exact previous installed status1 package preserved in dist/rollback/mayi_0.4.1-10~status1_amd64.deb, SHA-2564ce927013fb811ffa21d9540ac007ff5f47cfff1d9f0c8d2fe3f8e6632e3aab4. No rebuild/purge/config deletion:
 
 ```sh
-mayi /usr/bin/systemd-run --unit=mayi-rollback-journald6 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/rollback/mayi_0.4.1-10~journald6_amd64.deb
+mayi /usr/bin/systemd-run --unit=mayi-rollback-status1 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/rollback/mayi_0.4.1-10~status1_amd64.deb
 dpkg-query -W -f='${Version}\n' mayi
 dpkg -V mayi
 systemctl is-active mayi-broker mayi-pam-auth mayi-privileged-executor
-journalctl -u mayi-rollback-journald6 --no-pager
+journalctl -u mayi-rollback-status1 --no-pager
 ```
 
+Status1 predates --version; use dpkg-query when verifying rollback. Journal reads still need existing permissions; no automatic elevation/group/ACL change.
 
 
-Tested package source: 90a65fd6d8432f5b6c1e297b24dc91bd80a18f1a. Development 0.4.1-10~status1 amd64. First/rebuild SHA-256: 4ce927013fb811ffa21d9540ac007ff5f47cfff1d9f0c8d2fe3f8e6632e3aab4.
+
+Runtime/package source commit: ce624dc1bcc1eb0f493794c54c38d2e84c104242. Development0.4.1-10~status2 amd64. Package and independent rebuild SHA-256: af371f6e80b1e7df4366913e7b8ed282a3824c782380cc73fffb50adc055a50f.
