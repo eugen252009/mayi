@@ -1,26 +1,13 @@
-# Debian restart qualification matrix
+# Debian qualification
 
-Candidate: 0.4.1-10~status4 amd64, runtime ee22b0a278c2c9110d29bfc37bffcff09ec66bee.
-SHA256: 6e785530c84cdf19eaac65419aa549f86290003d2e75c2642222218cba6c1d5e.
-
-| Platform | Primary process | Primary gates | Separate classification retry2 |
+| Platform | Original ui2 main | Separate same-byte acknowledgement retry | Resources |
 |---|---|---|---|
-| Debian 11 | exit 1 retained | 19 PASS / 1 fixture FAIL | PASS / exit 0 |
-| Debian 12 | exit 1 retained | 19 PASS / 1 fixture FAIL | PASS / exit 0 |
-| Debian 13 | exit 1 retained | 19 PASS / 1 fixture FAIL | PASS / exit 0 |
+| Debian11 amd64 |40 PASS/1 fixture FAIL, exit1 |4/4 PASS, exit0 |3/3 PASS, exit0 |
+| Debian12 amd64 |40 PASS/1 fixture FAIL, exit1 |4/4 PASS, exit0 |3/3 PASS, exit0 |
+| Debian13 amd64 |40 PASS/1 fixture FAIL, exit1 |4/4 PASS, exit0 |3/3 PASS, exit0 |
 
-All new epoch/HMAC/error/history/preflight/crash/PAM gates passed in the primary
-runs. The failure and first failed retry are explained in RESTART_SECURITY_TESTS.
-Do not describe any primary run or first retry as exit0.
+Do NOT report original41-gate processes as41/41 or exit0. The inherited overlapping-authentication navigation fixture mistook an unsolicited header redraw for a Space acknowledgement and pipelined input. The original secure guard rejected it. Corrected expected-footer acknowledgement repeats overlap, decision race, live watch and notice/unsized/error-display checks with identical package bytes. All other40 original gates pass; all mandatory properties have explicit evidence.
 
-Debian 11 clean build and independent clean rebuild are byte-identical.
-Rust/Cargo 1.95.0; GCC10; glibc 2.31-13+deb11u14; max imported GLIBC_2.30.
-Native binaries pass the mandatory ABI/hardening/dependency gate.
-Installed package cycling, real PAM, native Journald, strict expiry, one-shot,
-128-request live status/watch and command-bound execution passed on all three.
-All operations ran in task-owned disposable QEMU guests, not on the operator host.
+Exact stable0.4.1-10→ui2 upgrades, actual six-size console approval/denial, JSON/details/plain/dumb behavior, PAM/account/session/terminal, live/DAG128, strict expiry, command binding, metadata/offline dispatch, epochs/preflight/history/Journald, package cycling and60-race matrix were rerun. ui1's real Debian11 watch failure is separately UX NO-GO and preserved; ui2 is not a rebuilt replacement of ui1.
 
-Evidence paths: restart-0.4.1-10-status4/debian{11,12,13}/raw/,
-classification-retry/ and classification-retry2/. The independent acceptance
-script requires original failures and retry2 separately. No outcome is inferred
-from missing logs or an overwritten result.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.

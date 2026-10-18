@@ -1,42 +1,11 @@
-# Security regressions — authenticated broker epochs
+# Security regressions
 
-Decision support is in RESTART_SECURITY_TESTS.md, DEBIAN_MATRIX.md and
-/home/eugen/projekte/mayi-qualification/restart-0.4.1-10-status4/independent-audit-final.json.
+Fresh standalone binary built before the complete Python run:242 PASS,9 explicit historical PAM-console skips. Rust146 main +13 executor PASS. fmt, strict locked/offline Clippy, syntax, ABI/hardening pass. Skips are separately covered by installed real PAM/PTY tests, never relabelled source passes.
 
-Existing exact executable/argv binding, trusted-directory policy, kernel peer
-identity/NSS role separation, PAM/challenge/terminal/session binding, success-only
-session renewal, one-shot root claims, strict selected-request consumption-time
-expiry, response correlation and bounded best-effort native logging are retained.
-No authority endpoint, approval replay, request replay, automatic retry, ACL/group
-expansion, queue persistence, filesystem executor connection or Porta modification.
+Protected main/PAM/authentication/sessions/request-ID/audit/queue-snapshot/privileged-executor source files are unchanged. Python validation/fetch/public/preflight, history decoder/correlation/document and execute/queue/wait/status handlers are AST-identical. Broker edits are local presentation notices and explicit pre-existing development-mode key isolation; production persistent-key and authorization paths retain their checks. Privileged executor ELF is byte-identical to stable.
 
-The new local 32-byte HMAC key authenticates request-ID origin only. A valid ID
-does not restore a request, approve it, claim it or run it. Current RAM state,
-matching instance/challenge/digest, owner and human approval still gate execution.
-A wrong/missing key cannot establish old provenance; no hash-only inference or
-legacy fallback is used. The key is not included in packages, IDs, metadata or
-qualification evidence. Private-directory and key metadata are checked; unsafe
-storage fails startup instead of rotating a key or recovering authority.
+Exact command/argv, explicit human/PAM approval, identity/account revalidation, no ambient authority, one-shot, wrong-owner/digest/replay rejection, strict selected-request and real300s consumption expiry, epoch invalidation/forgery/residual execution, native logging/history/status/preflight and terminal safety are repeated on Debian11/12/13. Real sliding session beyond original300s and real authentication timeout/cancel pass.60 races/480 attempts/60 successful consumptions/60 markers/zero duplicates. No general exactly-once effects.
 
-Limits retained or explicit:
-* Cryptographic collision resistance is not a formal guarantee about arbitrary
-  administrative VM/RNG snapshots. No sequential epochs are assumed.
-* Interrupted first-key creation can leave a temporary hardlink and cause the
-  strict nlink check to fail closed; no automatic repair or key replacement.
-* Durability/retention of Journald is not guaranteed. Missing execution records,
-  broker death and zero counters do not establish absence of side effects.
-* A broker-only restart does not kill a separately supervised root child.
-* No general exactly-once effects, execution-start TTL or queue recovery claim.
-* Old clients with fixed rq_32hex assumptions must migrate to versioned IDs.
-  Legacy history stays readable; no new legacy IDs are issued.
-* GET_QUEUE_STATUS remains a successful read of known current terminal states,
-  with canonical authorization_error classification; consumed challenge errors
-  retain legacy flat aliases plus canonical nested error codes.
-* --status --json guarantees the full structured authenticated epoch error;
-  other pre-existing CLI validation/transport errors may still use stderr.
-* History never authenticates IDs with the private key or queries live state.
-  epoch_id is recorded identity, not a UI grant. Lifecycle invalidation is
-  explicitly historical inference unless there is a per-request shutdown fence.
+No presentation field authorizes, consumes, renews or retries anything. Original/fixed fixture evidence is explicit. No stable release, production service, central policy/stage or TPA/TPA.run changes.
 
-Original process failures and historical skips remain visible. This is a
-qualified candidate, not authorization to deploy, publish, promote, sign or push.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.

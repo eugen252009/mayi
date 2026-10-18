@@ -1,68 +1,18 @@
-# CONDITIONAL RESTART GO — package ready, installation pending
+# UX GO
 
-## Identity
-Runtime source: ee22b0a278c2c9110d29bfc37bffcff09ec66bee.
-Version: 0.4.1-10~status4 (greater than status3, less than final 0.4.1-10).
-Artifact: dist/mayi_0.4.1-10~status4_amd64.deb.
-SHA256: 6e785530c84cdf19eaac65419aa549f86290003d2e75c2642222218cba6c1d5e.
+Identified HIGH/MEDIUM problems are resolved for the requested terminal matrix; all required current-source/artifact properties pass, with explicit original failures and separate corrective evidence.
 
-## Delivered
-Reuse the random 192-bit broker identity as immutable epoch. New queued IDs are
-versioned, fixed-width, domain-separated HMAC-SHA256 identities binding epoch,
-128-bit random nonce and the canonical exact request digest. Only an owner-private
-provenance key persists; requests/approvals/authority do not.
+- Approval: bounded pages/notice at all six sizes, executor visible, full escaped command disclosure, explicit approval/denial and PAM/terminal recovery PASS.
+- Queue: pending-first renderer retains ORIGINAL indices; notices do not switch request binding; dispatched context does not invent observed start.
+- Status: compact default, --details and full unchanged JSON; preflight unchanged.
+- Watch: retained ANSI guard, explicit --plain, kernel/zero-size geometry, resize/reconnect/epoch/error/interrupt cleanup and resource checks PASS.
+- History: distinct nonce aliases, UNKNOWN/not-live wording, Mayi/exit labels; request/event/epoch/JSON semantics unchanged.
+- Errors: stable codes, safe guidance/fallback; no automatic retry/service action.
+- Security:242 Python PASS/9 explicit skips;146+13 Rust PASS; strict Clippy/format/syntax/ABI PASS;60 races/480 attempts/60 consumptions/zero duplicates.
+- Debian11/12/13: each original41-gate cohort40 PASS/one PROVEN overlap fixture FAIL; separate identical-artifact4/4 retry and3/3 resources PASS/exit0. Original exits remain1, never reported as all-green.
 
-Authentic older IDs return BROKER_EPOCH_CHANGED with retryable=false and explicit
-fresh-request/fresh-approval requirements, conservative execution UNKNOWN and
-reconciliation required. Forged/unknown IDs do not become epoch errors.
-Legacy history remains readable, without retroactive authentication.
+Development artifact in /home/eugen/projekte/mayi-ux-development/dist/mayi_0.4.1-11~ui2_amd64.deb; two clean builds byte-identical. ui1 remains preserved and UX NO-GO. Scope limits and exact separately authorized install/rollback are documented.
 
-Shutdown fences claims under the existing mutex and records only proven
-pre-claim REQUEST_INVALIDATED cases. Crashes do not generate fictitious safe
-outcomes. Old execution can survive broker death and later complete honestly.
+Host remains stable0.4.1-10. No installation/restart, signing/tag/push, TPA/TPA.run modification, central admission/staging change, upload/publication/deployment or frozen-release changes.
 
-History JSON2 adds epoch_id and separate authorization/execution/recovery fields.
-Human boundaries are virtual, preserve display order and label first-page/legacy
-context; --epoch filters recorded identities. No separator is persisted.
-Live status schema1 is retained; status --preflight --json is read-only
-READY=0/BUSY=3/UNKNOWN=4, never an admission or physical-idleness guarantee.
-Porta recovery classes and package/self-upgrade response-loss semantics are
-documented; no Porta code was changed.
-
-## Qualification and conditionality
-216 Python PASS / 9 historical skips; 143+13 Rust PASS; fmt, strict Clippy,
-compileall and shell checks PASS. Two independent clean Debian11 builds are
-byte-identical; max GLIBC_2.30 and mandatory package hardening/ABI gates PASS.
-
-Debian11/12/13 each have 19/20 primary gates PASS and retained process exit1.
-The classification fixture's rounded window included one genuine older
-shutdown-invalidated request. A first retry incorrectly filtered unknown-epoch
-diagnostics and remains FAIL. Separately instrumented/narrowed same-artifact
-retry2 PASS/exit0 on every platform. Independent acceptance explicitly combines
-original security evidence and retry2, not a fictitious all-green primary run.
-
-CONDITIONAL rather than unconditional GO reflects those explicit evidence
-qualifications, versioned-ID consumer migration and the requirement for external
-coordination/reconciliation around updates. READY alone is not an update lock.
-Review BROKER_EPOCH, RESTART_INVALIDATION, UPDATE_PREFLIGHT,
-PORTA_RECOVERY_CONTRACT, EXECUTION_OUTCOME_SEMANTICS, RESTART_SECURITY_TESTS,
-DEBIAN_MATRIX and SECURITY_REGRESSIONS before final release qualification.
-
-## Preservation and limits
-Host remains operator-installed 0.4.1-10~status3; dpkg -V passes.
-Original dirty checkout and immutable releases/staging8/9 were not modified;
-four pinned bundle manifests verified. No installation, service restart on the
-host, Porta change, central staging change, signing, tag movement, upload,
-publication, push or deployment. Candidate publication and deployment require
-separate authorization.
-
-Journald remains best effort. Proven old authorization invalidity is not proof
-that execution failed or never occurred. No queue persistence, recovery of
-capabilities, general exactly-once side effects or connected filesystem executor.
-Private-key loss or unsafe storage fails classification/startup closed rather
-than inventing stale identity proof. Historical outcomes remain historical.
-
-Full evidence:
-/home/eugen/projekte/mayi-qualification/restart-0.4.1-10-status4/
-including check_results.py, independent-audit-final.json/.exit, original and
-retry records, build logs, source.tar, package validation and preservation data.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.

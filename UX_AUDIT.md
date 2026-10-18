@@ -9,3 +9,9 @@ Interfaces: Rust approval_ui View/render wraps existing broker snapshot; raw/can
 Confirmed HIGH: approval page-height accounting excludes wrapped chrome and clamps 8-row terminals to12. MEDIUM: executor identity hidden until details; context dependencies can precede pending action; same-epoch rq_v2 short labels collide; routine status/watch is vertically verbose; requester spinner line exceeds narrow widths. LOW: unsupported watch message has no plain human fallback; historical PENDING? and RESULT heading need clearer interpretation. Baseline shell code is already conservatively quoted and interpreter-warned: retain, do not replace with speculative natural language.
 
 Initial artifacts are immutable audit evidence. Post-implementation tests/results belong outside audit/. Security predicates, operation order, PAM and broker state remain authoritative.
+
+
+Post-implementation results are separate. Initial audit bytes remain unchanged.
+
+
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.

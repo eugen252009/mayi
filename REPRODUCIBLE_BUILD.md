@@ -1,12 +1,10 @@
-# Reproducible development package
+# Reproducible candidate
 
-PASS: two builds from identical source archive (commit c511c7f948e4b811baec9e83976fec6ec5b898ba), separate output directories, separate fresh Cargo release targets, existing Mayi build-deb.sh and exact TPA tool. Locked offline Cargo inputs; no host-native/stale release binaries. Second package retained as /home/eugen/projekte/mayi-qualification/history-0.4.1-10-journald6/reproduced.deb.
+Verified ordering:0.4.1-10 <0.4.1-11~ui1 <0.4.1-11~ui2 <0.4.1-11.
+Two independent clean Debian11 builds, fresh Cargo targets/output directories, locked offline dependencies, SOURCE_DATE_EPOCH1792195200. Rust/Cargo1.95.0, GCC10.2.1, GLIBC2.31-13+deb11u14. Existing qualified TPA tool SHA2564da9418be15d2d5e212e21ff399a33519ca342522633afaed6341705765370a7; no TPA source/configuration changes.
 
-Debian 11 builder child overlay, Rust/Cargo 1.95.0, GCC 10.2.1, GLIBC 2.31; SOURCE_DATE_EPOCH=1792195200. Existing TPA executable pin 4da9418be15d2d5e212e21ff399a33519ca342522633afaed6341705765370a7. Compiler/package tool environment inherited from reviewed qualification builder and recorded in builder/environment.txt. Exact builder process argv is in builder/executor-command.json (VM storage remains in candidate5 builder directory); source6 and fresh-target build logs here.
+Byte-identical final candidate/reproduction; mandatory ABI/dependency/hardening gate PASS, observed GLIBC ceiling2.30 within2.31. Root-owned payload, no setuid/setgid, pyc or private key; exact package/version/architecture verified. Privileged executor remains byte-identical to stable. Debug tests use a freshly built current executable, not a stale prerequisite.
 
-Both artifacts SHA-256 7149d79e8aec0f8a7c119a9f8aa0f9ede00f7120cd2674c6b3754d2d8bccb51a; cmp PASS. Mandatory ABI checker runs before atomic final artifact rename in each existing build invocation. Host copy SHA equals builder first/second and installed VM-payload bytes. No rebuilding/overwriting previous journald4/5 identities. Reproducibility is within the recorded toolchain, not an independent compiler bootstrap or new source/release signature.
+ui1 package f25886d3... remains immutable/rejected; ui2 has a new full hash recorded below. No qualified old package was overwritten or stable release rebuilt. No signing/tagging/publication.
 
-Evidence: source.tar, builder/build-twice.log/.exit, package-sha256.txt, candidate.deb, reproduced.deb, abi.json, package-validation.json. Later report-only commits do not change packaged runtime/build inputs or the four installed design/schema/security/correlation documents.
-
-
-Package runtime/source commit: c511c7f948e4b811baec9e83976fec6ec5b898ba. Version: 0.4.1-10~journald6 amd64. Package and independent rebuild SHA-256: 7149d79e8aec0f8a7c119a9f8aa0f9ede00f7120cd2674c6b3754d2d8bccb51a.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.
