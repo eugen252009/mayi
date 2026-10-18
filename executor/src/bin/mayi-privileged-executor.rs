@@ -1,3 +1,6 @@
+#[path = "../audit.rs"]
+mod audit;
+use audit::Field as F;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -7,7 +10,7 @@ use std::{
     os::unix::{
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         net::{UnixDatagram, UnixListener, UnixStream},
-        process::CommandExt,
+        process::{CommandExt, ExitStatusExt},
     },
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
@@ -576,7 +579,14 @@ fn run<'a>(req: &'a ExecRequest, executable: &Path, journal: &mut Journal) -> Ex
         Ok(child) => child,
         Err(_) => return failure(req, "EXECUTION_FAILED"),
     };
-    eprintln!("event=EXECUTION_STARTED request_id={}", req.request_id);
+    audit::emit(
+        "EXECUTION_STARTED",
+        &[
+            (F::ExecutionId, req.request_id.clone()),
+            (F::ExecutorUid, unsafe { libc::geteuid() }.to_string()),
+            (F::ExecutorGid, unsafe { libc::getegid() }.to_string()),
+        ],
+    );
     let stdout_pipe = child.stdout.take().expect("piped stdout");
     let stderr_pipe = child.stderr.take().expect("piped stderr");
     let stdout = thread::spawn(move || read_capped(stdout_pipe));
@@ -588,6 +598,29 @@ fn run<'a>(req: &'a ExecRequest, executable: &Path, journal: &mut Journal) -> Ex
     let stderr = stderr
         .join()
         .unwrap_or_else(|_| Err(io::Error::other("stderr reader panicked")));
+    let mut fields = vec![(F::ExecutionId, req.request_id.clone())];
+    if let Ok(status) = &status {
+        fields.push((
+            F::State,
+            if stdout.is_err() || stderr.is_err() {
+                "EXECUTION_UNKNOWN"
+            } else if status.success() {
+                "SUCCEEDED"
+            } else {
+                "FAILED"
+            }
+            .into(),
+        ));
+        if let Some(code) = status.code() {
+            fields.push((F::ChildExitStatus, code.to_string()));
+        }
+        if let Some(signal) = status.signal() {
+            fields.push((F::ChildSignal, signal.to_string()));
+        }
+    } else {
+        fields.push((F::State, "EXECUTION_UNKNOWN".into()));
+    }
+    audit::emit("EXECUTION_FINISHED", &fields);
     match (status, stdout, stderr) {
         (Ok(status), Ok((out, out_truncated)), Ok((err, err_truncated))) => ExecResponse {
             r#type: "EXEC_RESPONSE",
@@ -605,6 +638,13 @@ fn run<'a>(req: &'a ExecRequest, executable: &Path, journal: &mut Journal) -> Ex
 }
 
 fn failure<'a>(req: &'a ExecRequest, status: &'static str) -> ExecResponse<'a> {
+    audit::emit(
+        "EXECUTION_REJECTED",
+        &[
+            (F::ExecutionId, req.request_id.clone()),
+            (F::Reason, status.into()),
+        ],
+    );
     ExecResponse {
         r#type: "EXEC_RESPONSE",
         protocol: VERSION,
@@ -701,15 +741,12 @@ fn main() -> io::Result<()> {
         let _ = remove_socket_if_same(Path::new(SOCKET), &socket_metadata, 0, BROKER_GID);
         return Err(error);
     }
-    eprintln!(
-        "event=EXECUTOR_READY broker_uid={BROKER_UID} socket={SOCKET} journal_records={}",
-        journal.seen.len()
-    );
+    audit::emit("EXECUTOR_READY", &[]);
     while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
                 if let Err(error) = handle(stream, &mut journal) {
-                    eprintln!("event=REQUEST_REJECTED kind={:?}", error.kind());
+                    audit::emit("REQUEST_REJECTED", &[(F::Reason, error.kind().to_string())]);
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -721,7 +758,7 @@ fn main() -> io::Result<()> {
     }
     drop(listener);
     remove_socket_if_same(Path::new(SOCKET), &socket_metadata, 0, BROKER_GID)?;
-    eprintln!("event=EXECUTOR_STOPPED socket={SOCKET}");
+    audit::emit("EXECUTOR_STOPPED", &[]);
     Ok(())
 }
 

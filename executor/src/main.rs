@@ -1,4 +1,5 @@
 //! mayi executor. Protocol-v5 broker holds approval state; mutation remains disabled.
+mod audit;
 mod broker;
 mod filesystem;
 mod pam_auth;

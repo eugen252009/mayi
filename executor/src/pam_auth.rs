@@ -145,7 +145,10 @@ impl Drop for SupervisorTerminalGuard {
         // run child destructors; the surviving supervisor owns this cleanup.
         if self.active {
             if let Err(error) = self.restore() {
-                eprintln!("event=PAM_TERMINAL_RESTORE_FAILED error={:?}", error.kind());
+                crate::audit::emit(
+                    "PAM_TERMINAL_RESTORE_FAILED",
+                    &[(crate::audit::Field::Reason, error.kind().to_string())],
+                );
             }
         }
     }
@@ -1113,11 +1116,12 @@ fn handle_auth_connection(
     let trusted_peer =
         peer.is_some_and(|peer| peer.uid == broker_uid && peer_is_broker_service(peer, broker_uid));
     if !trusted_peer {
-        let (pid, uid) = peer.map_or((-1, u32::MAX), |peer| (peer.pid, peer.uid));
-        let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup"))
-            .map(|value| value.trim().replace('\n', ";"))
-            .unwrap_or_else(|_| "unavailable".to_owned());
-        eprintln!("event=PAM_AUTH_PEER_REJECTED pid={pid} uid={uid} expected_uid={broker_uid} cgroup={cgroup}");
+        let mut fields = vec![(crate::audit::Field::Reason, "untrusted_broker_peer".into())];
+        if let Some(peer) = peer {
+            fields.push((crate::audit::Field::PeerPid, peer.pid.to_string()));
+            fields.push((crate::audit::Field::PeerUid, peer.uid.to_string()));
+        }
+        crate::audit::emit("PAM_AUTH_PEER_REJECTED", &fields);
     }
     let mut header = [0u8; 4];
     let terminal = receive_exact_with_fd(&mut stream, &mut header, true)?;
@@ -1157,6 +1161,30 @@ fn handle_auth_connection(
             }
         }
     }
+    if trusted_peer && fields_ok {
+        use crate::audit::Field as F;
+        let mut fields = vec![
+            (F::BrokerInstanceId, request.broker_instance_id.clone()),
+            (F::ApproverUid, request.peer_uid.to_string()),
+            (F::Operation, request.operation.clone()),
+            (
+                F::State,
+                if authenticated { "SUCCEEDED" } else { "FAILED" }.into(),
+            ),
+        ];
+        if !request.challenge_id.is_empty() {
+            fields.push((F::ChallengeId, request.challenge_id.clone()));
+            fields.push((F::RequestDigest, request.request_digest.clone()));
+        }
+        crate::audit::emit(
+            if request.account_only {
+                "PAM_ACCOUNT_CHECK_FINISHED"
+            } else {
+                "PAM_AUTHENTICATION_FINISHED"
+            },
+            &fields,
+        );
+    }
     let mut response = serde_json::json!({
         "ok": trusted_peer && fields_ok,
         "response_to": "PAM_AUTHENTICATE",
@@ -1191,7 +1219,10 @@ pub fn serve(socket: std::path::PathBuf, broker_uid: u32, socket_gid: u32) -> io
         match listener.accept() {
             Ok((stream, _)) => {
                 if let Err(error) = handle_auth_connection(stream, broker_uid, &mut attempts) {
-                    eprintln!("event=PAM_AUTH_REQUEST_REJECTED error={}", error.kind());
+                    crate::audit::emit(
+                        "PAM_AUTH_REQUEST_REJECTED",
+                        &[(crate::audit::Field::Reason, error.kind().to_string())],
+                    );
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {

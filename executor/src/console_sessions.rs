@@ -110,15 +110,27 @@ impl Sessions {
     pub fn prune(&mut self, now: Instant) {
         self.0.retain(|key, s| {
             let keep = !s.deadline.expired(now) && alive(&s.process) && terminal_live(&s.terminal);
-            if !keep { eprintln!("event=CONSOLE_SESSION_INVALIDATED peer_uid={} peer_pid={} reason=expiry_or_disconnect", key.uid, key.pid); }
+            if !keep {
+                crate::audit::emit(
+                    "CONSOLE_SESSION_INVALIDATED",
+                    &[
+                        (crate::audit::Field::PeerUid, key.uid.to_string()),
+                        (crate::audit::Field::PeerPid, key.pid.to_string()),
+                        (crate::audit::Field::Reason, "expiry_or_disconnect".into()),
+                    ],
+                );
+            }
             keep
         });
     }
     pub fn revoke(&mut self, key: Key) {
         if self.0.remove(&key).is_some() {
-            eprintln!(
-                "event=CONSOLE_SESSION_REVOKED peer_uid={} peer_pid={}",
-                key.uid, key.pid
+            crate::audit::emit(
+                "CONSOLE_SESSION_REVOKED",
+                &[
+                    (crate::audit::Field::PeerUid, key.uid.to_string()),
+                    (crate::audit::Field::PeerPid, key.pid.to_string()),
+                ],
             );
         }
     }
@@ -149,9 +161,12 @@ impl Sessions {
                 process,
             },
         );
-        eprintln!(
-            "event=CONSOLE_SESSION_AUTHENTICATED peer_uid={} peer_pid={} idle_seconds=300",
-            key.uid, key.pid
+        crate::audit::emit(
+            "CONSOLE_SESSION_AUTHENTICATED",
+            &[
+                (crate::audit::Field::PeerUid, key.uid.to_string()),
+                (crate::audit::Field::PeerPid, key.pid.to_string()),
+            ],
         );
         Ok(token)
     }

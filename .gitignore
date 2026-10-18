@@ -26,3 +26,4 @@ test-results/
 # Local development packages, rollback artifacts and disposable build VM
 dist/
 local-install/
+journald-evidence/

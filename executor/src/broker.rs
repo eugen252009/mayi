@@ -198,12 +198,14 @@ fn role_authorization(peer: PeerCredentials, role_gid: u32, approver: bool) -> R
             peer.uid
         ))),
         Err(error) => {
-            eprintln!(
-                "event=ROLE_LOOKUP_FAILED role={role} peer_pid={} peer_uid={} peer_gid={} error={}",
-                peer.pid,
-                peer.uid,
-                peer.gid,
-                safe(&error.to_string())
+            crate::audit::emit(
+                "ROLE_LOOKUP_FAILED",
+                &[
+                    (crate::audit::Field::Role, role.into()),
+                    (crate::audit::Field::PeerPid, peer.pid.to_string()),
+                    (crate::audit::Field::PeerUid, peer.uid.to_string()),
+                    (crate::audit::Field::Reason, error.kind().to_string()),
+                ],
             );
             Err(response_error(
                 "INTERNAL_ERROR",
@@ -379,6 +381,75 @@ struct Request {
     mayi_result: Option<i32>,
     blocking_dependency: Option<String>,
 }
+fn request_audit_fields(r: &Request) -> Vec<(crate::audit::Field, String)> {
+    use crate::audit::Field as F;
+    let mut fields = vec![
+        (F::BrokerInstanceId, r.instance.clone()),
+        (F::ChallengeId, r.challenge.clone()),
+        (F::RequestDigest, r.digest.clone()),
+        (F::RequesterUid, r.requester.to_string()),
+        (F::TargetUid, r.target_uid.to_string()),
+        (F::TargetGid, r.target_gid.to_string()),
+    ];
+    if let Some(id) = &r.request_id {
+        fields.push((F::RequestId, id.clone()));
+    }
+    if let Some(uid) = r.approver_uid {
+        fields.push((F::ApproverUid, uid.to_string()));
+    }
+    if let Some(op) = r.ops.first().and_then(|op| op["type"].as_str()) {
+        fields.push((F::Operation, op.into()));
+    }
+    let state = r
+        .queue_state
+        .map(QueueState::label)
+        .unwrap_or(match r.state {
+            State::Proposed => "PROPOSED",
+            State::Pending => "PENDING_APPROVAL",
+            State::Approved => "APPROVED",
+            State::Denied => "DENIED",
+            State::Explained => "EXPLAINED",
+            State::Expired => "EXPIRED",
+            State::Consumed => "CONSUMED",
+        });
+    fields.push((F::State, state.into()));
+    fields
+}
+fn audit_request(r: &Request, event: &'static str, extra: &[(crate::audit::Field, String)]) {
+    let mut fields = request_audit_fields(r);
+    for (key, value) in extra {
+        if let Some(field) = fields.iter_mut().find(|f| f.0 == *key) {
+            field.1 = value.clone();
+        } else {
+            fields.push((*key, value.clone()));
+        }
+    }
+    crate::audit::emit(event, &fields);
+}
+fn audit_view(
+    pending: &HashMap<String, Request>,
+    v: &ApprovalView,
+    token: &str,
+    event: &'static str,
+) {
+    use crate::audit::Field as F;
+    let extra = vec![
+        (F::ViewIdHash, token_ref(token)),
+        (F::ApproverUid, v.approver_uid.to_string()),
+        (F::ViewExpiresAt, v.expires.to_string()),
+    ];
+    if let Some(request) = pending.get(&v.challenge) {
+        audit_request(request, event, &extra);
+    } else {
+        let mut fields = vec![
+            (F::BrokerInstanceId, v.instance.clone()),
+            (F::ChallengeId, v.challenge.clone()),
+            (F::RequestDigest, v.digest.clone()),
+        ];
+        fields.extend(extra);
+        crate::audit::emit(event, &fields);
+    }
+}
 // Called under the broker mutex. The final monotonic sample at each selected
 // request transition is the authorization linearization point, NOT a promise
 // that IPC, process creation, or effects occur before the deadline.
@@ -392,7 +463,7 @@ fn expire_request_at(r: &mut Request, now: Instant) -> bool {
             r.queue_state = Some(QueueState::Expired);
             r.mayi_result = Some(11);
         }
-        eprintln!("event=EXPIRED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={}",r.instance,r.challenge,r.digest,r.requester,r.target_uid,r.target_gid);
+        audit_request(r, "EXPIRED", &[]);
     }
     r.state == State::Expired
 }
@@ -693,7 +764,7 @@ impl Broker {
                     r.queue_state = Some(QueueState::Expired);
                     r.mayi_result = Some(11);
                 }
-                eprintln!("event=EXPIRED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={}",r.instance,r.challenge,r.digest,r.requester,r.target_uid,r.target_gid);
+                audit_request(r, "EXPIRED", &[]);
             }
         }
         let pending = &self.pending;
@@ -705,7 +776,7 @@ impl Broker {
                         .is_none_or(|r| r.state != State::Pending))
             {
                 let _ = transition_view(&mut v.state, ViewState::Expired);
-                eprintln!("event=VIEW_EXPIRED broker_instance_id={} challenge_id={} request_digest={} view_id_hash={} approver_uid={}",v.instance,v.challenge,v.digest,token_ref(id),v.approver_uid);
+                audit_view(pending, v, id, "VIEW_EXPIRED");
             }
         }
     }
@@ -898,19 +969,10 @@ impl Broker {
         if transition(&mut req.state, State::Pending).is_err() {
             return response_error("INVALID_STATE_TRANSITION", "proposal transition failed");
         }
-        let path = ops[0]
-            .get("path")
-            .or_else(|| ops[0].get("executable"))
-            .or_else(|| ops[0].get("source"))
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let mut ph = Sha256::new();
-        ph.update(path.as_bytes());
-        let path_id = hex::encode(ph.finalize());
-        eprintln!("event=PROPOSED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={} operation={} path_id={} proposal_time={}",self.instance,challenge,digest,peer,uid,gid,ty,path_id,now());
+        audit_request(&req, "PROPOSED", &[]);
         self.pending.insert(challenge.clone(), req);
         if let Some(request_id) = request_id {
-            eprintln!("event=QUEUE_SUBMITTED request_id={} broker_instance_id={} challenge_id={} requester_uid={} dependencies={:?}", request_id, self.instance, challenge, peer, dependencies);
+            audit_request(&self.pending[&challenge], "QUEUE_SUBMITTED", &[]);
             json!({"ok":true,"protocol":VERSION,"type":"QUEUE_RESPONSE","request_id":request_id,"broker_instance_id":self.instance,"challenge_id":challenge,"request_digest":digest,"status":"PENDING_APPROVAL","expires_at":expires})
         } else {
             json!({"ok":true,"protocol":VERSION,"type":"PROPOSE_RESPONSE","broker_instance_id":self.instance,"challenge_id":challenge,"request_digest":digest,"status":"PENDING_APPROVAL","expires_at":expires})
@@ -1186,7 +1248,7 @@ impl Broker {
                     .collect();
                 for old in stale {
                     if let Some(v) = self.views.remove(&old) {
-                        eprintln!("event=VIEW_REPLACED broker_instance_id={} challenge_id={} request_digest={} view_id_hash={} approver_uid={}",v.instance,v.challenge,v.digest,token_ref(&old),v.approver_uid)
+                        audit_view(&self.pending, &v, &old, "VIEW_REPLACED");
                     }
                 }
                 let view = ApprovalView {
@@ -1198,7 +1260,7 @@ impl Broker {
                     expires: view_expires,
                     state: ViewState::Displayed,
                 };
-                eprintln!("event=VIEW_CREATED broker_instance_id={} challenge_id={} request_digest={} view_id_hash={} approver_uid={} expires_at={}",view.instance,view.challenge,view.digest,token_ref(&view_id),peer,view.expires);
+                audit_view(&self.pending, &view, &view_id, "VIEW_CREATED");
                 self.views.insert(view_id.clone(), view);
                 json!({"ok":true,"protocol":VERSION,"type":"CHALLENGE_VIEW","status":"DISPLAYED","broker_instance_id":self.instance,"challenge_id":id,"request_digest":snapshot.digest,"view_id":view_id,"view_expires_at":view_expires,"state":"PENDING_APPROVAL","rendered":rendered})
             }
@@ -1323,7 +1385,14 @@ impl Broker {
                     "DENY_CHALLENGE" => "VIEW_DENIED",
                     _ => "VIEW_EXPLAINED",
                 };
-                eprintln!("event={} broker_instance_id={} challenge_id={} request_digest={} view_id_hash={} requester_uid={} target_uid={} target_gid={} approver_uid={}",event,req.instance,req.challenge,req.digest,token_ref(view_id),req.requester,req.target_uid,req.target_gid,peer);
+                audit_request(
+                    req,
+                    event,
+                    &[
+                        (crate::audit::Field::ViewIdHash, token_ref(view_id)),
+                        (crate::audit::Field::ApproverUid, peer.to_string()),
+                    ],
+                );
                 let status = match ty {
                     "APPROVE_CHALLENGE" => "APPROVED",
                     "DENY_CHALLENGE" => "DENIED",
@@ -1409,10 +1478,7 @@ impl Broker {
                         "consume transition rejected",
                     );
                 }
-                eprintln!(
-                    "event=CONSUMED broker_instance_id={} challenge_id={} request_digest={} requester_uid={} target_uid={} target_gid={}",
-                    r.instance, r.challenge, r.digest, r.requester, r.target_uid, r.target_gid
-                );
+                audit_request(r, "CONSUMED", &[]);
                 json!({"ok":true,"protocol":VERSION,"status":"CONSUMED","state":"CONSUMED","execution":"EXECUTION_PENDING","broker_instance_id":r.instance,"challenge_id":r.challenge,"request_digest":r.digest})
             }
             State::Consumed => response_error("ALREADY_CONSUMED", "approval already consumed"),
@@ -2937,14 +3003,25 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                 request.blocking_dependency = Some(dependency.clone());
                 request.mayi_result = Some(14);
                 request.state = State::Consumed;
-                eprintln!(
-                    "event=QUEUE_BLOCKED request_id={} requester_uid={} dependency={}",
-                    id, request.requester, dependency
+                audit_request(
+                    request,
+                    "QUEUE_BLOCKED",
+                    &[
+                        (crate::audit::Field::Result, "14".into()),
+                        (
+                            crate::audit::Field::Reason,
+                            "dependency unsuccessful".into(),
+                        ),
+                    ],
                 );
             } else if all_succeeded {
                 if request.queue_state != Some(QueueState::Running) {
                     request.queue_state = Some(QueueState::Running);
-                    eprintln!("event=QUEUE_EXECUTION_STARTED request_id={} requester_uid={} approver_uid={:?} dependencies={:?}", id, request.requester, request.approver_uid, request.dependencies);
+                    audit_request(
+                        request,
+                        "QUEUE_DISPATCH_STARTED",
+                        &[(crate::audit::Field::ExecutionId, id[3..].into())],
+                    );
                     if let Some(operation) = request.ops.first().cloned() {
                         ready.push((id, request.requester, request.approver_uid, operation));
                     } else {
@@ -2958,31 +3035,52 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
             }
         }
     }
-    for (request_id, requester, approver, operation) in ready {
+    for (request_id, _requester, _approver, operation) in ready {
         let worker_broker = broker.clone();
         let worker_request_id = request_id.clone();
-        let spawn = std::thread::Builder::new().name("mayi-queued-exec".into()).spawn(move || {
-            let outcome = call_privileged_executor(&worker_request_id, &operation);
-            let execution = outcome["execution"].as_str().unwrap_or("UNKNOWN");
-            let child = outcome["exit_code"].as_i64().and_then(|x| i32::try_from(x).ok());
-            if let Ok(mut state) = worker_broker.lock() {
-                if let Some(request) = state.pending.values_mut().find(|r| r.request_id.as_deref() == Some(worker_request_id.as_str())) {
-                    if request.queue_state == Some(QueueState::Running) {
-                        let (queue_state, code) = match execution {
-                            "SUCCEEDED" => (QueueState::Succeeded, 0),
-                            "FAILED" => (QueueState::Failed, 14),
-                            "INTERNAL_ERROR" | "EXECUTION_DISABLED" => (QueueState::Failed, 15),
-                            _ => (QueueState::ExecutionUnknown, 16),
-                        };
-                        request.queue_state = Some(queue_state);
-                        request.mayi_result = Some(code);
-                        request.child_exit_status = child;
-                        request.state = State::Consumed;
-                        eprintln!("event=QUEUE_EXECUTION_FINISHED request_id={} requester_uid={} approver_uid={:?} state={} mayi_result={} child_exit_status={:?}", worker_request_id, requester, approver, queue_state.label(), code, child);
+        let spawn = std::thread::Builder::new()
+            .name("mayi-queued-exec".into())
+            .spawn(move || {
+                let outcome = call_privileged_executor(&worker_request_id, &operation);
+                let execution = outcome["execution"].as_str().unwrap_or("UNKNOWN");
+                let child = outcome["exit_code"]
+                    .as_i64()
+                    .and_then(|x| i32::try_from(x).ok());
+                if let Ok(mut state) = worker_broker.lock() {
+                    if let Some(request) = state
+                        .pending
+                        .values_mut()
+                        .find(|r| r.request_id.as_deref() == Some(worker_request_id.as_str()))
+                    {
+                        if request.queue_state == Some(QueueState::Running) {
+                            let (queue_state, code) = match execution {
+                                "SUCCEEDED" => (QueueState::Succeeded, 0),
+                                "FAILED" => (QueueState::Failed, 14),
+                                "INTERNAL_ERROR" | "EXECUTION_DISABLED" => (QueueState::Failed, 15),
+                                _ => (QueueState::ExecutionUnknown, 16),
+                            };
+                            request.queue_state = Some(queue_state);
+                            request.mayi_result = Some(code);
+                            request.child_exit_status = child;
+                            request.state = State::Consumed;
+                            let mut fields = vec![
+                                (crate::audit::Field::Result, code.to_string()),
+                                (
+                                    crate::audit::Field::ExecutionId,
+                                    worker_request_id[3..].into(),
+                                ),
+                            ];
+                            if let Some(child) = child {
+                                fields.push((
+                                    crate::audit::Field::ChildExitStatus,
+                                    child.to_string(),
+                                ));
+                            }
+                            audit_request(request, "QUEUE_EXECUTION_FINISHED", &fields);
+                        }
                     }
                 }
-            }
-        });
+            });
         if spawn.is_err() {
             if let Ok(mut state) = broker.lock() {
                 if let Some(request) = state
@@ -2993,6 +3091,14 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                     request.queue_state = Some(QueueState::ExecutionUnknown);
                     request.mayi_result = Some(16);
                     request.state = State::Consumed;
+                    audit_request(
+                        request,
+                        "QUEUE_DISPATCH_FAILED",
+                        &[
+                            (crate::audit::Field::Result, "16".into()),
+                            (crate::audit::Field::Reason, "worker_spawn_failed".into()),
+                        ],
+                    );
                 }
             }
         }
@@ -3236,16 +3342,45 @@ fn handle_with_auth(
             Ok(()) => state.propose(&v, peer),
         },
     };
+    if r["ok"] == false {
+        use crate::audit::Field as F;
+        let mut extra = vec![(
+            F::Reason,
+            r["code"].as_str().unwrap_or("INTERNAL_ERROR").into(),
+        )];
+        if let Some(peer) = peer_credentials_snapshot {
+            extra.push((F::PeerUid, peer.uid.to_string()));
+            extra.push((F::PeerPid, peer.pid.to_string()));
+        }
+        if let Some(request) = v["challenge_id"]
+            .as_str()
+            .and_then(|id| state.pending.get(id))
+            .filter(|req| v["request_digest"] == req.digest)
+        {
+            audit_request(request, "REQUEST_REJECTED", &extra);
+        } else {
+            crate::audit::emit("REQUEST_REJECTED", &extra);
+        }
+    }
     /*AUTH DISPATCH*/
     let execution = if !approval && message_type == "CONSUME_APPROVED" && r["status"] == "CONSUMED"
     {
         v.get("challenge_id")
             .and_then(Value::as_str)
             .and_then(|id| state.pending.get(id))
-            .and_then(|request| request.ops.first())
-            .filter(|operation| operation["type"] == "exec")
-            .cloned()
-            .map(|operation| (v["challenge_id"].as_str().unwrap().to_owned(), operation))
+            .and_then(|request| {
+                request
+                    .ops
+                    .first()
+                    .filter(|op| op["type"] == "exec")
+                    .map(|op| {
+                        (
+                            request.challenge.clone(),
+                            op.clone(),
+                            request_audit_fields(request),
+                        )
+                    })
+            })
     } else {
         None
     };
@@ -3267,8 +3402,29 @@ fn handle_with_auth(
         }
     }
     drop(state);
-    if let Some((challenge, operation)) = execution {
+    if let Some((challenge, operation, mut fields)) = execution {
+        use crate::audit::Field as F;
+        fields.push((F::ExecutionId, challenge[..32].into()));
+        crate::audit::emit("EXECUTION_DISPATCH_STARTED", &fields);
         let outcome = call_privileged_executor(&challenge, &operation);
+        fields.retain(|(key, _)| *key != F::State);
+        if let Some(value) = outcome["execution"].as_str() {
+            fields.push((F::State, value.into()));
+        }
+        if let Some(value) = outcome["exit_code"].as_i64() {
+            fields.push((F::ChildExitStatus, value.to_string()));
+        }
+        fields.push((
+            F::Result,
+            match outcome["execution"].as_str() {
+                Some("SUCCEEDED") => 0,
+                Some("FAILED") => 14,
+                Some("INTERNAL_ERROR") => 15,
+                _ => 16,
+            }
+            .to_string(),
+        ));
+        crate::audit::emit("EXECUTION_FINISHED", &fields);
         if let Some(response) = r.as_object_mut() {
             for (key, value) in outcome.as_object().into_iter().flat_map(|map| map.iter()) {
                 response.insert(key.clone(), value.clone());
@@ -3320,20 +3476,27 @@ fn dispatch(
         .name(format!("mayi-{role}"))
         .spawn(move || {
             if let Err(e) = handle(stream, &broker, approval, request_gid, approval_gid) {
-                eprintln!(
-                    "event=CONNECTION_ERROR role={} error={}",
-                    role,
-                    safe(&e.to_string())
-                )
+                crate::audit::emit(
+                    "CONNECTION_ERROR",
+                    &[
+                        (crate::audit::Field::Role, role.into()),
+                        (crate::audit::Field::Reason, e.kind().to_string()),
+                    ],
+                );
             }
             worker_active.fetch_sub(1, Ordering::Release);
         })
     {
         active.fetch_sub(1, Ordering::Release);
-        eprintln!(
-            "event=CONNECTION_REJECTED role={} reason=worker_spawn_failed error={}",
-            role,
-            safe(&e.to_string())
+        crate::audit::emit(
+            "CONNECTION_REJECTED",
+            &[
+                (crate::audit::Field::Role, role.into()),
+                (
+                    crate::audit::Field::Reason,
+                    format!("worker_spawn_failed: {}", e.kind()),
+                ),
+            ],
         );
     }
 }
@@ -3446,6 +3609,9 @@ pub fn serve(
 #[path = "broker_deadline_tests.rs"]
 mod deadline_regressions;
 
+#[cfg(test)]
+#[path = "broker_audit_tests.rs"]
+mod audit_regressions;
 #[cfg(test)]
 #[path = "broker_security_tests.rs"]
 mod security_regressions;

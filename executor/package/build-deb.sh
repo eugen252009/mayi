@@ -4,15 +4,15 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TPA_BIN=${TPA_BIN:-tpa}
 OUT=${1:-"$ROOT/executor/target/debian"}
 mkdir -p "$OUT"
-ARTIFACT="$OUT/mayi_0.4.1-9_amd64.deb"
+ARTIFACT="$OUT/mayi_0.4.1-10~journald1_amd64.deb"
 if [ -e "$ARTIFACT" ] || [ -L "$ARTIFACT" ]; then
-  echo "refusing to overwrite existing package identity 0.4.1-9: $ARTIFACT" >&2
+  echo "refusing to overwrite existing package identity 0.4.1-10~journald1: $ARTIFACT" >&2
   exit 1
 fi
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1792195200}
 export SOURCE_DATE_EPOCH
 NATIVE_TARGET=$(mktemp -d "$OUT/.mayi-native-target.XXXXXX")
-TEMP_ARTIFACT=$(mktemp "$OUT/.mayi_0.4.1-9_amd64.XXXXXX.deb")
+TEMP_ARTIFACT=$(mktemp "$OUT/.mayi_0.4.1-10~journald1_amd64.XXXXXX.deb")
 cleanup() {
   rm -rf -- "$NATIVE_TARGET"
   rm -f -- "$TEMP_ARTIFACT"

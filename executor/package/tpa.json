@@ -1,7 +1,7 @@
 {
   "control": {
     "name": "mayi",
-    "version": "0.4.1-9",
+    "version": "0.4.1-10~journald1",
     "architecture": "amd64",
     "maintainer": "Eugen Lupricht <mayi@lupricht.net>",
     "description": "Human-approved exact-command privilege broker",
