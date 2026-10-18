@@ -177,6 +177,16 @@ fn send(socket: &UnixDatagram, endpoint: &std::path::Path, record: &[u8]) -> io:
     }
     Ok(())
 }
+pub(crate) fn execution_event(queued: bool, outcome: &str) -> &'static str {
+    match (queued, outcome) {
+        (true, "SUCCEEDED" | "FAILED") => "QUEUE_EXECUTION_FINISHED",
+        (false, "SUCCEEDED" | "FAILED") => "EXECUTION_FINISHED",
+        (true, "INTERNAL_ERROR" | "EXECUTION_DISABLED") => "QUEUE_DISPATCH_FAILED",
+        (false, "INTERNAL_ERROR" | "EXECUTION_DISABLED") => "EXECUTION_DISPATCH_FAILED",
+        (true, _) => "QUEUE_EXECUTION_OUTCOME_UNKNOWN",
+        (false, _) => "EXECUTION_OUTCOME_UNKNOWN",
+    }
+}
 pub(crate) fn emit(event: &'static str, fields: &[(Field, String)]) {
     // Errors never influence authorization. No stderr fallback: a full stderr
     // pipe must not stall a critical transition, and duplicate audit records
@@ -195,6 +205,18 @@ pub(crate) fn emit(event: &'static str, fields: &[(Field, String)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unknown_outcome_is_never_labeled_completion() {
+        for queued in [false, true] {
+            for outcome in ["UNKNOWN", "EXECUTION_UNKNOWN", "malformed"] {
+                assert!(execution_event(queued, outcome).ends_with("OUTCOME_UNKNOWN"));
+            }
+            assert!(execution_event(queued, "INTERNAL_ERROR").ends_with("DISPATCH_FAILED"));
+            assert!(execution_event(queued, "SUCCEEDED").ends_with("FINISHED"));
+        }
+        assert!(encode("FAILED", &[(Field::ChildExitStatus, "Some(0)".into())]).is_err());
+        assert!(encode("FAILED", &[(Field::RequestId, "forged".into())]).is_err());
+    }
     #[test]
     fn native_fields_are_separate_and_optional_values_are_absent() {
         let bytes = encode(

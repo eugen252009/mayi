@@ -620,7 +620,12 @@ fn run<'a>(req: &'a ExecRequest, executable: &Path, journal: &mut Journal) -> Ex
     } else {
         fields.push((F::State, "EXECUTION_UNKNOWN".into()));
     }
-    audit::emit("EXECUTION_FINISHED", &fields);
+    let state = fields
+        .iter()
+        .find(|(key, _)| *key == F::State)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("UNKNOWN");
+    audit::emit(audit::execution_event(false, state), &fields);
     match (status, stdout, stderr) {
         (Ok(status), Ok((out, out_truncated)), Ok((err, err_truncated))) => ExecResponse {
             r#type: "EXEC_RESPONSE",

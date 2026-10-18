@@ -3076,7 +3076,11 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                                     child.to_string(),
                                 ));
                             }
-                            audit_request(request, "QUEUE_EXECUTION_FINISHED", &fields);
+                            audit_request(
+                                request,
+                                crate::audit::execution_event(true, execution),
+                                &fields,
+                            );
                         }
                     }
                 }
@@ -3424,7 +3428,13 @@ fn handle_with_auth(
             }
             .to_string(),
         ));
-        crate::audit::emit("EXECUTION_FINISHED", &fields);
+        crate::audit::emit(
+            crate::audit::execution_event(
+                false,
+                outcome["execution"].as_str().unwrap_or("UNKNOWN"),
+            ),
+            &fields,
+        );
         if let Some(response) = r.as_object_mut() {
             for (key, value) in outcome.as_object().into_iter().flat_map(|map| map.iter()) {
                 response.insert(key.clone(), value.clone());
