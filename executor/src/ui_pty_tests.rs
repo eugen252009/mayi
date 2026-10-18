@@ -2,6 +2,9 @@
 use super::*;
 
 fn run_input(bytes: &[u8], expected: Option<&[u8]>, events: &[u8]) {
+    run_input_signal(bytes, expected, events, None)
+}
+fn run_input_signal(bytes: &[u8], expected: Option<&[u8]>, events: &[u8], signal: Option<i32>) {
     let (mut master, mut slave) = (-1, -1);
     assert_eq!(
         unsafe {
@@ -20,6 +23,7 @@ fn run_input(bytes: &[u8], expected: Option<&[u8]>, events: &[u8]) {
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0);
     if pid == 0 {
+        super::super::install_broker_shutdown_handlers();
         unsafe {
             libc::close(master);
             libc::dup2(slave, 0);
@@ -54,10 +58,14 @@ fn run_input(bytes: &[u8], expected: Option<&[u8]>, events: &[u8]) {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(
-        unsafe { libc::write(master, bytes.as_ptr().cast(), bytes.len()) },
-        bytes.len() as isize
-    );
+    if let Some(signal) = signal {
+        assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
+    } else {
+        assert_eq!(
+            unsafe { libc::write(master, bytes.as_ptr().cast(), bytes.len()) },
+            bytes.len() as isize
+        );
+    }
     let mut status = 0;
     assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
     assert_eq!(status, 0);
@@ -83,4 +91,6 @@ fn navigation_is_not_approval_and_modes_restore() {
     run_input(b"a\na\n", None, b"");
     // Invalid bytes are never treated as navigation or implicit approval.
     run_input(b"\xff\n", Some(b"\xff"), b"");
+    run_input_signal(b"", None, b"", Some(libc::SIGTERM));
+    run_input_signal(b"", None, b"", Some(libc::SIGINT));
 }

@@ -1,6 +1,0 @@
-....................sssssssss........................................... [ 93%]
-.....                                                                    [100%]
-=========================== short test summary info ============================
-SKIPPED [6] tests/test_console_pty.py: PAM-authenticated approval console is exercised by disposable package qualification
-SKIPPED [3] tests/test_console_pty.py:192: PAM-authenticated approval console is exercised by disposable package qualification
-68 passed, 9 skipped in 7.73s

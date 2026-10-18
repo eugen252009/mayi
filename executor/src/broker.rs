@@ -1957,6 +1957,12 @@ impl Drop for TerminalMode {
     }
 }
 fn poll_input(fd: i32, timeout_ms: i32) -> io::Result<bool> {
+    if super::broker_shutdown_requested() {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "console canceled",
+        ));
+    }
     let mut pfd = libc::pollfd {
         fd,
         events: libc::POLLIN,
@@ -1966,7 +1972,7 @@ fn poll_input(fd: i32, timeout_ms: i32) -> io::Result<bool> {
         let result = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
         if result < 0 {
             let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::Interrupted {
+            if error.kind() == io::ErrorKind::Interrupted && !super::broker_shutdown_requested() {
                 continue;
             }
             return Err(error);
@@ -2613,6 +2619,15 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
             io::ErrorKind::PermissionDenied,
             "approval console requires an unprivileged interactive terminal",
         ));
+    }
+    super::install_broker_shutdown_handlers();
+    unsafe {
+        for signal in [libc::SIGHUP, libc::SIGQUIT] {
+            libc::signal(
+                signal,
+                super::request_broker_shutdown as *const () as libc::sighandler_t,
+            );
+        }
     }
     let session = console_auth::Console::authenticate(&path, broker_uid)?;
     let mut idle_announced = false;
