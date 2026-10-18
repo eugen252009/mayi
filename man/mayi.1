@@ -198,11 +198,11 @@ is independently determined by its failure budget.
 .SH SECURITY MODEL
 The broker owns the immutable request, approval state, and one-shot lifecycle. The console renderer is presentation only; it is not parsed or used as execution input. The broker independently checks peer UIDs and NSS requester/approver roles with
 .BR SO_PEERCRED .
-Before connecting to the broker or displaying requests,
+Before displaying requests,
 .B mayi-approve
 checks the actual calling UID's approver-group membership and authenticates that same Unix account through PAM service
 .BR mayi-approve .
-PAM requires a controlling interactive terminal; the password is read from the terminal with echo disabled. It is not accepted through argv, environment variables, or piped stdin. Successful authentication lasts only for that console process.
+PAM requires a controlling interactive terminal; the password is read from the terminal with echo disabled. It is not accepted through argv, environment variables, or piped stdin. The broker binds authentication to that console process and terminal. Successful decisions reset a five-minute idle window; viewing requests does not. Exiting the console or restarting the broker invalidates authentication.
 .PP
 Each approval is one-shot and bound to broker-owned request/view state and the actual approver UID. The executor accepts only the configured broker UID, independently validates executable/argv, clears the environment, and executes directly without shell mediation. The executor runs approved commands as UID 0 / primary GID 23012. Requester or approver access to an executor socket is not an authorization path.
 .PP
@@ -216,7 +216,7 @@ The filesystem executor remains disconnected and incomplete; it is not productio
 .B mayi-approve
 accepts no command-line options. It checks the caller's NSS-backed approver-group membership, then authenticates the same Unix account using the host PAM policy configured by
 .IR /etc/pam.d/mayi-approve .
-Only after successful PAM authentication does it connect to the broker or display requests. Authentication failure, PAM/account denial, or a missing/unusable controlling terminal fails closed. Multiple decisions in one live process reuse the successful authentication; exiting or restarting the console requires authenticating again. The broker's peer-UID, approver-group, request-view, and one-shot decision checks remain independent.
+Authentication is performed through the broker and its PAM helper before the console displays requests. After five minutes without a successful decision the console locks and exits; run mayi-approve again to authenticate. Approve, deny, and follow-up decisions reset the window only after a successful broker transition. Requests still require explicit decisions. Each cached decision rechecks NSS role membership and PAM account policy without password prompts. Password authentication itself is not repeated inside the window; an unattended unlocked console can be used by someone with access to it. Legacy protocol clients without console sessions still authenticate each decision. Request/view expiration and one-shot checks remain independent.
 .SH FILES
 .TP
 .I /run/mayi/request/broker.sock

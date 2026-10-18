@@ -1,5 +1,7 @@
 # Change summary
 
+> **Later development update:** 0.4.1-9~ui3 adds broker-enforced five-minute sliding authentication sessions; see [AUTHENTICATION_SESSIONS.md](AUTHENTICATION_SESSIONS.md). The ui1 results below are historical and do not qualify this authorization-policy change. ui3 is not packaged or installed; its local tests pass, while installed security qualification remains pending.
+
 Development version: **0.4.1-9~ui1**, branch ui/0.4.1-9-dev in /home/eugen/projekte/mayi-ui-development, based on 5b8f62ba5d2e41d1998aea286674b8285fa44f54. Debian package metadata advances with a prerelease suffix; historical Rust/Python internal versions remain 0.1.0 per existing convention.
 
 Changed: executor/package/tpa.json; executor/src/broker.rs; renderer security regression; mayi/cli.py.

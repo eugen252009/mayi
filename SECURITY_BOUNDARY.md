@@ -1,5 +1,7 @@
 # Mayi security boundary — published baseline 0.4.1 / candidate 0.4.1-5
 
+> **Development 0.4.1-9~ui3:** explicit, broker-enforced five-minute sliding console authentication sessions are now implemented. Successful decisions renew the window; reads do not. This supersedes per-decision password claims below for the new console only. Legacy clients still use per-decision PAM. See [AUTHENTICATION_SESSIONS.md](AUTHENTICATION_SESSIONS.md) for protocol, threat-model changes and test limits. Not packaged, deployed or production-qualified.
+
 ## Guarantees in the published package
 
 - **Broker-owned request state:** the broker validates and stores the exact resolved executable path and argv. Requester-supplied approval fields, rendered text, environment, cwd, and file descriptors are not execution authority/input.

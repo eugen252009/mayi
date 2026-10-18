@@ -1,5 +1,7 @@
 # Mayi Protocol 5 — approval, status, and one-shot execution
 
+> **Development 0.4.1-9~ui3:** explicit, broker-enforced five-minute sliding console authentication sessions are now implemented. Successful decisions renew the window; reads do not. This supersedes per-decision password claims below for the new console only. Legacy clients still use per-decision PAM. See [AUTHENTICATION_SESSIONS.md](AUTHENTICATION_SESSIONS.md) for protocol, threat-model changes and test limits. Not packaged, deployed or production-qualified.
+
 ## Security semantics
 
 Protocol 5 separates request proposals from approval-authority messages. Client-supplied `approval`, `scope`, `decision`, `consumed`, or digest fields do not authorize anything. The request socket rejects fields outside exact schemas. The requester cannot choose challenge IDs, broker identity, or expiry, nor change a stored request during consume.

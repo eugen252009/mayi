@@ -583,6 +583,17 @@ fn username_for_uid(uid: libc::uid_t) -> io::Result<CString> {
 }
 
 fn authenticate_uid(uid: libc::uid_t, tty_fd: RawFd) -> io::Result<bool> {
+    authenticate_uid_mode(uid, tty_fd, false)
+}
+unsafe extern "C" fn no_account_prompts(
+    _: libc::c_int,
+    _: *mut *const PamMessage,
+    _: *mut *mut PamResponse,
+    _: *mut libc::c_void,
+) -> libc::c_int {
+    PAM_CONV_ERR
+}
+fn authenticate_uid_mode(uid: libc::uid_t, tty_fd: RawFd, account_only: bool) -> io::Result<bool> {
     let _pam_guard = PAM_AUTH_LOCK
         .lock()
         .map_err(|_| io::Error::other("PAM authentication lock poisoned"))?;
@@ -613,7 +624,11 @@ fn authenticate_uid(uid: libc::uid_t, tty_fd: RawFd) -> io::Result<bool> {
         deadline: Instant::now() + AUTHENTICATION_TIMEOUT,
     };
     let conversation = PamConversation {
-        conv: Some(self::conversation),
+        conv: Some(if account_only {
+            no_account_prompts
+        } else {
+            self::conversation
+        }),
         appdata_ptr: (&context as *const ConversationContext).cast_mut().cast(),
     };
     let mut handle = ptr::null_mut();
@@ -634,7 +649,7 @@ fn authenticate_uid(uid: libc::uid_t, tty_fd: RawFd) -> io::Result<bool> {
             )
         };
     }
-    if status == PAM_SUCCESS {
+    if status == PAM_SUCCESS && !account_only {
         status = unsafe { pam_authenticate(handle, 0) };
     }
     if status == PAM_SUCCESS {
@@ -806,9 +821,68 @@ struct AuthRequest {
     peer_uid: u32,
     operation: String,
     broker_instance_id: String,
+    #[serde(default)]
     challenge_id: String,
+    #[serde(default)]
     request_digest: String,
+    #[serde(default)]
     view_id: String,
+    #[serde(default)]
+    authentication_id: Option<String>,
+    #[serde(default)]
+    account_only: bool,
+}
+
+fn auth_fields_valid(request: &AuthRequest) -> bool {
+    let binding_ok = if request.operation == "AUTHENTICATE_CONSOLE" {
+        !request.account_only
+            && request
+                .authentication_id
+                .as_deref()
+                .is_some_and(|id| valid_hex(id, 48))
+            && request.challenge_id.is_empty()
+            && request.request_digest.is_empty()
+            && request.view_id.is_empty()
+    } else {
+        matches!(
+            request.operation.as_str(),
+            "APPROVE_CHALLENGE" | "DENY_CHALLENGE" | "EXPLAIN_CHALLENGE"
+        ) && request.authentication_id.is_none()
+            && valid_hex(&request.challenge_id, 48)
+            && valid_hex(&request.request_digest, 64)
+            && valid_hex(&request.view_id, 48)
+    };
+    request.r#type == "PAM_AUTHENTICATE"
+        && request.protocol == 1
+        && valid_hex(&request.broker_instance_id, 48)
+        && binding_ok
+}
+
+#[cfg(test)]
+#[test]
+fn session_and_account_only_helper_shapes_are_disjoint() {
+    let mut v = serde_json::json!({"type":"PAM_AUTHENTICATE","protocol":1,"peer_uid":1000,
+        "operation":"AUTHENTICATE_CONSOLE","broker_instance_id":"a".repeat(48),
+        "authentication_id":"b".repeat(48)});
+    let valid = |v: &serde_json::Value| -> bool {
+        serde_json::from_value::<AuthRequest>(v.clone()).is_ok_and(|r| auth_fields_valid(&r))
+    };
+    assert!(valid(&v));
+    v["account_only"] = serde_json::json!(true);
+    assert!(!valid(&v)); // Account checks cannot create authenticated sessions.
+    v["account_only"] = serde_json::json!(false);
+    v["challenge_id"] = serde_json::json!("c".repeat(48));
+    assert!(!valid(&v));
+    v["operation"] = serde_json::json!("APPROVE_CHALLENGE");
+    v["request_digest"] = serde_json::json!("d".repeat(64));
+    v["view_id"] = serde_json::json!("e".repeat(48));
+    assert!(!valid(&v));
+    v.as_object_mut().unwrap().remove("authentication_id");
+    assert!(valid(&v)); // Legacy per-decision authentication.
+    v["account_only"] = serde_json::json!(true);
+    assert!(valid(&v));
+    v["console_session"] = serde_json::json!("attacker");
+    assert!(!valid(&v));
 }
 
 fn valid_hex(value: &str, length: usize) -> bool {
@@ -1063,30 +1137,27 @@ fn handle_auth_connection(
     }
     let request: AuthRequest = serde_json::from_slice(&body)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid PAM request"))?;
-    let operation_ok = matches!(
-        request.operation.as_str(),
-        "APPROVE_CHALLENGE" | "DENY_CHALLENGE" | "EXPLAIN_CHALLENGE"
-    );
-    let fields_ok = request.r#type == "PAM_AUTHENTICATE"
-        && request.protocol == 1
-        && operation_ok
-        && valid_hex(&request.broker_instance_id, 48)
-        && valid_hex(&request.challenge_id, 48)
-        && valid_hex(&request.request_digest, 64)
-        && valid_hex(&request.view_id, 48);
+    let fields_ok = auth_fields_valid(&request);
     let mut authenticated = false;
     if trusted_peer && fields_ok && attempts.allow(request.peer_uid, Instant::now()) {
         if let (Some(_), Some(fd)) = (terminal.as_ref(), terminal.as_ref().map(AsRawFd::as_raw_fd))
         {
-            authenticated = authenticate_with_deadline(request.peer_uid, fd).unwrap_or(false);
-            if authenticated {
-                attempts.succeeded(request.peer_uid);
+            authenticated = if request.account_only {
+                supervise_authentication(fd, AUTHENTICATION_TIMEOUT, || {
+                    authenticate_uid_mode(request.peer_uid, fd, true).unwrap_or(false)
+                })
+                .unwrap_or(false)
             } else {
+                authenticate_with_deadline(request.peer_uid, fd).unwrap_or(false)
+            };
+            if authenticated && !request.account_only {
+                attempts.succeeded(request.peer_uid);
+            } else if !authenticated {
                 attempts.failed(request.peer_uid, Instant::now());
             }
         }
     }
-    let response = serde_json::json!({
+    let mut response = serde_json::json!({
         "ok": trusted_peer && fields_ok,
         "response_to": "PAM_AUTHENTICATE",
         "authenticated": authenticated,
@@ -1097,6 +1168,12 @@ fn handle_auth_connection(
         "request_digest": request.request_digest,
         "view_id": request.view_id
     });
+    if request.account_only {
+        response["account_only"] = serde_json::Value::Bool(true);
+    }
+    if let Some(id) = request.authentication_id {
+        response["authentication_id"] = serde_json::Value::String(id);
+    }
     let response = response.to_string();
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     stream.write_all(&(response.len() as u32).to_be_bytes())?;

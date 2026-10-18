@@ -34,7 +34,7 @@ Group membership grants a requester or approver role; it is not PAM authenticati
 .IP \(bu 3
 The human approver authenticates the same Unix account that runs
 .B mayi-approve
-before the console contacts the broker or displays any request.
+through the broker before the console displays any request.
 .IP \(bu 3
 The rendered terminal text is not execution input. Approval applies to broker-owned immutable request state, not text copied from the display.
 .IP \(bu 3
@@ -140,6 +140,7 @@ In the human approver's interactive terminal, start one persistent console:
 .nf
 .RS
 $ mayi-approve
+Authenticate to unlock approvals (5-minute idle timeout).
 Password:
 Waiting for Mayi requests...
 .fi
@@ -147,7 +148,7 @@ Waiting for Mayi requests...
 .PP
 The exact PAM prompt can vary by host policy. Successful authentication is quiet: the console proceeds to waiting/request display without an
 .B Authenticated.
-banner. PAM authentication is required before any broker connection or request display. Passwords are read from the controlling terminal with echo disabled, not from argv, environment variables, or piped stdin. Authentication lasts only for the lifetime of this process; starting a new console requires authenticating again.
+banner. PAM authentication goes through the broker before request display. Passwords are read from the controlling terminal with echo disabled, not from argv, environment variables, or piped stdin. Authentication is bound to this process and terminal, with a five-minute sliding idle window. Only successful approve, deny, or follow-up decisions reset it. Incoming requests, navigation, and status polling do not reset it. On expiry the console locks and exits; start mayi-approve again to authenticate. Exiting the process, terminal disconnect, or broker restart invalidates the session. Cached decisions still check NSS roles and PAM account policy. Authentication never approves requests automatically.
 .SS Review a request
 The display presents the resolved executable, actual argv[0], remaining arguments, queue state, requester UID, request ID, dependencies, and privileged execution identity. A simple command appears approximately as:
 .PP

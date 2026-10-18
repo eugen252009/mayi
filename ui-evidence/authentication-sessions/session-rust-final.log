@@ -1,0 +1,158 @@
+   Compiling mayi-executor v0.1.0 (/home/eugen/projekte/mayi-ui-development/executor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.16s
+     Running unittests src/main.rs (target/debug/deps/mayi_executor-d04608776c189b0d)
+
+running 119 tests
+test broker::approval_ui::tests::basename_and_escaping ... ok
+test broker::approval_ui::tests::non_utf8_is_rejected_by_existing_json_representation ... ok
+test broker::approval_ui::tests::ordinary_request_is_one_short_screen ... ok
+test broker::approval_ui::tests::pages_preserve_complete_arguments ... ok
+test broker::approval_ui::tests::spinner_is_clock_driven ... ok
+test broker::console_session_tests::controlling_tty_descriptor_is_resolved_in_receiving_process ... ok
+test broker::console_session_tests::expiry_forgery_missing_terminal_wrong_terminal_and_requester_socket_fail_closed ... ok
+test broker::console_session_tests::failed_reauthentication_account_denial_replay_and_restart_do_not_keep_authority ... ok
+test broker::console_session_tests::inherited_token_does_not_authorize_a_child_process ... ok
+test broker::console_session_tests::login_decisions_refresh_but_reads_do_not_and_legacy_still_authenticates ... ok
+test broker::console_session_tests::login_rejects_extra_identity_fields_wrong_instance_and_non_tty ... ok
+test broker::console_session_tests::lost_nss_role_revokes_cached_authentication ... ok
+test broker::console_session_tests::session_deadline_is_rechecked_at_request_transition ... ok
+test broker::console_session_tests::terminal_disconnect_invalidates_retained_session ... ok
+test broker::console_sessions::tests::dead_process_cannot_reuse_session ... ok
+test broker::console_sessions::tests::identity_terminal_token_logout_and_restart_are_isolated ... ok
+test broker::console_sessions::tests::revoked_peer_and_capacity_fail_closed ... ok
+test broker::console_sessions::tests::sliding_deadline_is_strict_and_reads_never_refresh ... ok
+test broker::console_sessions::tests::suspend_time_and_clock_errors_cannot_extend_session ... ok
+test broker::deadline_regressions::approval_revalidates_request_and_view_after_authentication_delay ... ok
+test broker::deadline_regressions::delayed_concurrent_consumers_never_revive_expired_authority ... ok
+test broker::deadline_regressions::dispatched_work_is_not_cancelled_by_expiry ... ok
+test broker::deadline_regressions::expired_queue_claim_cannot_run_or_be_revived ... ok
+test broker::deadline_regressions::final_monotonic_boundary_is_exclusive_and_wall_time_cannot_revive ... ok
+test broker::security_regressions::consumption_rechecks_deadline_after_expiry_sweep ... ok
+test broker::security_regressions::disconnected_operations_cannot_poison_pending_console_rows ... ok
+test broker::security_regressions::malformed_exec_never_enters_approval_state ... ok
+test broker::security_regressions::queued_dependency_wait_rechecks_deadline_after_expiry_sweep ... ok
+test broker::security_regressions::valid_exec_terminal_controls_are_rendered_as_inert_text ... ok
+test broker::tests::approval_console_preserves_broker_authorization_errors ... ok
+test broker::tests::approval_gate_requires_every_step_and_never_overrides_failure ... ok
+test broker::tests::approval_is_one_shot_and_executor_handoff_is_deferred_to_network_handler ... ok
+test broker::tests::approval_transport_passes_one_cloexec_descriptor_with_the_frame ... ok
+test broker::tests::approval_transport_rejects_descriptors_after_the_frame_header ... ok
+test broker::tests::challenge_and_digest_substitution_rejected ... ok
+test broker::tests::client_cannot_supply_approval_or_change_approved_object ... ok
+test broker::tests::concurrent_approve_and_deny_have_one_terminal_winner ... ok
+test broker::tests::concurrent_consume_is_atomic ... ok
+test broker::tests::console_commands_use_readable_unambiguous_argv_rendering ... ok
+test broker::tests::console_decision_grammar_is_exact ... ok
+test broker::tests::consume_request_is_strict_requester_bound_and_one_shot ... ok
+test broker::tests::deny_and_explain_cannot_be_approved ... ok
+test broker::tests::duplicate_json_keys_are_rejected ... ok
+test broker::tests::exact_exec_is_rendered_and_status_is_requester_bound ... ok
+test broker::tests::expiry_and_substitution_rejected ... ok
+test broker::tests::group_authorized_requesters_still_cannot_consume_each_others_requests ... ok
+test broker::tests::invalid_state_transitions_fail ... ok
+test broker::tests::nss_group_lookup_handles_primary_supplementary_and_missing_accounts ... ok
+test broker::tests::proposal_stores_the_authenticated_requester_uid ... ok
+test broker::tests::queue_dependency_cycles_are_rejected_and_failed_parents_block_children ... ok
+test broker::tests::queued_requests_have_unique_broker_ids_and_are_requester_bound ... ok
+test broker::tests::renderer_escapes_controls ... ok
+test broker::tests::requester_pending_limit_is_bounded ... ok
+test broker::tests::restart_changes_instance ... ok
+test broker::tests::restart_invalidates_approved_challenge ... ok
+test broker::tests::same_uid_socket_substitution_cannot_reuse_real_view ... ok
+test broker::tests::successful_decisions_clear_only_the_visible_screen_and_failures_do_not ... ok
+test broker::tests::unsupported_operation_types_never_enter_approval_state ... ok
+test broker::tests::view_expires_independently ... ok
+test broker::tests::views_are_one_shot_replaceable_and_not_in_proposals ... ok
+test broker::tests::visible_clear_requires_tty_and_a_usable_terminal_type ... ok
+test broker::tests::wrong_approver_cannot_use_view ... ok
+test broker::ui_pty_tests::navigation_is_not_approval_and_modes_restore ... ok
+test filesystem::tests::anonymous_tmpfile_has_no_path_before_commit_and_atomic_replace_succeeds ... ok
+test filesystem::tests::bind_mount_child_helper ... ok
+test filesystem::tests::bind_mounts_are_live_rejected_in_private_mount_namespace ... ok
+test filesystem::tests::capability_fixture_child_helper ... ok
+test filesystem::tests::checked_arithmetic_and_patch_ambiguity_fail_closed ... ok
+test filesystem::tests::committed_durability_failure_is_not_reported_as_not_committed ... ok
+test filesystem::tests::concurrent_race_stress_10000_each ... ok
+test filesystem::tests::crash_child_qualification_helper ... ok
+test filesystem::tests::create_failure_points_preserve_no_replace_and_commit_outcomes ... ok
+test filesystem::tests::create_is_no_replace_and_move_destination_is_no_replace ... ok
+test filesystem::tests::create_race_precommit_failure_and_deadline_fail_closed ... ok
+test filesystem::tests::delete_and_cross_directory_move_fsync_failures_are_committed_uncertain ... ok
+test filesystem::tests::delete_and_move_pathname_replacement_is_rejected ... ok
+test filesystem::tests::delete_and_move_precommit_failure_points_preserve_sources ... ok
+test filesystem::tests::delete_and_move_recheck_content_and_identity_before_commit ... ok
+test filesystem::tests::deterministic_patch_failpoints_match_namespace_state ... ok
+test filesystem::tests::deterministic_race_stress_1000_each ... ok
+test filesystem::tests::ext_family_matrix_executes_all_four_direct_operations ... ok
+test filesystem::tests::fake_root_pins_and_rejects_root_and_same_uid ... ok
+test filesystem::tests::fd_count_stays_bounded_across_rejected_operations ... ok
+test filesystem::tests::interrupted_stage_cleanup_is_reported_by_artifact_and_reaped_on_restart ... ok
+test filesystem::tests::kernel_enforces_no_xdev_and_no_magiclinks ... ok
+test filesystem::tests::live_acl_bearing_files_and_ancestry_are_rejected ... ok
+test filesystem::tests::live_capability_bearing_target_is_rejected ... ok
+test filesystem::tests::memory_and_path_limits_accept_boundary_and_reject_plus_one ... ok
+test filesystem::tests::openat2_rejects_symlinks_and_mount_profile_is_enforced ... ok
+test filesystem::tests::parent_moved_outside_root_is_rejected_and_no_commit_occurs ... ok
+test filesystem::tests::patch_derives_exact_result_and_rejects_stale_or_changed_base ... ok
+test filesystem::tests::patch_h1_same_inode_change_before_commit_is_rejected ... ok
+test filesystem::tests::pinned_root_ignores_replaced_configuration_path ... ok
+test filesystem::tests::pinned_root_lock_prevents_two_live_executor_contexts ... ok
+test filesystem::tests::rejects_hardlinks_special_files_metadata_and_fifo_without_blocking ... ok
+test filesystem::tests::requester_cannot_observe_staging_through_readable_descendant_directories ... ok
+test filesystem::tests::resource_bounds_and_special_collision_fail_closed ... ok
+test filesystem::tests::rss_child_helper ... ok
+test filesystem::tests::rss_resource_stress_measured_in_subprocess ... ok
+test filesystem::tests::secondary_race_stress_100_each ... ok
+test filesystem::tests::subprocess_crashes_and_restart_staging_recovery ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... 
+running 1 test
+test filesystem::tests::crash_child_qualification_helper ... ok
+test filesystem::tests::temp_regular_or_symlink_substitution_never_commits ... ok
+test filesystem::tests::unsupported_operations_and_strict_json_mapping_fail_closed ... ok
+test pam_auth::security_regressions::supervisor_parent_cancellation_restores_terminal ... ok
+test pam_auth::security_regressions::supervisor_preserves_unrelated_terminal_modes_on_child_death ... ok
+test pam_auth::security_regressions::supervisor_rejects_disconnected_terminal ... ok
+test pam_auth::security_regressions::supervisor_restores_after_sigkill_and_abnormal_exit ... ok
+test pam_auth::security_regressions::supervisor_restores_success_failure_sigterm_and_timeout ... ok
+test pam_auth::session_and_account_only_helper_shapes_are_disjoint ... ok
+test pam_auth::tests::broker_peer_must_be_in_the_exact_systemd_service_cgroup ... ok
+test pam_auth::tests::catchable_signal_restores_tty_echo_before_auth_failure ... ok
+test pam_auth::tests::conversation_supports_multistep_echo_off_and_echo_on_prompts ... ok
+test pam_auth::tests::failed_pam_attempts_are_bounded_per_uid_and_expire ... ok
+test pam_auth::tests::pam_text_cannot_inject_terminal_control_sequences ... ok
+test pam_auth::tests::secret_clear_zeroes_buffer ... ok
+test tests::broker_socket_reclaims_only_owned_stale_sockets_and_preserves_live_listeners ... ok
+test tests::broker_socket_rejects_symlink_file_directory_and_wrong_ownership ... ok
+test tests::broker_start_lock_allows_only_one_instance ... ok
+test tests::protocol_v4_service_is_disabled_without_binding ... ok
+
+test result: ok. 119 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 116.94s
+
+     Running unittests src/bin/mayi-privileged-executor.rs (target/debug/deps/mayi_privileged_executor-1a1eb3fe91a0f6e3)
+
+running 5 tests
+test tests::only_trusted_executable_directories_are_allowed ... ok
+test tests::output_is_bounded_and_drained ... ok
+test tests::request_bounds_and_schema_are_strict ... ok
+test tests::socket_recovery_rejects_symlinks_files_and_directories_without_removal ... ok
+test tests::stale_socket_is_reclaimed_but_live_socket_is_preserved ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

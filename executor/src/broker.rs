@@ -397,7 +397,16 @@ fn expire_request_at(r: &mut Request, now: Instant) -> bool {
     r.state == State::Expired
 }
 
+#[path = "console_auth.rs"]
+mod console_auth;
+#[cfg(test)]
+#[path = "console_session_tests.rs"]
+mod console_session_tests;
+#[path = "console_sessions.rs"]
+mod console_sessions;
+
 struct Broker {
+    console_sessions: console_sessions::Sessions,
     instance: String,
     challenge_counter: u64,
     view_counter: u64,
@@ -665,6 +674,7 @@ impl Broker {
     }
     fn new() -> io::Result<Self> {
         Ok(Self {
+            console_sessions: console_sessions::Sessions::default(),
             instance: random_id()?,
             challenge_counter: 0,
             view_counter: 0,
@@ -1059,6 +1069,14 @@ impl Broker {
     }
 
     fn authority(&mut self, v: &Value, peer: u32) -> Value {
+        self.authority_with_session_deadline(v, peer, None)
+    }
+    fn authority_with_session_deadline(
+        &mut self,
+        v: &Value,
+        peer: u32,
+        session_deadline: Option<console_sessions::Deadline>,
+    ) -> Value {
         self.expire();
         let Some(o) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
@@ -1269,6 +1287,9 @@ impl Broker {
                     }
                     if now >= view.deadline {
                         return response_error("VIEW_EXPIRED", "approval view expired");
+                    }
+                    if session_deadline.is_some_and(|deadline| deadline.expired(now)) {
+                        return response_error("CONSOLE_AUTH_REQUIRED", "console session expired");
                     }
                     if transition(&mut req.state, next).is_err() {
                         return response_error(
@@ -1627,13 +1648,14 @@ fn read_frame_with_fd(
     Ok((body, received_fd))
 }
 
-fn authenticate_through_helper(
+fn authenticate_through_helper_mode(
     peer_uid: u32,
     request: &Value,
     terminal_fd: RawFd,
+    account_only: bool,
 ) -> io::Result<bool> {
     let operation = request.get("type").and_then(Value::as_str).unwrap_or("");
-    let message = json!({
+    let mut message = json!({
         "type": "PAM_AUTHENTICATE",
         "protocol": 1,
         "peer_uid": peer_uid,
@@ -1643,6 +1665,19 @@ fn authenticate_through_helper(
         "request_digest": request.get("request_digest"),
         "view_id": request.get("view_id")
     });
+    if operation == "AUTHENTICATE_CONSOLE" {
+        let object = message.as_object_mut().unwrap();
+        for key in ["challenge_id", "request_digest", "view_id"] {
+            object.remove(key);
+        }
+        object.insert(
+            "authentication_id".into(),
+            request["authentication_id"].clone(),
+        );
+    }
+    if account_only {
+        message["account_only"] = Value::Bool(true);
+    }
     let deadline = Instant::now() + Duration::from_secs(310);
     let mut stream = UnixStream::connect(PAM_AUTH_SOCKET)?;
     if peer_uid_fn(&stream)? != PAM_AUTH_UID {
@@ -1663,7 +1698,19 @@ fn authenticate_through_helper(
         && response["challenge_id"] == message["challenge_id"]
         && response["request_digest"] == message["request_digest"]
         && response["view_id"] == message["view_id"];
-    Ok(correlated && response["authenticated"] == true)
+    let correlated = if operation == "AUTHENTICATE_CONSOLE" {
+        response["ok"] == true
+            && response["response_to"] == "PAM_AUTHENTICATE"
+            && response["peer_uid"] == peer_uid
+            && response["operation"] == operation
+            && response["broker_instance_id"] == message["broker_instance_id"]
+            && response["authentication_id"] == message["authentication_id"]
+    } else {
+        correlated
+    };
+    Ok(correlated
+        && response["authenticated"] == true
+        && response["account_only"].as_bool().unwrap_or(false) == account_only)
 }
 
 fn peer_uid_fn(stream: &UnixStream) -> io::Result<u32> {
@@ -1798,7 +1845,16 @@ fn console_call_inner(
     msg: &Value,
     terminal_fd: Option<RawFd>,
 ) -> io::Result<Value> {
-    let timeout = if terminal_fd.is_some() {
+    let timeout = if terminal_fd.is_some()
+        && matches!(
+            msg["type"].as_str(),
+            Some(
+                "AUTHENTICATE_CONSOLE"
+                    | "APPROVE_CHALLENGE"
+                    | "DENY_CHALLENGE"
+                    | "EXPLAIN_CHALLENGE"
+            )
+        ) {
         Duration::from_secs(310)
     } else {
         Duration::from_secs(5)
@@ -1941,7 +1997,7 @@ fn read_tty_frame_with_details<F: FnMut(Option<u8>) -> io::Result<()>>(
     const QUIET_MS: u64 = 100;
     let fd = io::stdin().as_raw_fd();
     let _terminal = TerminalMode::raw(fd)?;
-    let input_deadline = Instant::now() + Duration::from_secs(120);
+    let input_deadline = Instant::now() + console_sessions::IDLE;
     let mut frame = Vec::with_capacity(MAX_INPUT);
     let mut byte = [0u8; 1];
     loop {
@@ -2498,6 +2554,7 @@ fn decide_console_row(
     instance: &str,
     row: &Value,
     decision: &str,
+    session: &console_auth::Console,
 ) -> io::Result<()> {
     let challenge = row["challenge_id"].as_str().unwrap();
     let digest = row["request_digest"].as_str().unwrap();
@@ -2524,12 +2581,9 @@ fn decide_console_row(
         "deny" => "DENY_CHALLENGE",
         _ => "EXPLAIN_CHALLENGE",
     };
-    println!("Waiting for broker decision / PAM authentication; use your own terminal.\nNo approval is assumed until the broker confirms it.");
-    let result = approval_decision_call(
-        path,
-        broker_uid,
-        &json!({"type":message,"protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge,"request_digest":digest,"view_id":view["view_id"]}),
-    )?;
+    let mut request = json!({"type":message,"protocol":VERSION,"broker_instance_id":instance,"challenge_id":challenge,"request_digest":digest,"view_id":view["view_id"]});
+    session.bind(&mut request);
+    let result = approval_decision_call(path, broker_uid, &request)?;
     check_authority_response(&result)?;
     let expected_status = match decision {
         "approve" => "APPROVED",
@@ -2560,9 +2614,11 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
             "approval console requires an unprivileged interactive terminal",
         ));
     }
+    let session = console_auth::Console::authenticate(&path, broker_uid)?;
     let mut idle_announced = false;
     let mut skipped = HashSet::new();
     loop {
+        session.check()?;
         let (instance, rows) = console_snapshot(&path, broker_uid)?;
         let components = console_components(&rows)?;
         if components.is_empty() {
@@ -2601,6 +2657,7 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
         let mut announced = HashSet::from([signature.clone()]);
         let input = read_tty_frame_with_details(
             |toggle| {
+                session.check()?;
                 if toggle.is_some() {
                     view.draw(&rows, &component, toggle);
                     return Ok(());
@@ -2654,12 +2711,15 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
             "d" | "n" | "deny" => {
                 print!("Deny [all or indices]: ");
                 io::stdout().flush()?;
-                ("deny", Some(read_tty_frame()?))
+                ("deny", Some(read_tty_frame_with_poll(|| session.check())?))
             }
             "f" | "e" | "explain" | "follow-up" => {
                 print!("Follow up on [all or indices]: ");
                 io::stdout().flush()?;
-                ("explain", Some(read_tty_frame()?))
+                (
+                    "explain",
+                    Some(read_tty_frame_with_poll(|| session.check())?),
+                )
             }
             _ if input.bytes().all(|b| b.is_ascii_digit()) && !input.is_empty() => {
                 ("approve", Some(input.as_bytes().to_vec()))
@@ -2692,7 +2752,7 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
         let mut any_failed = false;
         for index in selected {
             let row = &rows[component[index]];
-            match decide_console_row(&path, broker_uid, &instance, row, decision) {
+            match decide_console_row(&path, broker_uid, &instance, row, decision, &session) {
                 Ok(()) => completed.push(index),
                 Err(error) => {
                     any_failed = true;
@@ -2925,11 +2985,28 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
 }
 
 fn handle(
+    s: UnixStream,
+    broker: &Arc<Mutex<Broker>>,
+    approval: bool,
+    request_gid: u32,
+    approval_gid: u32,
+) -> io::Result<()> {
+    handle_with_auth(
+        s,
+        broker,
+        approval,
+        request_gid,
+        approval_gid,
+        &authenticate_through_helper_mode,
+    )
+}
+fn handle_with_auth(
     mut s: UnixStream,
     broker: &Arc<Mutex<Broker>>,
     approval: bool,
     request_gid: u32,
     approval_gid: u32,
+    authenticate: &impl Fn(u32, &Value, RawFd, bool) -> io::Result<bool>,
 ) -> io::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     s.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -2938,7 +3015,7 @@ fn handle(
         .as_ref()
         .map(|peer| peer.uid)
         .unwrap_or(u32::MAX);
-    let (v, terminal_fd) = match read_frame_with_fd(&mut s, deadline).and_then(|(b, fd)| {
+    let (mut v, terminal_fd) = match read_frame_with_fd(&mut s, deadline).and_then(|(b, fd)| {
         serde_json::from_slice::<Unique>(&b)
             .map(|u| (u.0, fd))
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid JSON"))
@@ -2968,6 +3045,57 @@ fn handle(
             &format!("SO_PEERCRED lookup failed: {error}"),
         )),
     };
+    if authorization.is_err() {
+        if let Some(peer) = peer_credentials_snapshot {
+            broker
+                .lock()
+                .map_err(|_| io::Error::other("broker state poisoned"))?
+                .console_sessions
+                .revoke_peer(peer);
+        }
+    }
+    if approval
+        && matches!(
+            v["type"].as_str(),
+            Some("AUTHENTICATE_CONSOLE" | "GET_CONSOLE_SESSION" | "END_CONSOLE_SESSION")
+        )
+    {
+        let mut response = match (authorization, peer_credentials_snapshot) {
+            (Ok(()), Some(peer)) => console_auth::control(
+                &s,
+                broker,
+                peer,
+                role_gid,
+                &v,
+                terminal_fd.as_ref(),
+                authenticate,
+            ),
+            (Err(error), _) => error,
+            _ => response_error("INTERNAL_ERROR", "peer identity unavailable"),
+        };
+        response["broker_instance_id"] = Value::String(
+            broker
+                .lock()
+                .map_err(|_| io::Error::other("broker state poisoned"))?
+                .instance
+                .clone(),
+        );
+        response["response_to"] = v["type"].clone();
+        return write_frame_deadline(&mut s, &response, Instant::now() + Duration::from_secs(5));
+    }
+    let is_decision = approval
+        && matches!(
+            v["type"].as_str(),
+            Some("APPROVE_CHALLENGE" | "DENY_CHALLENGE" | "EXPLAIN_CHALLENGE")
+        );
+    let session_token = if is_decision {
+        v.as_object_mut().and_then(|o| o.remove("console_session"))
+    } else {
+        None
+    };
+    let session_key = peer_credentials_snapshot
+        .zip(terminal_fd.as_ref())
+        .and_then(|(peer, fd)| console_sessions::Key::from_peer(peer, fd.as_raw_fd()).ok());
     let message_type = v.get("type").and_then(Value::as_str).unwrap_or("");
     let decision_operation = approval
         && matches!(
@@ -2985,22 +3113,55 @@ fn handle(
                     .map_err(|_| response_error("INTERNAL_ERROR", "broker state poisoned"))?
                     .validate_decision(&v, peer)
             },
-            || match terminal_fd.as_ref() {
-                None => Err(response_error(
-                    "PAM_AUTH_REQUIRED",
-                    "approval decisions require broker-side PAM authentication",
-                )),
-                Some(fd) => match authenticate_through_helper(peer, &v, fd.as_raw_fd()) {
-                    Ok(true) if connection_usable(&s) => Ok(true),
-                    Ok(true) => Err(response_error(
-                        "AUTHENTICATION_CONNECTION_CLOSED",
-                        "approval connection closed during authentication",
+            || {
+                if let Some(token) = session_token.as_ref() {
+                    let valid = session_key.zip(token.as_str()).is_some_and(|(key, token)| {
+                        broker.lock().is_ok_and(|mut state| {
+                            state
+                                .console_sessions
+                                .deadline(key, token, Instant::now())
+                                .is_some()
+                        })
+                    });
+                    if !valid {
+                        return Err(response_error(
+                            "CONSOLE_AUTH_REQUIRED",
+                            "console session expired or invalid",
+                        ));
+                    }
+                    let ok = terminal_fd.as_ref().is_some_and(|fd| {
+                        authenticate(peer, &v, fd.as_raw_fd(), true).unwrap_or(false)
+                    });
+                    if !ok {
+                        if let Some(key) = session_key {
+                            if let Ok(mut state) = broker.lock() {
+                                state.console_sessions.revoke(key);
+                            }
+                        }
+                        return Err(response_error(
+                            "PAM_AUTHENTICATION_FAILED",
+                            "account policy check failed; authenticate again",
+                        ));
+                    }
+                    return Ok(connection_usable(&s));
+                }
+                match terminal_fd.as_ref() {
+                    None => Err(response_error(
+                        "PAM_AUTH_REQUIRED",
+                        "approval decisions require broker-side PAM authentication",
                     )),
-                    Ok(false) | Err(_) => Err(response_error(
-                        "PAM_AUTHENTICATION_FAILED",
-                        "broker-side PAM authentication failed",
-                    )),
-                },
+                    Some(fd) => match authenticate(peer, &v, fd.as_raw_fd(), false) {
+                        Ok(true) if connection_usable(&s) => Ok(true),
+                        Ok(true) => Err(response_error(
+                            "AUTHENTICATION_CONNECTION_CLOSED",
+                            "approval connection closed during authentication",
+                        )),
+                        Ok(false) | Err(_) => Err(response_error(
+                            "PAM_AUTHENTICATION_FAILED",
+                            "broker-side PAM authentication failed",
+                        )),
+                    },
+                }
             },
             || match peer_credentials_snapshot {
                 Some(credentials) => role_authorization(credentials, role_gid, true),
@@ -3011,6 +3172,15 @@ fn handle(
             },
         );
         pam_authenticated = gate_result.is_ok();
+        if !pam_authenticated && session_token.is_some() {
+            if let Some(key) = session_key {
+                broker
+                    .lock()
+                    .map_err(|_| io::Error::other("broker state poisoned"))?
+                    .console_sessions
+                    .revoke(key);
+            }
+        }
         gate_result.err()
     } else {
         None
@@ -3030,7 +3200,13 @@ fn handle(
             Err(error) => error,
             Ok(()) if approval && decision_operation && pam_authenticated => {
                 match state.validate_decision(&v, peer) {
-                    Ok(()) => state.authority(&v, peer),
+                    Ok(()) => console_auth::apply_decision(
+                        &mut state,
+                        &v,
+                        peer,
+                        session_key,
+                        session_token.as_ref(),
+                    ),
                     Err(error) => error,
                 }
             }
