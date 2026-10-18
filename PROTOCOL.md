@@ -1,5 +1,12 @@
 # Mayi Protocol 5 — approval, status, and one-shot execution
 
+> Epoch extension (`0.4.1-10~status4`): see [BROKER_EPOCH.md](BROKER_EPOCH.md),
+> [RESTART_INVALIDATION.md](RESTART_INVALIDATION.md) and
+> [UPDATE_PREFLIGHT.md](UPDATE_PREFLIGHT.md). New queued IDs use authenticated
+> `rq_v2_` syntax; old `rq_32hex` examples describe legacy IDs only. Native
+> audit schema 1, history JSON 2 and ordinary live snapshot schema 1 remain.
+> History epoch separators are presentation only, never authorization.
+
 Development status1 adds strict approver-only read-only `QUEUE_STATUS`; see STATUS_PROTOCOL.md. An opt-in same-channel executor spawn observation distinguishes dispatching from actually started work without changing authority/claims or replay semantics.
 
 > **Development 0.4.1-9~ui3:** explicit, broker-enforced five-minute sliding console authentication sessions are now implemented. Successful decisions renew the window; reads do not. This supersedes per-decision password claims below for the new console only. Legacy clients still use per-decision PAM. See [AUTHENTICATION_SESSIONS.md](AUTHENTICATION_SESSIONS.md) for protocol, threat-model changes and test limits. Not packaged, deployed or production-qualified.

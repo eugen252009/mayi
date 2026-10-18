@@ -1,60 +1,68 @@
-# HISTORY GO
+# CONDITIONAL RESTART GO — package ready, installation pending
 
-Installation state:**PACKAGE READY — INSTALLATION PENDING**. Development0.4.1-10~status3; runtime/package e7f2cc3fe62722bc1bf85d0e502ce3ef2d3601e7; package/rebuild SHA-256c8285db384a46b4f9489c9700c779171a1fc21b2390b0cae1233e08c9bbc8fbd.
+## Identity
+Runtime source: ee22b0a278c2c9110d29bfc37bffcff09ec66bee.
+Version: 0.4.1-10~status4 (greater than status3, less than final 0.4.1-10).
+Artifact: dist/mayi_0.4.1-10~status4_amd64.deb.
+SHA256: 6e785530c84cdf19eaac65419aa549f86290003d2e75c2642222218cba6c1d5e.
 
-Root cause: orphan PAM/session/health records were reconstructed into event_N/ex_ pseudo-request groups and consumed request table limits/counters. Fixed authoritative lifecycle classification, preserving genuine nonqueue ch_ requests and existing explicit broker-to-executor/PAM correlations. --events is the separate all-audit projection, never synthetic requests. No broker protocol/security semantics changed.
+## Delivered
+Reuse the random 192-bit broker identity as immutable epoch. New queued IDs are
+versioned, fixed-width, domain-separated HMAC-SHA256 identities binding epoch,
+128-bit random nonce and the canonical exact request digest. Only an owner-private
+provenance key persists; requests/approvals/authority do not.
 
-Actual operator window recaptured24 raw records/10 schema1 identities ->3 requests (DENIED,DENIED,SUCCEEDED0), successful9-event timeline intact; --events24 retains7 standalone diagnostics. Earlier operator reported23/9; deterministic public23-row fixture proves3+6 and captured raw evidence remains unchanged outside package/source.
+Authentic older IDs return BROKER_EPOCH_CHANGED with retryable=false and explicit
+fresh-request/fresh-approval requirements, conservative execution UNKNOWN and
+reconciliation required. Forged/unknown IDs do not become epoch errors.
+Legacy history remains readable, without retroactive authentication.
 
-JSON schema deliberately2: default requests[] only real requests, events[] only diagnostic mode; mode/count_unit make matched/returned units explicit. Native audit1/live status1 unchanged. Full rq_32 or ch_48 detail, status/since/limits, typed privacy/security/resource/access rules verified. Unknown remains genuine incomplete historical outcome, not a filler status for a login event.
+Shutdown fences claims under the existing mutex and records only proven
+pre-claim REQUEST_INVALIDATED cases. Crashes do not generate fictitious safe
+outcomes. Old execution can survive broker death and later complete honestly.
 
-Source203 Python PASS/9 explicit SKIP,135+10 Rust PASS, fmt/strictClippy/syntax PASS. Installed Debian12/13 all17 PASS/exit0; Debian11 other16 PASS +initial watch marker assertionFAIL/exit1, with explicit same-package instrumented direct-child SIGINT/watch reconnect/TTY retryPASS/exit0. Independent audit validates exact bytes, initial failure and retry separately; see detailed limits/evidence in HISTORY_REGRESSION_RESULTS.md. No product change or ignored failure to obtain this decision.
+History JSON2 adds epoch_id and separate authorization/execution/recovery fields.
+Human boundaries are virtual, preserve display order and label first-page/legacy
+context; --epoch filters recorded identities. No separator is persisted.
+Live status schema1 is retained; status --preflight --json is read-only
+READY=0/BUSY=3/UNKNOWN=4, never an admission or physical-idleness guarantee.
+Porta recovery classes and package/self-upgrade response-loss semantics are
+documented; no Porta code was changed.
 
-Two identical fresh Debian11 builds, maxGLIBC2.30, hardening/dependencies/root ownership/version order PASS. All8 requested reports in worktree; evidence /home/eugen/projekte/mayi-qualification/history-classification-0.4.1-10-status3/. Existing historical releases/staging, dirty main/index, installed status2 preserved.
+## Qualification and conditionality
+216 Python PASS / 9 historical skips; 143+13 Rust PASS; fmt, strict Clippy,
+compileall and shell checks PASS. Two independent clean Debian11 builds are
+byte-identical; max GLIBC_2.30 and mandatory package hardening/ABI gates PASS.
 
-Remaining limits: retention/rate limiting/rotation and20k/16MiB/20s/2000-request scan/group bounds; records lacking request proof remain diagnostics, missing outcome remains UNKNOWN. Correlation never guesses; older exports may need direct targeted journalctl queries. Schema1 JSON consumers must migrate. Exact initial watch missing-marker cause unproven (first fixture lacked transcript), but real-child signal cleanup is independently exported/verified. No live-state/persistence/recovery or new platform/MFA/process-effect claim.
+Debian11/12/13 each have 19/20 primary gates PASS and retained process exit1.
+The classification fixture's rounded window included one genuine older
+shutdown-invalidated request. A first retry incorrectly filtered unknown-epoch
+diagnostics and remains FAIL. Separately instrumented/narrowed same-artifact
+retry2 PASS/exit0 on every platform. Independent acceptance explicitly combines
+original security evidence and retry2, not a fictitious all-green primary run.
 
-No host install/restart/sign/tag/push/stage/publish/upload/deploy. No new privileged IPC/database/collector, permission or authorization mutation.
+CONDITIONAL rather than unconditional GO reflects those explicit evidence
+qualifications, versioned-ID consumer migration and the requirement for external
+coordination/reconciliation around updates. READY alone is not an update lock.
+Review BROKER_EPOCH, RESTART_INVALIDATION, UPDATE_PREFLIGHT,
+PORTA_RECOVERY_CONTRACT, EXECUTION_OUTCOME_SEMANTICS, RESTART_SECURITY_TESTS,
+DEBIAN_MATRIX and SECURITY_REGRESSIONS before final release qualification.
 
-## Local install (separate approval; NOT performed)
+## Preservation and limits
+Host remains operator-installed 0.4.1-10~status3; dpkg -V passes.
+Original dirty checkout and immutable releases/staging8/9 were not modified;
+four pinned bundle manifests verified. No installation, service restart on the
+host, Porta change, central staging change, signing, tag movement, upload,
+publication, push or deployment. Candidate publication and deployment require
+separate authorization.
 
-Human approver uses their own interactive TTY/PAM; agent never handles real credentials. In another terminal after explicit installation approval:
+Journald remains best effort. Proven old authorization invalidity is not proof
+that execution failed or never occurred. No queue persistence, recovery of
+capabilities, general exactly-once side effects or connected filesystem executor.
+Private-key loss or unsafe storage fails classification/startup closed rather
+than inventing stale identity proof. Historical outcomes remain historical.
 
-```sh
-mayi-approve
-# Separate terminal:
-mayi /usr/bin/systemd-run --unit=mayi-install-status3 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~status3_amd64.deb
-```
-
-Transient installer avoids stopping its own parent Mayi executor during replacement. Submission/ambiguous result is NOT proof of completion; do not automatically retry/bypass rejection. Verify read-only:
-
-```sh
-dpkg-query -W -f='${Version}\n' mayi
-dpkg -V mayi
-mayi --version
-mayi history
-mayi history --events --json
-mayi-approve status --json
-journalctl -u mayi-install-status3 --no-pager
-```
-
-History/journal reads and live status retain existing reader/approver permissions; no automatic group/ACL changes.
-
-## Rollback (also requires approval)
-
-Verified exact status2 retained at dist/rollback/mayi_0.4.1-10~status2_amd64.deb, SHA-256af371f6e80b1e7df4366913e7b8ed282a3824c782380cc73fffb50adc055a50f. No rebuild/purge/config deletion:
-
-```sh
-mayi /usr/bin/systemd-run --unit=mayi-rollback-status2 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/rollback/mayi_0.4.1-10~status2_amd64.deb
-dpkg-query -W -f='${Version}\n' mayi
-dpkg -V mayi
-mayi --version
-systemctl is-active mayi-broker mayi-pam-auth mayi-privileged-executor
-journalctl -u mayi-rollback-status2 --no-pager
-```
-
-Rollback restores history schema1/mixed diagnostic identities; JSON consumers must check schema version.
-
-
-
-Runtime/package source: e7f2cc3fe62722bc1bf85d0e502ce3ef2d3601e7. Development0.4.1-10~status3 amd64. Package and independent rebuild SHA-256:c8285db384a46b4f9489c9700c779171a1fc21b2390b0cae1233e08c9bbc8fbd.
+Full evidence:
+/home/eugen/projekte/mayi-qualification/restart-0.4.1-10-status4/
+including check_results.py, independent-audit-final.json/.exit, original and
+retry records, build logs, source.tar, package validation and preservation data.

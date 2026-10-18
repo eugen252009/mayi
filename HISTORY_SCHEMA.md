@@ -1,5 +1,12 @@
 # History JSON schema2
 
+> Epoch extension (`0.4.1-10~status4`): see [BROKER_EPOCH.md](BROKER_EPOCH.md),
+> [RESTART_INVALIDATION.md](RESTART_INVALIDATION.md) and
+> [UPDATE_PREFLIGHT.md](UPDATE_PREFLIGHT.md). New queued IDs use authenticated
+> `rq_v2_` syntax; old `rq_32hex` examples describe legacy IDs only. Native
+> audit schema 1, history JSON 2 and ordinary live snapshot schema 1 remain.
+> History epoch separators are presentation only, never authorization.
+
 See HISTORY_JSON_COMPATIBILITY.md for explicit v1-to-v2 migration. --json emits exactly one object, no ANSI/human text; schema_version=2 for success/error.
 
 Success keys: mode (requests|events),count_unit (same),requests[],events[],returned,matched,scanned_records,ignored_records,scan_truncated,bytes_read,omitted_records,diagnostic_records,limits {records:20000,bytes:16777216,identities:2000,seconds:20},historical_only=true,completeness. Default matched/returned count authoritative request groups in the scanned window; --events counts deduplicated projected audit records. Limits apply after filters to the appropriate rows. Unrelated diagnostics do not use request limit/group capacity. Requests newest-first; events chronological, selecting latest N before display.

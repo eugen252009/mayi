@@ -1,5 +1,12 @@
 # Narrow read-only protocol
 
+> Epoch extension (`0.4.1-10~status4`): see [BROKER_EPOCH.md](BROKER_EPOCH.md),
+> [RESTART_INVALIDATION.md](RESTART_INVALIDATION.md) and
+> [UPDATE_PREFLIGHT.md](UPDATE_PREFLIGHT.md). New queued IDs use authenticated
+> `rq_v2_` syntax; old `rq_32hex` examples describe legacy IDs only. Native
+> audit schema 1, history JSON 2 and ordinary live snapshot schema 1 remain.
+> History epoch separators are presentation only, never authorization.
+
 Existing /run/mayi/approval/broker.sock, four-byte big-endian UTF-8 JSON frame, protocol5. Request exactly {"type":"QUEUE_STATUS","protocol":5}. Existing approver socket 0660/group23013, parent restricted directory, plus SO_PEERCRED/NSS checks; no claimed UID accepted. Request socket use, wrong role, SCM_RIGHTS or extra keys/protocol are rejected. No PAM required, consistent with existing read-only LIST_PENDING visibility.
 
 Response: ok=true,protocol=5,response_to=QUEUE_STATUS,schema_version=1,broker=ONLINE,broker_instance_id (48 hex),snapshot_unix_ms,scope=approver_global_aggregate; six counters and total_active, blocked_terminal, outcome_unknown_terminal. No payload/authorization secrets. Errors use existing error envelope plus response_to. No successful/denied poll audit emission; NSS lookup failures retain existing bounded role diagnostic. Snapshot response is copied under the broker mutex; writes occur outside it.

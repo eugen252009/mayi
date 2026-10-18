@@ -1,5 +1,12 @@
 # Intentional history JSON schema2
 
+> Epoch extension (`0.4.1-10~status4`): see [BROKER_EPOCH.md](BROKER_EPOCH.md),
+> [RESTART_INVALIDATION.md](RESTART_INVALIDATION.md) and
+> [UPDATE_PREFLIGHT.md](UPDATE_PREFLIGHT.md). New queued IDs use authenticated
+> `rq_v2_` syntax; old `rq_32hex` examples describe legacy IDs only. Native
+> audit schema 1, history JSON 2 and ordinary live snapshot schema 1 remain.
+> History epoch separators are presentation only, never authorization.
+
 Schema1 mixed operational identities (ex_/event_N) into requests[] and matched/returned counted those identities. Correcting that meaning and adding explicit event counting is an incompatible contract correction: schema_version increments to2, including JSON error envelopes. Consumers must check the version; schema1 compatibility is NOT silently claimed.
 
 Stable request fields retain types/meanings: identity,request_id,boot_id,broker_instance_id,timestamp,requester_uid,status,observed_state,current_state_known=false,result,exit_code,signal,events. Requests are only authoritative rq_/ch_ lifecycle groups. Additive top-level challenge_id/request_digest on each request make binding scope explicit. correlation_incomplete now correctly permits a fully observed genuine challenge-only request (no queue ID is not inherently incomplete); unknown/conflicting outcome still incomplete, not a retention completeness guarantee.

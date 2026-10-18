@@ -1,5 +1,12 @@
 # Mayi
 
+> Epoch extension (`0.4.1-10~status4`): see [BROKER_EPOCH.md](BROKER_EPOCH.md),
+> [RESTART_INVALIDATION.md](RESTART_INVALIDATION.md) and
+> [UPDATE_PREFLIGHT.md](UPDATE_PREFLIGHT.md). New queued IDs use authenticated
+> `rq_v2_` syntax; old `rq_32hex` examples describe legacy IDs only. Native
+> audit schema 1, history JSON 2 and ordinary live snapshot schema 1 remain.
+> History epoch separators are presentation only, never authorization.
+
 > **Request history correction:** `0.4.1-10~status3` shows only authoritative rq_/ch_ requests by default; `mayi history --events` exposes the broader audit trail. History JSON is now schema2 (live status/native schema1 unchanged). See HISTORY_CLASSIFICATION.md, HISTORY_EVENTS_MODE.md, HISTORY_JSON_COMPATIBILITY.md and FINAL_DECISION.md. No automatic installation/publication.
 
 > **CLI metadata development:** `0.4.1-10~status2` adds local `--version`/`-V` and help to both entrypoints. Executable arguments remain unchanged and approval-gated; use `--` for names colliding with internal commands/options. See CLI_DISPATCH_DESIGN.md, CLI_COMPATIBILITY.md and FINAL_DECISION.md. No automatic installation or release publication.

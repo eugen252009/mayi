@@ -1,18 +1,26 @@
-# History classification status3 installed matrix
+# Debian restart qualification matrix
 
-| Platform | Request-only/events/JSON/challenge+queue/native | Status/CLI/PAM/security | Package cycle |
+Candidate: 0.4.1-10~status4 amd64, runtime ee22b0a278c2c9110d29bfc37bffcff09ec66bee.
+SHA256: 6e785530c84cdf19eaac65419aa549f86290003d2e75c2642222218cba6c1d5e.
+
+| Platform | Primary process | Primary gates | Separate classification retry2 |
 |---|---|---|---|
-| Debian11 /systemd247.3-7+deb11u8 |PASS|PASS with explicit watch fixture rerun|PASS|
-| Debian12 /systemd252.39-1~deb12u2 |PASS|PASS|PASS|
-| Debian13 /systemd257.13-1~deb13u1 |PASS|PASS|PASS|
+| Debian 11 | exit 1 retained | 19 PASS / 1 fixture FAIL | PASS / exit 0 |
+| Debian 12 | exit 1 retained | 19 PASS / 1 fixture FAIL | PASS / exit 0 |
+| Debian 13 | exit 1 retained | 19 PASS / 1 fixture FAIL | PASS / exit 0 |
 
-Primary17-gate Debian12/13 exits0; Debian11 initialexit1/live-status-watch assertion failed (other16 PASS). Same package targeted Debian11 watch rerun exits0 with verified direct Python-child SIGINT, full transcript before assertions, resized TTY, unchanged termios and restored screen/cursor. Exact original missing-marker cause cannot be established because the first fixture didn't export that transcript. Both evidence sets retained; no initial failure relabeled. Independent audit validates the explicit exception and actual rerun. See HISTORY_REGRESSION_RESULTS.md.
+All new epoch/HMAC/error/history/preflight/crash/PAM gates passed in the primary
+runs. The failure and first failed retry are explained in RESTART_SECURITY_TESTS.
+Do not describe any primary run or first retry as exit0.
 
-Each platform classification yields3 actual ch_ requests and26 events (9 unassociated diagnostics), successful9-event root/PAM/broker correlation, request/event limit/status/challenge access checks and no broker counter mutation. Existing queued rq_ flow remains visible; history JSON2 vs status/native schema1 verified. Native totals differ by extra failure/retry diagnostics; raw counts in independent audit, not inferred. Source tests203 Python/9 SKIP,135+10 Rust,format/strictClippy/syntax PASS.
+Debian 11 clean build and independent clean rebuild are byte-identical.
+Rust/Cargo 1.95.0; GCC10; glibc 2.31-13+deb11u14; max imported GLIBC_2.30.
+Native binaries pass the mandatory ABI/hardening/dependency gate.
+Installed package cycling, real PAM, native Journald, strict expiry, one-shot,
+128-request live status/watch and command-bound execution passed on all three.
+All operations ran in task-owned disposable QEMU guests, not on the operator host.
 
-Actual installed package from pinned SHA, disposable child overlays/read-only historical backing disks. No host install/restart. Existing package manager failure capture/strict bounded lock waits retained; final primary cycles have no captured dpkg failures. Prior unrelated package anomalies remain in historical evidence.
-
-Two fresh Debian11 Cargo targets/locked offline builds identical, maxGLIBC2.30 within2.31, PIE/RELRO/NX/BIND_NOW/needed-library gate PASS. Runtime dependencies unchanged; no new library/crate/privileged IPC.
-
-
-Runtime/package source: e7f2cc3fe62722bc1bf85d0e502ce3ef2d3601e7. Development0.4.1-10~status3 amd64. Package and independent rebuild SHA-256:c8285db384a46b4f9489c9700c779171a1fc21b2390b0cae1233e08c9bbc8fbd.
+Evidence paths: restart-0.4.1-10-status4/debian{11,12,13}/raw/,
+classification-retry/ and classification-retry2/. The independent acceptance
+script requires original failures and retry2 separately. No outcome is inferred
+from missing logs or an overwritten result.
