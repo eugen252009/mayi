@@ -1,19 +1,51 @@
-# CONDITIONAL LOGGING GO
+# PACKAGE READY — INSTALLATION PENDING
 
-- Native fields: PASS (real native journal transport and journalctl JSON on Debian 11/12/13).
-- Request correlation: PASS throughout the broker's known queued lifecycle; LIMITATION for raw other-service records, which lack queue IDs in unchanged protocols. Existing challenge/execution IDs provide an explicit join. Do not claim a single RQ filter retrieves every helper/executor record.
-- Lifecycle semantics: PASS for tested proposal/view/approval/denial/expiration/claim/dispatch/observed result. Actual child spawn, failed spawn and unknown outcome are distinguished; no fictional cancellation state.
-- Privacy: PASS for bounded projection and installed marker tests; no credentials/arguments/output in audit data.
-- Journald failure: PASS for tested socket denial, saturation and actual daemon rate limiting; best-effort only, no durable/lossless guarantee. Physical disk-full not injected.
-- CLI/noninteractive compatibility and relevant source security regressions: PASS. 127+9 Rust; 68 Python with 9 explicitly skipped historical console cases. Format and strict Clippy PASS.
-- Installed platforms: PASS in stated scope, with Debian 13 package-cycle success on a separately recorded exact-artifact retry. Initial removal exit 2 remains an unexplained captured-output gap associated with concurrent unattended upgrade activity; it is not erased or called an application PASS.
-- ABI/package: PASS, max GLIBC_2.30, no added library/daemon ABI, package not installed on operator host or staged/published.
+Current development version: 0.4.1-10~journald6. Runtime/package source commit c511c7f948e4b811baec9e83976fec6ec5b898ba. Earlier journald5 had a genuine journal partition selection bug and remains unqualified; corrected version6 was built twice and independently qualified. No old identity overwritten.
 
-Conditional rather than unqualified GO because literal all-service Request-ID filtering is not possible without forwarding more context or joining existing IDs. No authorization protocol was changed just for logging, no ID was guessed, and history/privileged journal access were not expanded. Existing retention, rate limits, initial framing errors without known identity and process-crash loss also limit completeness. These are observability limits, not authorization grants.
+History implementation, default/read-only/native correlation, arguments/status/request/since/JSON, ACL denial, malformed/control/large data and restart behavior PASS. Unknown/incomplete historical records never become current broker state. No privilege expansion, root endpoint, second database, protocol change, capability restoration or replay.
 
-Preservation verification: complete externally pinned manifests for original/staged 0.4.1-8 and 0.4.1-9 PASS; old stage record pinned hash and new stage JSON match prior evidence; admission policy pinned hash unchanged; operator package remains 0.4.1-9~ui4 with dpkg -V PASS. Original dirty checkout was not edited; final status/working/index diffs are recorded in preservation-final.json. No new candidate release bundle or current selector was created.
+Source: 115 Python PASS /9 historical SKIP; 127+9 Rust PASS; strict Clippy/format PASS. Exact installed Debian 11/12/13: all eleven gates PASS, final exits 0, independent audit PASS. Final package/rebuild bytes identical and max GLIBC_2.30. Root-owned package, no setuid/setgid, correct dependencies, source module/docs verified. Original failed attempts and Debian 13 anomaly history retained/classified, not relabeled.
 
-Do not infer that this development qualification is a release/signing/publication approval. No source/release signature, tag, push, staging, upload, operator installation or deployment was performed by this task.
+Known limits: best-effort journal retention/rotation/rate limiting, 20k-record/16MiB/20s/2000-identity window; no unlimited export or production-scale disk latency claim. Older matching records outside the scan require direct targeted journalctl queries; --since alone cannot overcome all older-window omissions. Nonterminal states are last-observed only (question mark; JSON UNKNOWN). Boot/instance scopes remain separate. Correlation requires explicit unique broker bridges; unassociated diagnostics remain separate/incomplete. CANCELED is not fabricated. Access requires existing journal rights; no auto-elevation. Root/compromised emitter is not tamper-proof. Existing UI tiny-terminal limitations remain inherited, not fixed or newly claimed here.
+
+All eleven requested history/package reports are in the source worktree. Qualification: /home/eugen/projekte/mayi-qualification/history-0.4.1-10-journald6/. Raw native JSON, CLI stdout/status, termios records, independent audit and package/rebuild hashes retained.
+
+Qualified 0.4.1-9 and 0.4.1-8 originals/staged copies, stage wrappers, admission policy and original dirty main checkout/index verified unchanged. Operator remains 0.4.1-9~ui4. No host installation/restart, signing, tag, staging, publication/upload, push or deployment. This decision authorizes no such next step.
+
+## Local installation (NOT performed; separate approval required)
+
+Keep the existing approval console in its own interactive TTY. The human, not the agent, performs PAM authentication. In another terminal, after explicit installation approval:
+
+```sh
+mayi-approve
+# Separate terminal:
+mayi /usr/bin/systemd-run --unit=mayi-install-journald6 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~journald6_amd64.deb
+```
+
+A transient system unit keeps dpkg outside the services it replaces. Submission is NOT proof installation completed; inspect read-only results before doing anything else:
+
+```sh
+dpkg-query -W -f='${Version}\n' mayi
+dpkg -V mayi
+systemctl is-active mayi-broker mayi-pam-auth mayi-privileged-executor
+journalctl -u mayi-install-journald6 --no-pager
+mayi history --json
+```
+
+Do not automatically repeat an ambiguous Mayi result, force an existing unit name, bypass Mayi rejection, or widen journal permissions. Journal queries still need existing reader permissions.
+
+## Rollback (also requires explicit approval)
+
+Verified exact operator UI4 rollback preserved at dist/rollback/mayi_0.4.1-9~ui4_amd64.deb; SHA-256 5bf2eaa95826a63c4961ae1bc6b0affb6e946119f47466aa89302b2604bfa11a. No rebuild/purge/config deletion:
+
+```sh
+mayi /usr/bin/systemd-run --unit=mayi-rollback-ui4 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/rollback/mayi_0.4.1-9~ui4_amd64.deb
+dpkg-query -W -f='${Version}\n' mayi
+dpkg -V mayi
+systemctl is-active mayi-broker mayi-pam-auth mayi-privileged-executor
+journalctl -u mayi-rollback-ui4 --no-pager
+```
 
 
-Tested runtime/package source commit: `08a4d259a6ae7e9a17afecb31ab3cd5b6d9a4724` (unsigned development commit; no release tag). Development package: `0.4.1-10~journald4 amd64`, SHA-256 `cfeb6844af4b50e55ff20003da05ee5a2a686bbdb5bcf793b64e9fa3e6aa2167`.
+
+Package runtime/source commit: c511c7f948e4b811baec9e83976fec6ec5b898ba. Version: 0.4.1-10~journald6 amd64. Package and independent rebuild SHA-256: 7149d79e8aec0f8a7c119a9f8aa0f9ede00f7120cd2674c6b3754d2d8bccb51a.

@@ -1,18 +1,16 @@
-# Installed Debian qualification
+# Installed package matrix — journald6
 
-| Environment | Journald/native queries | PAM + terminal recovery | Execution/denial/signal/restart/expiry | Remove/reinstall |
+| Platform | systemd | Exact install/native/history/permissions/restart | PAM, identity, one-shot, expiry | Remove/reinstall |
 |---|---|---|---|---|
-| Debian 11 / systemd 247.3-7+deb11u8 | PASS | PASS | PASS | PASS |
-| Debian 12 / systemd 252.39-1~deb12u2 | PASS | PASS | PASS | PASS |
-| Debian 13 / systemd 257.13-1~deb13u1 | PASS | PASS | PASS | PASS after documented dedicated retry |
+| Debian 11 | 247.3-7+deb11u8 | PASS | PASS | PASS |
+| Debian 12 | 252.39-1~deb12u2 | PASS | PASS | PASS |
+| Debian 13 | 257.13-1~deb13u1 | PASS | PASS | PASS |
 
-This is actual installed package execution in disposable systemd VMs, not inferred from a build. No host installation. Original Debian 13 final attempt's package-cycle FAIL is preserved; other nine gates passed. Separate exact-byte lifecycle retry PASS (see TEST_RESULTS.md), with no forced package-manager flags or disabled updates.
+Eleven gates each, final exit 0 each, 248 raw native records each; independent audit PASS. Actual root and ordinary synthetic requester CLI invocations, real PTYs/PAM and journalctl records, not build-only inference. UID-split scope regression reproduced and corrected on all three. No journal group membership or security sandbox weakening needed.
 
-All platforms verify native _TRANSPORT=journal, UID/unit/PID/time metadata, queued broker correlation, three distinct views, numeric result/exit fields, absent optional fields, actual signal 15, separate pre-spawn failure, dropped records under tightened rate limits (3 of 80 views received), unavailable broker socket logging with explicit approval still required, and subsequent recovery. No journald access ACL/capability/sandbox weakening was needed: failure fixtures only strengthen the disposable broker's InaccessiblePaths or tighten log rate limits.
+Earlier journald4 Debian 13 package-cycle exit 2 had missing stderr; that cause remains historically unproven. This task captures every failed dpkg command's stderr/exit/time and package-manager process snapshot. Only explicit exit-2 lock errors receive a <=180-second cooperative wait; never force/unlock/kill package managers or disable security updates. Final journald6 Debian 11/13 cycles had no failed dpkg attempts. Debian 12 removal encountered 52 captured exit-2 attempts over 54.46 seconds: stderr identifies frontend-lock PID 1492 and process snapshots identify /usr/bin/unattended-upgrade. The bounded cooperative retry then completed the unchanged full cycle. All 52 attempts remain FAILED evidence, independently classified as package-manager contention; only the completed cycle is PASS. No lock was removed, package manager killed or security update disabled.
 
-Build: fresh Debian 11 Cargo release target, locked offline inputs, Rust/Cargo 1.95.0, existing exact TPA tool/build-deb.sh, SOURCE_DATE_EPOCH=1792195200. ABI checker enumerates both ELF files; max required GLIBC_2.30, within declared >=2.31. PIE/RELRO/NX/needed-library gate PASS. No libsystemd or newer daemon dependency added. Package controls retain established runtime dependencies; no new Rust dependencies. One build of this candidate is recorded; no new bit-reproducibility claim is inferred.
-
-Recorded files: candidate in dist/, exact source-v4.tar and source commit, builder/environment.txt/build-v4.log/.exit and abi-v4.json in the qualification directory. Earlier candidate packages/failed attempts remain distinct. No staging or publication.
+Fresh child overlays of historical Debian qualification bases; boot-provisioned synthetic fixtures only. Operator host not installed/restarted. Current final evidence under /home/eugen/projekte/mayi-qualification/history-0.4.1-10-journald6; initial failing history5 evidence retained separately. Both ELF max GLIBC_2.30, within Debian 11 >=2.31; systemd native/query compatibility confirmed through 257.
 
 
-Tested runtime/package source commit: `08a4d259a6ae7e9a17afecb31ab3cd5b6d9a4724` (unsigned development commit; no release tag). Development package: `0.4.1-10~journald4 amd64`, SHA-256 `cfeb6844af4b50e55ff20003da05ee5a2a686bbdb5bcf793b64e9fa3e6aa2167`.
+Package runtime/source commit: c511c7f948e4b811baec9e83976fec6ec5b898ba. Version: 0.4.1-10~journald6 amd64. Package and independent rebuild SHA-256: 7149d79e8aec0f8a7c119a9f8aa0f9ede00f7120cd2674c6b3754d2d8bccb51a.

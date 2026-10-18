@@ -1,0 +1,16 @@
+# History qualification results
+
+**PACKAGE READY — INSTALLATION PENDING.** Final source Python: 115 PASS, 9 explicit historical installed-console SKIP. Focused history: 47 PASS including parameterized limits/status/request/since/JSON/default, duplicate/missing/malformed/control/long fields, empty/redirected output, interrupted request observations, instance/boot separation, ambiguous/incomplete correlation, access/read errors and large sets. Rust 127+9 PASS, format and strict all-target Clippy PASS. Rust files/Cargo inputs unchanged byte-for-byte from the repeated source run to final candidate; rust-unchanged.diff records this.
+
+All eleven installed gates PASS on Debian 11/12/13, exact journald6 bytes: history; native lifecycle; rejected spawn vs completed child; actual wrong-PAM/SIGTERM/SIGKILL recovery; dispatch failure; denial/nonzero/signal/concurrent ownership; restart/one-shot/digest checks; unavailable logging; actual rate limiting; package remove/reinstall; real >300-second expiry.
+
+Actual history tests check full queue/PAM/executor timeline via explicit bridges, stable JSON/integers/nulls, default/limit/all/status/request/since/empty/invalid inputs, ordinary requester access denial (13), a private systemd read-only bind fault yielding reader failure (15), no group changes, no approval by viewing, retained terminal history and UNKNOWN incomplete state after broker restart, plus history after reinstall. Fault stub is confined to a disposable transient unit, never an existing Mayi unit or host. Native records use real Journald; not mocked JSON exclusively.
+
+Initial journald5 failed history on all three guests (other ten gates passed). Waiting for native visibility did NOT fix it. Root cause: --system excludes UID-split broker journal files. Journald6 removes that option while preserving kernel unit/UID/schema filters. Final scope probes show 2 request records with normal scope and 0 with --system on each distro. Original failed package, primary results and retry results remain in sibling history-0.4.1-10-journald5; never relabeled PASS or overwritten. This was a real reader correctness bug, not an unattended-upgrade excuse.
+
+Final Debian 12 package removal also captured 52 lock-denied dpkg attempts over 54.46 seconds, with frontend-lock PID 1492 independently shown as unattended-upgrade in process snapshots. The driver waited cooperatively, then completed the full cycle. These are preserved failed attempts, not relabeled application successes. Debian 11/13 final cycles had no such failure. See package-lock-classification.json.
+
+Independent check_results.py validates exact bytes, all gate maps and exit codes, JSON/timeline/source/permission/fault/restart/expiry/termios/privacy/scope evidence. See independent-audit.json, collection-status.json, debian*/raw/journald-results/. Data/timezone/layout bounds and retention limitations are documented, not hidden. Physical journal-disk-full, 24-hour queue expiry and production-scale storage timing are not newly qualified.
+
+
+Package runtime/source commit: c511c7f948e4b811baec9e83976fec6ec5b898ba. Version: 0.4.1-10~journald6 amd64. Package and independent rebuild SHA-256: 7149d79e8aec0f8a7c119a9f8aa0f9ede00f7120cd2674c6b3754d2d8bccb51a.
