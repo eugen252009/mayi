@@ -22,3 +22,7 @@ auth-local*
 test-results/
 *.sock
 *.pid
+
+# Local development packages, rollback artifacts and disposable build VM
+dist/
+local-install/
