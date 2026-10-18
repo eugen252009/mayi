@@ -4099,7 +4099,7 @@ mod tests {
         let expanded = approval_ui::render(&rows, &[0], true, 0, 100, 100).0;
         assert!(expanded.contains("[Space] Less information"));
         assert!(expanded.contains("request_id"));
-        assert!(rendered.contains("foo  -> root"));
+        assert!(rendered.contains("foo 'hello world'"));
         assert!(expanded.contains("hello world"));
         assert!(expanded.contains("$HOME"));
         assert!(expanded.contains("; touch /tmp/pwned"));

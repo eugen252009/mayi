@@ -55,7 +55,7 @@ pub(super) fn render(
         } else {
             format!("[{index}] ")
         };
-        body.push_str(&format!("{label}{}  -> root\n", program(path)));
+        body.push_str(&format!("{label}{}", program(path)));
         let basename = path.rsplit('/').next().unwrap_or("");
         let wrapper = [
             "sh", "bash", "dash", "zsh", "fish", "env", "sudo", "su", "busybox", "xargs", "find",
@@ -63,9 +63,7 @@ pub(super) fn render(
         ]
         .contains(&basename)
             || basename.starts_with("python");
-        if wrapper {
-            body.push_str("Interprets commands or runs other programs\n");
-        }
+        let mut custom_argv0 = false;
         if let Some(args) = op["argv"].as_array() {
             let arguments = args
                 .iter()
@@ -75,17 +73,19 @@ pub(super) fn render(
                 .join(" ");
             let limit = width.clamp(12, 100).saturating_sub(5).min(68);
             if arguments.len() > limit {
-                body.push_str(&format!(
-                    "  {}\n  ... more in details\n",
-                    &arguments[..limit]
-                ));
+                body.push_str(&format!(" {} ... [more in details]", &arguments[..limit]));
             } else if !arguments.is_empty() {
-                body.push_str(&format!("  {arguments}\n"));
+                body.push_str(&format!(" {arguments}"));
             }
             let argv0 = args.first().and_then(Value::as_str).unwrap_or("");
-            if argv0 != path && argv0 != basename {
-                body.push_str("Custom argv[0] -- inspect details\n");
-            }
+            custom_argv0 = argv0 != path && argv0 != basename;
+        }
+        body.push('\n');
+        if wrapper {
+            body.push_str("Interprets commands or runs other programs\n");
+        }
+        if custom_argv0 {
+            body.push_str("Custom argv[0] -- inspect details\n");
         }
         body.push_str(&format!(
             "Requested by UID {} | One use\n",
@@ -254,7 +254,8 @@ mod tests {
         let (text, pages) = render(&rows, &[0], false, 0, 80, 24);
         assert_eq!(pages, 1);
         assert!(text.lines().count() <= 15, "{text}");
-        assert!(text.contains("bash  -> root"));
+        assert!(text.contains("bash -c 'echo hello'"));
+        assert!(!text.contains("-> root"));
         assert!(text.contains("-c 'echo hello'"));
         assert!(text.contains("Interprets commands"));
         for noise in [
@@ -273,6 +274,20 @@ mod tests {
         let (expanded, _) = render(&rows, &[0], true, 0, 100, 100);
         assert!(expanded.contains("/usr/bin/bash"));
         assert!(expanded.contains("request_digest"));
+    }
+
+    #[test]
+    fn simple_command_is_one_line_and_executor_stays_in_details() {
+        let rows = vec![
+            json!({"requester_uid":1000,"queue_state":"PENDING_APPROVAL",
+            "operations":[{"type":"exec","executable":"/usr/bin/echo","argv":["echo","hallo"]}]}),
+        ];
+        let (compact, _) = render(&rows, &[0], false, 0, 80, 24);
+        assert!(compact.lines().any(|line| line == "echo hallo"));
+        assert!(!compact.contains("-> root"));
+        let (details, _) = render(&rows, &[0], true, 0, 100, 100);
+        assert!(details.contains("Executor: UID 0 / GID 23012"));
+        assert!(details.contains("/usr/bin/echo"));
     }
 
     #[test]
