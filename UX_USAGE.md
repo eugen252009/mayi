@@ -1,4 +1,4 @@
-# UI candidate usage
+# Mayi 0.4.1-11 interface usage
 
 `mayi-approve status` is a compact observation, not an authorization or process inventory. `--details` exposes all old counters; `--json` is unchanged. `--watch` uses ANSI only on a recognized TTY. `--watch --plain` explicitly chooses append-only human snapshots without ANSI, including redirected/dumb terminals. Use `--watch --json` for NDJSON. A detailed ANSI canvas that cannot fit is rejected with a plain-mode/resize suggestion rather than drawing invisible data. `status --preflight` codes/semantics are unchanged.
 
