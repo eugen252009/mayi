@@ -1,29 +1,52 @@
 # Mayi
 
-**STABLE — ACTIVELY MAINTAINED.** Mayi lets an unprivileged requester propose an
-exact executable/argv for explicit human approval and PAM authentication before
-privileged execution. Submission, authentication, approval, consumption and actual
-execution are distinct events. Mayi is not a command-safety analyzer.
+**STABLE — ACTIVELY MAINTAINED.** Mayi lets an unprivileged agent or application
+request an exact executable and argument vector for explicit human approval and
+PAM authentication before root execution. It is not a command-safety analyzer:
+the human must assess the program and every argument, especially an interpreter.
 
-**Start at [PROJECT_STATUS.md](PROJECT_STATUS.md)** for the current0.4.1-11 baseline,
-supported scope and release identity. **[docs/INDEX.md](docs/INDEX.md)** owns current
-documentation navigation and the authority hierarchy.
+**Start with [PROJECT_STATUS.md](PROJECT_STATUS.md) and the [Documentation Index](docs/INDEX.md).**
+The index answers **what exists, why it exists, and where its implementation,
+tests and evidence live**, including a [Why Does This Exist?](docs/INDEX.md#why-does-this-exist)
+table and [component map](docs/INDEX.md#component-map).
 
-Canonical checkout: **/home/eugen/projekte/mayi/**.
-Python lives in [mayi/](mayi/); the Rust broker/PAM/UI/executor in
-[executor/src/](executor/src/); packaging in [executor/package/](executor/package/).
-[Development/build/tests](docs/DEVELOPMENT.md), [security/lifecycle](docs/SECURITY_MODEL.md),
-[operations](docs/OPERATIONS.md), [qualification](docs/QUALIFICATION.md) and
-[limitations](docs/LIMITATIONS.md) are current references.
+## Supported scope
 
-Root legacy reports are compatibility pointers or explicitly scoped supporting
-package references, not alternative current release decisions. [Historical index](docs/historical/INDEX.md)
-preserves originals and maps earlier worktrees. No current tests are archived.
-No new package, feature, installation, signing, push or publication is implied.
+Qualified release **0.4.1-11**, **Debian11/12/13 amd64**. Canonical development
+checkout: **/home/eugen/projekte/mayi/**, independent Git storage, authoritative
+**main** on GitHub. Justified security, correctness, compatibility, usability,
+measured performance and new-functionality work remains open.
 
-Bugs, security concerns, demonstrated workflow/compatibility/performance problems
-and justified new capabilities remain welcome. There is no immediate feature
-backlog requirement and no permanent feature freeze. See [agent guidance](AGENTS.md).
+- Exact-command ownership/binding, explicit human/PAM approval and one-shot claims.
+- Per-console authenticated sessions, strict consumption-time expiry and epoch invalidation.
+- Synchronous/queued requests and dependencies; read-only wait/status/preflight.
+- Bounded review UI, native Journald and historical request/diagnostic views.
 
+Filesystem execution is **DISCONNECTED / INCOMPLETE**; other platforms/custom PAM
+are unqualified. One-shot authorization is not general exactly-once effects.
+See [security](docs/security/SECURITY_MODEL.md) and [limitations](docs/security/LIMITATIONS.md).
+
+## Basic workflow
+
+A requester can submit, for example, `mayi /usr/bin/id`. In a separate human-owned
+interactive TTY, `mayi-approve` authenticates and presents the exact operation.
+Nothing executes without an explicit accepted decision. `mayi --help` and
+`mayi --version` are local metadata commands, not requests.
+Read [operations](docs/user/OPERATIONS.md) before privileged use; examples are not
+authorization to run them. Never automate real PAM credentials or retry uncertain
+side effects automatically.
+
+## Installation and development
+
+Obtain the **exact qualified package** through the authorized release workflow,
+verify its provenance/hash, and separately authorize installation/account setup.
+This repository's version/status is not proof of current APT availability or
+permission to install/restart. [Qualification](docs/qualification/QUALIFICATION.md)
+records identities and central signing/admission/publication prerequisites.
+[Development/build instructions](docs/development/DEVELOPMENT.md) describe external
+dependencies, source checks and release boundaries; do not rebuild immutable11.
+
+[AGENTS.md](AGENTS.md) guides coding agents. [Historical index](docs/historical/INDEX.md)
+retains earlier investigations without presenting them as current specifications.
 Contact [mayi@lupricht.net](mailto:mayi@lupricht.net); report vulnerabilities privately
-via [SECURITY.md](SECURITY.md). [MIT license](LICENSE).
+through [SECURITY.md](SECURITY.md). [MIT license](LICENSE).

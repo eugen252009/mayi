@@ -3,9 +3,12 @@
 Current authority is [docs/INDEX](../INDEX.md), not a historical verdict below.
 The source-era documents at baseline-3b6/ are exact bytes from commit
 3b6b6127c6af682e3f7894dd1b98bac31a04a2e3 (before consolidation).
-Root compatibility pointers preserve former entry paths. A snapshot's relative
-links/anchors are interpreted at its ORIGINAL path in that commit, not relative
-to the archival subdirectory. Use the pinned GitHub source view below when browsing
+The disposition table below records the earlier consolidation, not a promise
+that every former root alias remains on current main. [The current move map](navigation-03318f6/INDEX.md)
+records relocated root navigation, release notes, audits and experiments.
+Nine former docs-level canonical URLs retain compatibility entries; the21
+package-required root references remain. A snapshot's relative links/anchors
+are interpreted at its ORIGINAL path/commit, not relative to the archive. Use the pinned GitHub source view below when browsing
 original links; offline use git show 3b6b612:ORIGINAL_PATH. This mapping preserves
 history without silently editing evidence or adding source-tree symlinks.
 Historical AGENTS text has .txt suffix so it cannot become competing agent policy.
@@ -111,13 +114,26 @@ is independent of that storage. Original verified backup/consolidation receipts
 remain under mayi-qualification/repository-consolidation/; standalone-main topology,
 integrity, validation and source-push receipts are under mayi-qualification/main-finalization/.
 
+## Historical organization and original bases
+
+- [Audits](audits/AUDIT_REPORT_0.4.1-4.md): original bodies moved from older-audits/, interpreted at their old paths in03318f689fb70678366de06c3bfa038c00a71567.
+- [Experiments](experiments/README.md): original docs/history/ tree, same pinned03318f6 base; filesystem research remains incomplete.
+- [Release freeze10](releases/RELEASE_FREEZE_0.4.1-10.md) and [freeze11](releases/RELEASE_FREEZE_0.4.1-11.md): exact former root text at03318f6, not current operational permissions.
+- [Former root navigation](navigation-03318f6/INDEX.md): exact alias receipts from03318f6; their old relative links resolve against that commit/root.
+- baseline-3b6/: original exact texts at3b6b6127c6af682e3f7894dd1b98bac31a04a2e3, as mapped above. Historical AGENTS .txt is not active policy.
+
+No historical conclusion or failed result is rewritten. Current references have
+one owner under architecture/, security/, user/, development/ or qualification/.
+For old unversioned GitHub main URLs, use the move map or the pinned original view;
+GitHub does not provide redirects for removed historical root aliases.
+
 ## Earlier research and qualification
 
-[Existing historical research](../history/README.md) remains unchanged.
-[Filesystem test isolation](../TEST_ISOLATION.md) still governs actual tests;
+[Existing historical research](experiments/README.md) remains unchanged.
+[Filesystem test isolation](../development/TEST_ISOLATION.md) still governs actual tests;
 filesystem source/tests are not archived or enabled by documentation reclassification.
 Release8/9/10/11 artifacts and raw qualifications remain in their existing external
-immutable locations; current identity and evidence are indexed by [qualification](../QUALIFICATION.md).
+immutable locations; current identity and evidence are indexed by [qualification](../qualification/QUALIFICATION.md).
 Earlier source reports may describe old PAM-per-decision behavior, legacy IDs,
 failed ABI packages, unqualified UIs or old host installations. Preserve those
 facts without projecting them onto current11 or relabelling failures as passes.
@@ -130,7 +146,7 @@ from the older dirty checkout in older-audits/, with current root compatibility
 pointers. This repairs current access, NOT the historical3b6 Git object. Their
 original SHA256/provenance is recorded outside source in recovered-historical-documents.json.
 
-- [AUDIT_REPORT_0.4.1-3.md](older-audits/AUDIT_REPORT_0.4.1-3.md), SHA256 e3ffbf4c262209053a0582526ee51e4e8347e15dd29c39e3fffe5f957fc4c59f
-- [AUDIT_REPORT_0.4.1-4.md](older-audits/AUDIT_REPORT_0.4.1-4.md), SHA256 1148eb1c33f50d4fa0ba31955eb510bded4ed9f4edb8d000bb65240ab72520dd
-- [AUDIT_REPORT_0.4.1-6.md](older-audits/AUDIT_REPORT_0.4.1-6.md), SHA256 56fa70aeb3d07ebc328e63a4aaef0ce825869d7f82a32c7db660abe9a2cb373b
-- [RELEASE_REPORT_0.4.1-6.md](older-audits/RELEASE_REPORT_0.4.1-6.md), SHA256 0192a936986bd8c81ff8e61d1bdd1214f1aa82b01eeae5186fd15b187662a9f8
+- [AUDIT_REPORT_0.4.1-3.md](audits/AUDIT_REPORT_0.4.1-3.md), SHA256 e3ffbf4c262209053a0582526ee51e4e8347e15dd29c39e3fffe5f957fc4c59f
+- [AUDIT_REPORT_0.4.1-4.md](audits/AUDIT_REPORT_0.4.1-4.md), SHA256 1148eb1c33f50d4fa0ba31955eb510bded4ed9f4edb8d000bb65240ab72520dd
+- [AUDIT_REPORT_0.4.1-6.md](audits/AUDIT_REPORT_0.4.1-6.md), SHA256 56fa70aeb3d07ebc328e63a4aaef0ce825869d7f82a32c7db660abe9a2cb373b
+- [RELEASE_REPORT_0.4.1-6.md](audits/RELEASE_REPORT_0.4.1-6.md), SHA256 0192a936986bd8c81ff8e61d1bdd1214f1aa82b01eeae5186fd15b187662a9f8

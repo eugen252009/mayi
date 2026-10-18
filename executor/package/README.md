@@ -1,7 +1,7 @@
 # Debian packaging reference
 
-Current authoritative [build/development instructions](../../docs/DEVELOPMENT.md)
-and [qualification index](../../docs/QUALIFICATION.md) replace the old candidate5
+Current authoritative [build/development instructions](../../docs/development/DEVELOPMENT.md)
+and [qualification index](../../docs/qualification/QUALIFICATION.md) replace the old candidate5
 guide. [The exact former guide](../../docs/historical/baseline-3b6/executor/package/README.md)
 is preserved as versioned history, not current PAM/session or ABI guidance.
 
