@@ -57,8 +57,19 @@ cp "$ROOT/executor/package/usr/lib/tmpfiles.d/mayi.conf" "$PKGROOT/usr/lib/tmpfi
 install -m 0644 "$ROOT/executor/package/etc/pam.d/mayi-approve" "$PKGROOT/etc/pam.d/mayi-approve"
 install -m 0644 "$ROOT/executor/package/usr/share/doc/mayi/copyright" \
   "$PKGROOT/usr/share/doc/mayi/copyright"
-for doc in HISTORY_DESIGN HISTORY_SCHEMA HISTORY_CORRELATION HISTORY_SECURITY STATUS_DESIGN QUEUE_STATE_MAPPING STATUS_PROTOCOL STATUS_SECURITY STATUS_JSON_SCHEMA STATUS_WATCH_MODE CLI_DISPATCH_DESIGN CLI_COMPATIBILITY HISTORY_CLASSIFICATION HISTORY_EVENTS_MODE HISTORY_JSON_COMPATIBILITY BROKER_EPOCH RESTART_INVALIDATION UPDATE_PREFLIGHT PORTA_RECOVERY_CONTRACT EXECUTION_OUTCOME_SEMANTICS UX_USAGE; do
-  install -m 0644 "$ROOT/$doc.md" "$PKGROOT/usr/share/doc/mayi/$doc.md"
+# Preserve the documentation set and its relative links under topic directories.
+for doc in architecture/HISTORY_DESIGN architecture/HISTORY_SCHEMA \
+  architecture/HISTORY_CORRELATION security/HISTORY_SECURITY \
+  architecture/STATUS_DESIGN architecture/QUEUE_STATE_MAPPING \
+  architecture/STATUS_PROTOCOL security/STATUS_SECURITY \
+  architecture/STATUS_JSON_SCHEMA user/STATUS_WATCH_MODE \
+  architecture/CLI_DISPATCH_DESIGN user/CLI_COMPATIBILITY \
+  architecture/HISTORY_CLASSIFICATION user/HISTORY_EVENTS_MODE \
+  architecture/HISTORY_JSON_COMPATIBILITY security/BROKER_EPOCH \
+  security/RESTART_INVALIDATION user/UPDATE_PREFLIGHT \
+  architecture/PORTA_RECOVERY_CONTRACT security/EXECUTION_OUTCOME_SEMANTICS \
+  user/UX_USAGE; do
+  install -D -m 0644 "$ROOT/docs/$doc.md" "$PKGROOT/usr/share/doc/mayi/$doc.md"
 done
 printf '%s\n' /etc/pam.d/mayi-approve > "$PKGROOT/DEBIAN/conffiles"
 chmod 0644 "$PKGROOT/DEBIAN/conffiles"

@@ -39,6 +39,9 @@ def audit(root):
  if cp.returncode:raise ValueError('requires a Git checkout with historical objects')
  files=sorted({x for x in cp.stdout.decode().split('\0') if x and (root/x).is_file()})
  md=[x for x in files if x.endswith('.md')]
+ root_md=sorted(p.name for p in root.iterdir() if p.suffix.lower()=='.md')
+ if root_md!=['AGENTS.md','PROJECT_STATUS.md','README.md'] or any(p.is_symlink() for p in root.iterdir() if p.suffix.lower()=='.md'):
+  errors.append({'error':'root Markdown must be exactly three regular entrypoints','actual':root_md})
  # Check archived manpage/AGENTS bytes too, not only Markdown.
  for name in files:
   spec=original(name)

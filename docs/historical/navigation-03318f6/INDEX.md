@@ -9,8 +9,10 @@ from the index. No historical conclusion is edited to update its commands.
 
 GitHub cannot redirect removed historical main/root URLs. The move map makes
 that change explicit; version-pinned originals remain available. Former current
-docs-level URLs have small compatibility pointers. The21 root files still used
-by unchanged build-deb.sh remain at their tool-required paths.
+docs-level URLs have small compatibility pointers. The21 former root package
+inputs now live under their topics; [the subsequent22-file map](../../development/ROOT_DOCUMENTATION_MAP.md)
+records those moves and the security-policy move. Their shell input paths were
+configurable, not an external root-location requirement.
 
 ## Complete move map
 

@@ -80,7 +80,7 @@ Each broker starts a fresh192-bit epoch. Memory-held requests/views/approvals/
 sessions are not restored. The private32-byte request-ID provenance key persists,
 not authority. Authenticated old rq_v2 IDs can prove old authority invalid but
 cannot prove execution absent. Forged/lost-key/current-missing identities fail
-closed without reconstructing RAM state. See [epoch details](../../BROKER_EPOCH.md).
+closed without reconstructing RAM state. See [epoch details](BROKER_EPOCH.md).
 
 Root child start, completion and definitive rejection are distinct observations.
 A broker restart, missing log, timeout or lost reply never proves failure or safe

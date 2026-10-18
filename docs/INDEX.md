@@ -90,15 +90,15 @@ Source: [broker](../executor/src/broker.rs), [operation model](../mayi/operation
 ## Broker Restart and Epochs
 
 [Epoch/restart/outcome contract](security/SECURITY_MODEL.md#epoch-restart-and-conservative-outcome)
-and [epoch details](../BROKER_EPOCH.md) explain fresh broker identities, authenticated
+and [epoch details](security/BROKER_EPOCH.md) explain fresh broker identities, authenticated
 rq_v2 provenance and fail-closed stale authority. **Why it exists:** old authority
 must not revive, but absence of RAM state alone cannot authenticate an old ID or
-prove an operation did not run. [Restart details](../RESTART_INVALIDATION.md) and
-[outcome semantics](../EXECUTION_OUTCOME_SEMANTICS.md) preserve that distinction.
+prove an operation did not run. [Restart details](security/RESTART_INVALIDATION.md) and
+[outcome semantics](security/EXECUTION_OUTCOME_SEMANTICS.md) preserve that distinction.
 Source: [epoch fence](../executor/src/broker_epoch.rs), [IDs](../executor/src/request_ids.rs),
 [client IDs](../mayi/request_ids.py), [evidence-only recovery](../mayi/recovery.py).
 Tests: [epoch Rust](../executor/src/broker_epoch_tests.rs), [epoch Python](../tests/test_epochs.py).
-[Porta guidance](../PORTA_RECOVERY_CONTRACT.md) changes no Porta code and never
+[Porta guidance](architecture/PORTA_RECOVERY_CONTRACT.md) changes no Porta code and never
 licenses automatic replay. See [D07–D09](decisions/INDEX.md#d07-epoch-bound-authenticated-request-identities).
 
 ## CLI and Approval Interface
@@ -108,8 +108,8 @@ licenses automatic replay. See [D07–D09](decisions/INDEX.md#d07-epoch-bound-au
 review the exact bound request while keeping controls/executor visible and
 preserving child argv and original selection indices. Paging/new arrivals do
 not change approval scope; UI order does not change execution order.
-[UI detail](../UX_USAGE.md), [CLI compatibility](../CLI_COMPATIBILITY.md) and
-[dispatch design](../CLI_DISPATCH_DESIGN.md) are package-owned detail references.
+[UI detail](user/UX_USAGE.md), [CLI compatibility](user/CLI_COMPATIBILITY.md) and
+[dispatch design](architecture/CLI_DISPATCH_DESIGN.md) are package-owned detail references.
 Source: [CLI](../mayi/cli.py), [metadata](../mayi/cli_metadata.py),
 [approval entry](../mayi/approval_cli.py), [renderer](../executor/src/approval_ui.rs),
 [waiting](../mayi/progress.py). Tests: [dispatch](../tests/test_cli_dispatch.py),
@@ -125,10 +125,10 @@ native fields and read-only projection. **Why it exists:** give searchable
 correlated observations without granting a history service authorization power.
 Unassociated PAM/health/executor events are diagnostics, not invented requests;
 UNKNOWN is historical uncertainty, not a live pending row.
-Details: [reader design](../HISTORY_DESIGN.md), [schema2](../HISTORY_SCHEMA.md),
-[correlation](../HISTORY_CORRELATION.md), [request proof](../HISTORY_CLASSIFICATION.md),
-[diagnostic events](../HISTORY_EVENTS_MODE.md), [JSON compatibility](../HISTORY_JSON_COMPATIBILITY.md),
-[security boundary](../HISTORY_SECURITY.md).
+Details: [reader design](architecture/HISTORY_DESIGN.md), [schema2](architecture/HISTORY_SCHEMA.md),
+[correlation](architecture/HISTORY_CORRELATION.md), [request proof](architecture/HISTORY_CLASSIFICATION.md),
+[diagnostic events](user/HISTORY_EVENTS_MODE.md), [JSON compatibility](architecture/HISTORY_JSON_COMPATIBILITY.md),
+[security boundary](security/HISTORY_SECURITY.md).
 Source: [native emitter](../executor/src/audit.rs), [history](../mayi/history.py).
 Tests: [audit Rust](../executor/src/broker_audit_tests.rs), [history](../tests/test_history.py),
 [classification](../tests/test_history_classification.py). Rationale: [D10](decisions/INDEX.md#d10-bounded-native-audit-and-journal-backed-history).
@@ -139,9 +139,9 @@ Tests: [audit Rust](../executor/src/broker_audit_tests.rs), [history](../tests/t
 read-only snapshot, reconnect/ANSI/plain behavior and READY/BUSY/UNKNOWN.
 **Why it exists:** distinguish claimed dispatch from observed child spawn without
 turning a query into admission control or authorization cleanup.
-Details: [design](../STATUS_DESIGN.md), [protocol](../STATUS_PROTOCOL.md),
-[schema1](../STATUS_JSON_SCHEMA.md), [counter mapping](../QUEUE_STATE_MAPPING.md),
-[watch](../STATUS_WATCH_MODE.md), [security](../STATUS_SECURITY.md), [preflight](../UPDATE_PREFLIGHT.md).
+Details: [design](architecture/STATUS_DESIGN.md), [protocol](architecture/STATUS_PROTOCOL.md),
+[schema1](architecture/STATUS_JSON_SCHEMA.md), [counter mapping](architecture/QUEUE_STATE_MAPPING.md),
+[watch](user/STATUS_WATCH_MODE.md), [security](security/STATUS_SECURITY.md), [preflight](user/UPDATE_PREFLIGHT.md).
 Source: [snapshot](../executor/src/queue_snapshot.rs), [status client](../mayi/approval_status.py).
 Tests: [snapshot](../executor/src/queue_snapshot_tests.rs), [client/watch](../tests/test_approval_status.py).
 [D11](decisions/INDEX.md#d11-observe-running-work-without-controlling-admission) records the dispatch/start discovery.
@@ -154,7 +154,7 @@ exact source/package identities, deterministic oldest-supported build inputs,
 ABI/hardening gates and separation of publication from deployment.
 Source: [product metadata](../executor/package/tpa.json), [version loader](../mayi/version.py),
 [builder](../executor/package/build-deb.sh), [ABI checker](../executor/package/verify_abi.py),
-[units](../executor/package/usr/lib/systemd/system/), [lifecycle scripts](../executor/package/DEBIAN/),
+[units](../executor/package/usr/lib/systemd/system), [lifecycle scripts](../executor/package/DEBIAN),
 [Cargo lock](../executor/Cargo.lock). Checks: [ABI regressions](../tests/test_abi_verification.py),
 [package identities](../tests/test_package_account_ownership.py).
 [Filesystem fixture isolation](development/TEST_ISOLATION.md) governs existing tests,
@@ -163,13 +163,14 @@ NOT permission to enable production filesystem execution.
 local link/anchor, historical-identity and index/rationale coverage checks without
 a website/search daemon; see the [command](development/DEVELOPMENT.md#local-tests-not-production-qualification).
 
-**Root layout constraint:** 21 root detail Markdown files above are exact inputs
-of the unchanged package builder. They remain at those tool-required paths, with
-one copy each; this task does not change packaging logic, rebuild11 or replace them
-with broken installed links. All obsolete root navigation/report aliases moved
-under [historical navigation](historical/navigation-03318f6/INDEX.md). Only README,
-PROJECT_STATUS, AGENTS, GitHub-discovered SECURITY policy and those21 tool inputs
-remain as root Markdown. Topic guides live here, not as duplicate root specs.
+**Minimal root:** only README.md, PROJECT_STATUS.md and AGENTS.md remain there.
+The21 package detail inputs now live under architecture/, security/ and user/;
+the builder's explicit source/install paths follow those topics, preserving
+relative cross-document links. These were configurable project paths, not an
+external root-placement requirement. GitHub discovers the [security policy](SECURITY.md)
+in docs/ too. [Packaging path contract](development/DEVELOPMENT.md#documentation-packaging-paths)
+and [root migration map](development/ROOT_DOCUMENTATION_MAP.md) explain all22 moves,
+installed paths and original pinned views. No qualified11 artifact is rebuilt.
 
 ## Security Qualification
 
@@ -221,12 +222,12 @@ supporting source/tests/history. An accepted limitation is NOT invented design h
 | Session lifetime | [console_sessions.rs](../executor/src/console_sessions.rs) | [D05](decisions/INDEX.md#d05-per-process-sliding-console-authentication) | Process/TTY binding; [session tests](../executor/src/console_session_tests.rs) |
 | Human UI and waiting | [approval_ui.rs](../executor/src/approval_ui.rs), [progress.py](../mayi/progress.py) | [UI](user/OPERATIONS.md#human-approval-and-waiting) | Review without changing authorization/scheduling; [PTY tests](../executor/src/ui_pty_tests.rs) |
 | Root execution | [privileged-executor.rs](../executor/src/bin/mayi-privileged-executor.rs) | [execution boundary](architecture/ARCHITECTURE.md#execution-not-semantic-analysis) | Trusted broker's stored command, durable one-shot claim |
-| Request identity and shutdown | [request_ids.rs](../executor/src/request_ids.rs), [broker_epoch.rs](../executor/src/broker_epoch.rs) | [epochs](../BROKER_EPOCH.md) | Provenance/fencing, no authority resurrection; [tests](../executor/src/broker_epoch_tests.rs) |
+| Request identity and shutdown | [request_ids.rs](../executor/src/request_ids.rs), [broker_epoch.rs](../executor/src/broker_epoch.rs) | [epochs](security/BROKER_EPOCH.md) | Provenance/fencing, no authority resurrection; [tests](../executor/src/broker_epoch_tests.rs) |
 | Native audit | [audit.rs](../executor/src/audit.rs) | [audit/history](user/OPERATIONS.md#native-audit-and-history) | Bounded best effort; [audit tests](../executor/src/broker_audit_tests.rs) |
 | History and recovery classification | [history.py](../mayi/history.py), [recovery.py](../mayi/recovery.py) | [D09/D10](decisions/INDEX.md#d09-conservative-outcomes-and-no-automatic-replay) | Explicit correlations, no replay; [history tests](../tests/test_history_classification.py) |
 | Live aggregate/watch | [queue_snapshot.rs](../executor/src/queue_snapshot.rs), [approval_status.py](../mayi/approval_status.py) | [status](user/OPERATIONS.md#live-statuswatchpreflight) | Snapshot not control; [counter tests](../executor/src/queue_snapshot_tests.rs) |
 | Package and ABI | [tpa.json](../executor/package/tpa.json), [builder](../executor/package/build-deb.sh), [ABI gate](../executor/package/verify_abi.py) | [build](development/DEVELOPMENT.md#reproduction-and-release-boundaries) | Exact artifact identity/dependencies/hardening |
-| Regression suites/manuals | [tests/](../tests/), [Rust tests](../executor/src/), [man/](../man/) | [qualification](qualification/QUALIFICATION.md) | Executable checks and operator reference, not unsupported proof |
+| Regression suites/manuals | [tests/](../tests), [Rust tests](../executor/src), [man/](../man) | [qualification](qualification/QUALIFICATION.md) | Executable checks and operator reference, not unsupported proof |
 | Disconnected filesystem core | [filesystem.rs](../executor/src/filesystem.rs) | [status](security/FILESYSTEM_EXECUTOR_STATUS.md) | Experimental only; [isolation](development/TEST_ISOLATION.md) does not enable it |
 
 ## Design Decisions

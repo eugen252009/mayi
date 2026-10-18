@@ -1,6 +1,6 @@
 # History design
 
-**status3 correction:** default rows are now only authoritative broker-lifecycle rq_/ch_ requests; diagnostics move to --events. History JSON is schema2; see HISTORY_CLASSIFICATION.md, HISTORY_EVENTS_MODE.md and HISTORY_JSON_COMPATIBILITY.md. These supersede the original mixed-identity v1 contract below.
+**status3 correction:** default rows are now only authoritative broker-lifecycle rq_/ch_ requests; diagnostics move to --events. History JSON is schema2; see HISTORY_CLASSIFICATION.md, ../user/HISTORY_EVENTS_MODE.md and HISTORY_JSON_COMPATIBILITY.md. These supersede the original mixed-identity v1 contract below.
 
 `mayi history` is a Python-standard-library read-only projection of the existing native journal. It never connects to either broker socket, authenticates an approver, executes a request, restores a capability or reads the executor claim ledger.
 

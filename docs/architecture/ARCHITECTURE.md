@@ -37,8 +37,8 @@ strong same-account isolation claims.
 
 The PAM helper is bounded to CAP_DAC_READ_SEARCH with NoNewPrivileges and
 systemd sandboxing. The executor intentionally has broad approved-command
-privilege. See actual [units](../../executor/package/usr/lib/systemd/system/)
-and [maintainer scripts](../../executor/package/DEBIAN/) for enforced settings.
+privilege. See actual [units](../../executor/package/usr/lib/systemd/system)
+and [maintainer scripts](../../executor/package/DEBIAN) for enforced settings.
 
 ## Execution, not semantic analysis
 

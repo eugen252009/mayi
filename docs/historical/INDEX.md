@@ -6,8 +6,9 @@ The source-era documents at baseline-3b6/ are exact bytes from commit
 The disposition table below records the earlier consolidation, not a promise
 that every former root alias remains on current main. [The current move map](navigation-03318f6/INDEX.md)
 records relocated root navigation, release notes, audits and experiments.
-Nine former docs-level canonical URLs retain compatibility entries; the21
-package-required root references remain. A snapshot's relative links/anchors
+Nine former docs-level canonical URLs retain compatibility entries. The former21
+root package references now live by topic: [current migration map](../development/ROOT_DOCUMENTATION_MAP.md).
+Root placement was a configurable shell assumption, not an external requirement. A snapshot's relative links/anchors
 are interpreted at its ORIGINAL path/commit, not relative to the archive. Use the pinned GitHub source view below when browsing
 original links; offline use git show 3b6b612:ORIGINAL_PATH. This mapping preserves
 history without silently editing evidence or adding source-tree symlinks.

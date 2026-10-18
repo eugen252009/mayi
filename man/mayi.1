@@ -37,7 +37,7 @@ snapshots without ANSI or a TTY requirement. --watch --json emits NDJSON for pip
 If detailed watch does not fit, resize or use --plain. Dispatching is not confirmed
 child start; running means actual spawn observed, final outcome still awaited.
 Unknown outcome does not mean a child was canceled. Snapshot is not persistent.
-See /usr/share/doc/mayi/STATUS_JSON_SCHEMA.md and QUEUE_STATE_MAPPING.md.
+See /usr/share/doc/mayi/architecture/STATUS_JSON_SCHEMA.md and /usr/share/doc/mayi/architecture/QUEUE_STATE_MAPPING.md.
 .SH HISTORY
 .B mayi history
 reads recent native Journald metadata using existing system-journal permissions.
@@ -54,7 +54,7 @@ Full identifiers and event timelines are available with --request and --json.
 The scan is bounded to 20000 records, 16 MiB and 20 seconds.
 No automatic privilege escalation is performed. Exit 12 means invalid arguments,
 13 journal access denied, and 15 journal read/unavailable/timeout failure.
-See /usr/share/doc/mayi/HISTORY_SCHEMA.md for JSON schema v2 (request-only default and separate diagnostic events array).
+See /usr/share/doc/mayi/architecture/HISTORY_SCHEMA.md for JSON schema v2 (request-only default and separate diagnostic events array).
 Use mayi -- history to execute a program literally named history.
 .SH DESCRIPTION
 .B mayi

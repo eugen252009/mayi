@@ -1,8 +1,8 @@
 # History JSON schema2
 
-> Epoch extension (`0.4.1-10~status4`): see [BROKER_EPOCH.md](BROKER_EPOCH.md),
-> [RESTART_INVALIDATION.md](RESTART_INVALIDATION.md) and
-> [UPDATE_PREFLIGHT.md](UPDATE_PREFLIGHT.md). New queued IDs use authenticated
+> Epoch extension (`0.4.1-10~status4`): see [../security/BROKER_EPOCH.md](../security/BROKER_EPOCH.md),
+> [../security/RESTART_INVALIDATION.md](../security/RESTART_INVALIDATION.md) and
+> [../user/UPDATE_PREFLIGHT.md](../user/UPDATE_PREFLIGHT.md). New queued IDs use authenticated
 > `rq_v2_` syntax; old `rq_32hex` examples describe legacy IDs only. Native
 > audit schema 1, history JSON 2 and ordinary live snapshot schema 1 remain.
 > History epoch separators are presentation only, never authorization.

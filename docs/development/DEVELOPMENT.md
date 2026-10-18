@@ -24,13 +24,35 @@ repository. Do not infer authority from Git's administrative main-worktree label
   Debian product versions.
 - [Cargo.toml](../../executor/Cargo.toml) plus [Cargo.lock](../../executor/Cargo.lock)
   define locked Rust dependencies. TPA Depends defines installed runtime packages.
-- [package scripts](../../executor/package/DEBIAN/), [units](../../executor/package/usr/lib/systemd/system/)
+- [package scripts](../../executor/package/DEBIAN), [units](../../executor/package/usr/lib/systemd/system)
   and [PAM config](../../executor/package/etc/pam.d/mayi-approve) own installed identities,
   paths/lifecycle. Do not infer them from an outdated release report.
 - [build-deb.sh](../../executor/package/build-deb.sh) derives root from its own location,
-  creates fresh native targets, writes the build stamp, copies existing root
-  detail documents, applies deterministic timestamps and the ABI gate.
-  Packaging code/layout is unchanged by this consolidation.
+  creates fresh native targets, writes the build stamp, copies the21 topic-owned
+  detail documents with their relative layout, applies deterministic timestamps
+  and the ABI gate. Only documentation source/install paths changed; authorization,
+  executable payload, dependency and lifecycle definitions did not.
+
+## Documentation packaging paths
+
+[The complete22-file migration map](ROOT_DOCUMENTATION_MAP.md) records source paths,
+installed destinations and pinned original views. The21 package documents were
+an explicit shell list, not a TPA/Debian requirement for root placement. They now
+install under /usr/share/doc/mayi/{architecture,security,user}/ with the same
+basenames/set and0644 modes. This preserves their relative cross-topic links.
+The two manuals remain in their established man1/man7 locations; mayi(1)'s three
+document references follow the new installed paths. Copyright/lifecycle/TPA
+configuration are unchanged. The security policy lives at docs/SECURITY.md,
+a GitHub-supported discovery location, and was not a Debian input.
+
+Root Markdown is exactly README.md, PROJECT_STATUS.md and AGENTS.md; no aliases,
+uppercase extensions or Markdown symlinks hide other root documents. Future
+path migrations must check every intended package document and installed link,
+not just a successful shell exit. Documentation-input changes can change .deb
+bytes; validate distinct disposable development identities in isolated copies,
+never rebuild/replace0.4.1-11 or commit a version solely for documentation.
+Root-cleanup evidence is outside immutable bundles at
+/home/eugen/projekte/mayi-qualification/root-documentation-cleanup/.
 
 ## Local tests, not production qualification
 

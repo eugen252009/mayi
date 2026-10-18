@@ -29,7 +29,7 @@ New-arrival notices do not silently replace the displayed set. Review every
 path/argv page before deciding; the UI does not infer effects.
 Pending-first presentation preserves original numeric indices and dependency
 execution order. Dispatched context is not inferred actual child start.
-See [UI details](../../UX_USAGE.md) and [manual](../../man/mayi-workflow.7).
+See [UI details](UX_USAGE.md) and [manual](../../man/mayi-workflow.7).
 
 All six supported sizes120x40,100x30,80x24,60x20,40x12,30x8 were tested. Below30x8
 is unproven. Plain/details dumps may use scrollback. Requester animation is bounded
@@ -59,7 +59,7 @@ work. Epoch separators are virtual. MAYI/EXIT distinguishes broker and child cod
 Unique explicit correlations, not time/UID guesses, join records. View expiry
 does not establish request expiry. Scan bounds20000 records/16MiB/20s/2000 groups
 and permissions/retention can omit data; omissions are reported.
-See [schema](../../HISTORY_SCHEMA.md) and [correlation](../../HISTORY_CORRELATION.md).
+See [schema](../architecture/HISTORY_SCHEMA.md) and [correlation](../architecture/HISTORY_CORRELATION.md).
 
 ## Live status/watch/preflight
 

@@ -36,12 +36,12 @@ is readable historical syntax, not newly issued authenticated epoch evidence.
 An authentic stale ID yields BROKER_EPOCH_CHANGED, retryable=false, requires new
 request/approval, execution UNKNOWN. Reconciliation precedes any deliberate new
 operation. There is no rq-ID execution shortcut. For full binding/key/error
-details see [epochs](../../BROKER_EPOCH.md) and [restart](../../RESTART_INVALIDATION.md).
+details see [epochs](../security/BROKER_EPOCH.md) and [restart](../security/RESTART_INVALIDATION.md).
 
 Native audit schema1, history JSON schema2, ordinary live snapshot schema1 and
 preflight additions schema1 remain independent contracts. See
-[history schema](../../HISTORY_SCHEMA.md), [status schema](../../STATUS_JSON_SCHEMA.md),
-[counter mapping](../../QUEUE_STATE_MAPPING.md), [preflight](../../UPDATE_PREFLIGHT.md).
+[history schema](HISTORY_SCHEMA.md), [status schema](STATUS_JSON_SCHEMA.md),
+[counter mapping](QUEUE_STATE_MAPPING.md), [preflight](../user/UPDATE_PREFLIGHT.md).
 Human status/history formatting is not machine authority.
 
 A queued dependency is another retained request of the same kernel-authenticated
@@ -50,6 +50,6 @@ Wait/status observe, never approve/cancel/replay. Child dispatch requires accept
 approval plus successful prerequisites. Retention is not restart persistence.
 
 Porta/other clients use these same authenticated boundaries. No Porta files or
-recovery integration are changed here. [Porta recovery contract](../../PORTA_RECOVERY_CONTRACT.md)
+recovery integration are changed here. [Porta recovery contract](PORTA_RECOVERY_CONTRACT.md)
 is evidence-only guidance, not automatic resubmission authority. A protocol/source
 disagreement must be investigated, not resolved by expanding accepted schemas.

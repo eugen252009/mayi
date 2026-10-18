@@ -10,6 +10,18 @@ The index answers **what exists, why it exists, and where its implementation,
 tests and evidence live**, including a [Why Does This Exist?](docs/INDEX.md#why-does-this-exist)
 table and [component map](docs/INDEX.md#component-map).
 
+## Documentation
+
+| Topic | Description |
+|---|---|
+| [Documentation Index](docs/INDEX.md) | Complete navigation, rationale and component map |
+| [Architecture](docs/architecture/ARCHITECTURE.md) | System design and components |
+| [Security Model](docs/security/SECURITY_MODEL.md) | Authorization and trust boundaries |
+| [User Guide](docs/user/OPERATIONS.md) | CLI and approval workflows |
+| [Development](docs/development/DEVELOPMENT.md) | Building, tests and packaging paths |
+| [Qualification](docs/qualification/QUALIFICATION.md) | Verified properties and evidence |
+| [Known Limitations](docs/security/LIMITATIONS.md) | Explicitly unsupported guarantees |
+
 ## Supported scope
 
 Qualified release **0.4.1-11**, **Debian11/12/13 amd64**. Canonical development
@@ -49,4 +61,4 @@ dependencies, source checks and release boundaries; do not rebuild immutable11.
 [AGENTS.md](AGENTS.md) guides coding agents. [Historical index](docs/historical/INDEX.md)
 retains earlier investigations without presenting them as current specifications.
 Contact [mayi@lupricht.net](mailto:mayi@lupricht.net); report vulnerabilities privately
-through [SECURITY.md](SECURITY.md). [MIT license](LICENSE).
+through [docs/SECURITY.md](docs/SECURITY.md). [MIT license](LICENSE).

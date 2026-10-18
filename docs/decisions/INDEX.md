@@ -78,7 +78,7 @@ from missing RAM state or trust caller-supplied epoch data. **Constraint:** the
 persistent HMAC provenance key is not persisted queue/capability authority;
 key loss/unsafe files fail closed. **Consequence:** a genuine stale ID still says
 UNKNOWN about side effects, not safe replay.
-**Basis/status:** [epoch details](../../BROKER_EPOCH.md), [IDs](../../executor/src/request_ids.rs),
+**Basis/status:** [epoch details](../security/BROKER_EPOCH.md), [IDs](../../executor/src/request_ids.rs),
 [shutdown](../../executor/src/broker_epoch.rs), [epoch tests](../../tests/test_epochs.py).
 
 ## D08 Memory-only queue is the qualified boundary
@@ -90,7 +90,7 @@ a broader persistence design discussion is not established by these records.
 Do NOT claim persistence is inherently unsafe or permanently rejected.
 **Alternatives:** persistent recovery remains unqualified, not implemented here.
 **Consequences/basis:** [restart contract](../security/SECURITY_MODEL.md#epoch-restart-and-conservative-outcome),
-[recovery guidance](../../PORTA_RECOVERY_CONTRACT.md), [epoch regressions](../../executor/src/broker_epoch_tests.rs).
+[recovery guidance](../architecture/PORTA_RECOVERY_CONTRACT.md), [epoch regressions](../../executor/src/broker_epoch_tests.rs).
 
 ## D09 Conservative outcomes and no automatic replay
 
@@ -98,7 +98,7 @@ Do NOT claim persistence is inherently unsafe or permanently rejected.
 A lost reply/dead broker can coexist with a running or completed root child.
 **Excluded inference:** missing state/logs means nothing happened and is safe to
 retry. **Consequence:** reconcile uncertain effects; no exactly-once promise.
-**Basis/status:** [outcome semantics](../../EXECUTION_OUTCOME_SEMANTICS.md),
+**Basis/status:** [outcome semantics](../security/EXECUTION_OUTCOME_SEMANTICS.md),
 [recovery classifier](../../mayi/recovery.py), [history tests](../../tests/test_history.py),
 [installed residual-child evidence](../qualification/QUALIFICATION.md#tested-scope-not-universal-proof).
 
@@ -111,7 +111,7 @@ no secrets/payload projection, explicit missing/ambiguous correlation.
 **Alternative avoided in the recorded implementation:** a separate history
 collector/database or authority-recovery cache; not a universal database comparison.
 **Basis/status:** [audit/history](../user/OPERATIONS.md#native-audit-and-history),
-[audit source](../../executor/src/audit.rs), [correlation](../../HISTORY_CORRELATION.md),
+[audit source](../../executor/src/audit.rs), [correlation](../architecture/HISTORY_CORRELATION.md),
 [classification regression](../../tests/test_history_classification.py).
 
 ## D11 Observe running work without controlling admission
@@ -121,9 +121,9 @@ spawn. A correlated optional root start frame gives a truthful observed-running
 counter. A bounded synchronous observation map avoids extending authorization
 retention just for statistics. **Excluded inference:** process census or an idle
 lock from aggregate counts. **Consequence:** preflight is read-only snapshot,
-not restart authority. **Basis/status:** [recorded status design](../../STATUS_DESIGN.md),
+not restart authority. **Basis/status:** [recorded status design](../architecture/STATUS_DESIGN.md),
 [snapshot](../../executor/src/queue_snapshot.rs), [tests](../../executor/src/queue_snapshot_tests.rs),
-[preflight](../../UPDATE_PREFLIGHT.md).
+[preflight](../user/UPDATE_PREFLIGHT.md).
 
 ## D12 Bounded review without changing execution order
 
@@ -143,7 +143,7 @@ may require paging; display cannot prove a human saw every argument.
 -- as unconditional executable dispatch; after executable, flags are child data.
 **Documented excluded alternative:** reserving bare version would break an
 existing executable name. **Consequence:** metadata does not require broker/PAM,
-execution still requires exact approval. **Basis/status:** [dispatch design](../../CLI_DISPATCH_DESIGN.md),
+execution still requires exact approval. **Basis/status:** [dispatch design](../architecture/CLI_DISPATCH_DESIGN.md),
 [metadata](../../mayi/cli_metadata.py), [dispatch regressions](../../tests/test_cli_dispatch.py).
 
 ## D14 Source presence does not enable filesystem execution

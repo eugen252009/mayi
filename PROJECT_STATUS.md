@@ -27,7 +27,9 @@ reproducibility and ABI/hardening evidence. This is scoped testing, not “fully
 corrected retries, original records and exact hashes.
 
 Release bundle: **~/projekte/releases/mayi/0.4.1-11/**.
-No changes to it or new package builds. Central workflow separately owns source
+It remains immutable and is not rebuilt/replaced. Disposable development-package
+validation of [documentation paths](docs/development/ROOT_DOCUMENTATION_MAP.md) is
+not a new qualified release. Central workflow separately owns source
 attestation, release-tag/artifact/APT signing, admission/staging and publication.
 Ancestor signature verification does not sign the unsigned final commit.
 Source consolidation is not installation/deployment or publication authorization.
