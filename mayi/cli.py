@@ -11,6 +11,26 @@ from .parser import ShellSyntaxError
 from .policy import default_policy
 from .progress import Waiting
 
+HELP = """Mayi - Controlled Command Authorization
+
+Usage:
+  mayi <executable> [arguments ...]
+  mayi -- <executable> [arguments ...]
+  mayi --queue [--after REQUEST_ID] <executable> [arguments ...]
+  mayi --wait [--fail=N] [--fail-instant] REQUEST_ID...
+  mayi --status REQUEST_ID
+  mayi history [--limit N|--all] [--status STATE] [--request ID] [--since TIME] [--json]
+  mayi inspect|check <legacy shell snippet>
+  mayi -u USER inspect|check <legacy shell snippet>
+
+Options:
+  -h, --help       Show this local help
+  -V, --version    Show this CLI's build version
+
+Only leading Mayi options are parsed; executable arguments stay unchanged.
+Use -- to execute a name colliding with an internal command or option.
+mayi-approve opens the separate human approval console.
+mayi-approve status reads a live approver-role snapshot."""
 BROKER_SOCKET = "/run/mayi/request/broker.sock"
 BROKER_UID = 23002
 TRUSTED_PATH = (
@@ -326,7 +346,19 @@ def _status_cli(argv):
 
 def main(argv=None):
     argv = list(argv) if argv is not None else sys.argv[1:]
-    if argv and argv[0] == "history":
+    # Separator wins before any metadata/internal-command dispatch.
+    if argv and argv[0] == "--":
+        if len(argv) == 1:
+            return _mayi_error("MAYI_CLI_ERROR: executable required after --", 12)
+        return _execute_request(argv[1:])
+    if not argv:
+        print(HELP)
+        return 2
+    from .cli_metadata import dispatch_metadata
+    metadata = dispatch_metadata(argv, "mayi", HELP)
+    if metadata is not None:
+        return metadata
+    if argv[0] == "history":
         from .history import main as history_main
         return history_main(argv[1:])
     if argv and argv[0] == "--queue":
@@ -335,15 +367,10 @@ def main(argv=None):
         return _wait_cli(argv[1:])
     if argv and argv[0] == "--status":
         return _status_cli(argv[1:])
-    if not argv or argv[0] in ("-h", "--help"):
-        print("Usage: mayi <executable> [arguments ...]\n       mayi --queue [--after REQUEST_ID] <executable> [arguments ...]\n       mayi --wait [--fail=N] [--fail-instant] REQUEST_ID...\n       mayi --status REQUEST_ID\n       mayi history [--limit N|--all] [--status STATE] [--request REQUEST_ID] [--since TIME] [--json]\n       mayi-approve (persistent approval console)\n       mayi inspect|check <legacy shell snippet>")
-        return 0 if argv else 2
     if argv[0] in ("inspect", "check") or argv[0] == "-u":
         return _legacy_cli(argv)
-    if argv[0] == "--":
-        argv = argv[1:]
-    if not argv:
-        return _mayi_error("MAYI_INVALID_REQUEST: executable required", 12)
+    if argv[0].startswith("-"):
+        return _mayi_error("MAYI_CLI_ERROR: unknown leading option (see --help); use -- for executable names beginning with a hyphen", 12)
     return _execute_request(argv)
 
 

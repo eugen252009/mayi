@@ -4,15 +4,16 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TPA_BIN=${TPA_BIN:-tpa}
 OUT=${1:-"$ROOT/executor/target/debian"}
 mkdir -p "$OUT"
-ARTIFACT="$OUT/mayi_0.4.1-10~status1_amd64.deb"
+VERSION=$(python3 "$ROOT/mayi/version.py")
+ARTIFACT="$OUT/mayi_${VERSION}_amd64.deb"
 if [ -e "$ARTIFACT" ] || [ -L "$ARTIFACT" ]; then
-  echo "refusing to overwrite existing package identity 0.4.1-10~status1: $ARTIFACT" >&2
+  echo "refusing to overwrite existing package identity $VERSION: $ARTIFACT" >&2
   exit 1
 fi
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1792195200}
 export SOURCE_DATE_EPOCH
 NATIVE_TARGET=$(mktemp -d "$OUT/.mayi-native-target.XXXXXX")
-TEMP_ARTIFACT=$(mktemp "$OUT/.mayi_0.4.1-10~status1_amd64.XXXXXX.deb")
+TEMP_ARTIFACT=$(mktemp "$OUT/.mayi_${VERSION}_amd64.XXXXXX.deb")
 cleanup() {
   rm -rf -- "$NATIVE_TARGET"
   rm -f -- "$TEMP_ARTIFACT"
@@ -41,6 +42,7 @@ install -m 0755 "$NATIVE_TARGET/release/mayi-executor" \
 install -m 0755 "$NATIVE_TARGET/release/mayi-privileged-executor" \
   "$PKGROOT/usr/libexec/mayi/privileged-executor"
 cp -a "$ROOT/mayi" "$PKGROOT/usr/lib/python3/dist-packages/mayi"
+printf '%s\n' "$VERSION" > "$PKGROOT/usr/lib/python3/dist-packages/mayi/_build_version"
 find "$PKGROOT/usr/lib/python3/dist-packages/mayi" -type d -name __pycache__ -prune -exec rm -rf -- {} +
 find "$PKGROOT/usr/lib/python3/dist-packages/mayi" -type f -exec chmod 0644 {} +
 install -m 0755 "$ROOT/executor/package/usr/bin/mayi" "$PKGROOT/usr/bin/mayi"
@@ -55,7 +57,7 @@ cp "$ROOT/executor/package/usr/lib/tmpfiles.d/mayi.conf" "$PKGROOT/usr/lib/tmpfi
 install -m 0644 "$ROOT/executor/package/etc/pam.d/mayi-approve" "$PKGROOT/etc/pam.d/mayi-approve"
 install -m 0644 "$ROOT/executor/package/usr/share/doc/mayi/copyright" \
   "$PKGROOT/usr/share/doc/mayi/copyright"
-for doc in HISTORY_DESIGN HISTORY_SCHEMA HISTORY_CORRELATION HISTORY_SECURITY STATUS_DESIGN QUEUE_STATE_MAPPING STATUS_PROTOCOL STATUS_SECURITY STATUS_JSON_SCHEMA STATUS_WATCH_MODE; do
+for doc in HISTORY_DESIGN HISTORY_SCHEMA HISTORY_CORRELATION HISTORY_SECURITY STATUS_DESIGN QUEUE_STATE_MAPPING STATUS_PROTOCOL STATUS_SECURITY STATUS_JSON_SCHEMA STATUS_WATCH_MODE CLI_DISPATCH_DESIGN CLI_COMPATIBILITY; do
   install -m 0644 "$ROOT/$doc.md" "$PKGROOT/usr/share/doc/mayi/$doc.md"
 done
 printf '%s\n' /etc/pam.d/mayi-approve > "$PKGROOT/DEBIAN/conffiles"

@@ -11,6 +11,19 @@ mayi --help
 mayi inspect|check COMMAND_TEXT
 mayi -u USER inspect|check COMMAND_TEXT
 .fi
+.SH LOCAL CLI METADATA
+.B mayi --version
+and
+.B mayi -V
+report this CLI's own embedded package build identity without contacting the broker.
+.B --help
+and
+.B -h
+show supported usage locally. mayi-approve accepts the same metadata flags.
+Only leading Mayi options are parsed. Arguments after an executable are unchanged.
+The first -- selects executable dispatch even for internal-command/option names;
+trusted path and authorization checks still apply. Unknown leading flags fail
+with usage exit 12. Bare version remains an executable name, not an alias.
 .SH LIVE APPROVAL STATUS
 .B mayi-approve status
 reads aggregate current broker state under the existing approver role without PAM,
