@@ -1,11 +1,11 @@
 {
   "control": {
     "name": "mayi",
-    "version": "0.4.1-10~journald4",
+    "version": "0.4.1-10~journald5",
     "architecture": "amd64",
     "maintainer": "Eugen Lupricht <mayi@lupricht.net>",
     "description": "Human-approved exact-command privilege broker",
-    "depends": "adduser, init-system-helpers, libc6 (>= 2.31), libgcc-s1, python3 (>= 3.7), man-db, libpam0g (>= 1.1.8), libpam-runtime",
+    "depends": "adduser, init-system-helpers, libc6 (>= 2.31), libgcc-s1, python3 (>= 3.7), man-db, libpam0g (>= 1.1.8), libpam-runtime, systemd (>= 247)",
     "section": "admin",
     "priority": "optional",
     "createdAt": "2026-10-17T00:00:00Z"

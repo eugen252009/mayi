@@ -1,6 +1,6 @@
 # Mayi
 
-> **Native audit development:** this isolated worktree adds native Journald fields in 0.4.1-10~journald4. See JOURNALD_SCHEMA.md, REQUEST_CORRELATION.md and FINAL_DECISION.md for tested scope and limits. It does not replace or publish qualified 0.4.1-9.
+> **Native audit development:** this isolated worktree adds native Journald fields and read-only `mayi history` in 0.4.1-10~journald5. See HISTORY_DESIGN.md and HISTORY_SCHEMA.md for usage, access limits and JSON. See JOURNALD_SCHEMA.md, REQUEST_CORRELATION.md and FINAL_DECISION.md for tested scope and limits. It does not replace or publish qualified 0.4.1-9.
 
 > **Development 0.4.1-9~ui3:** explicit, broker-enforced five-minute sliding console authentication sessions are now implemented. Successful decisions renew the window; reads do not. This supersedes per-decision password claims below for the new console only. Legacy clients still use per-decision PAM. See [AUTHENTICATION_SESSIONS.md](AUTHENTICATION_SESSIONS.md) for protocol, threat-model changes and test limits. Not packaged, deployed or production-qualified.
 

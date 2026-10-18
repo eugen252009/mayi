@@ -4,15 +4,15 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TPA_BIN=${TPA_BIN:-tpa}
 OUT=${1:-"$ROOT/executor/target/debian"}
 mkdir -p "$OUT"
-ARTIFACT="$OUT/mayi_0.4.1-10~journald4_amd64.deb"
+ARTIFACT="$OUT/mayi_0.4.1-10~journald5_amd64.deb"
 if [ -e "$ARTIFACT" ] || [ -L "$ARTIFACT" ]; then
-  echo "refusing to overwrite existing package identity 0.4.1-10~journald4: $ARTIFACT" >&2
+  echo "refusing to overwrite existing package identity 0.4.1-10~journald5: $ARTIFACT" >&2
   exit 1
 fi
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-1792195200}
 export SOURCE_DATE_EPOCH
 NATIVE_TARGET=$(mktemp -d "$OUT/.mayi-native-target.XXXXXX")
-TEMP_ARTIFACT=$(mktemp "$OUT/.mayi_0.4.1-10~journald4_amd64.XXXXXX.deb")
+TEMP_ARTIFACT=$(mktemp "$OUT/.mayi_0.4.1-10~journald5_amd64.XXXXXX.deb")
 cleanup() {
   rm -rf -- "$NATIVE_TARGET"
   rm -f -- "$TEMP_ARTIFACT"
@@ -55,6 +55,9 @@ cp "$ROOT/executor/package/usr/lib/tmpfiles.d/mayi.conf" "$PKGROOT/usr/lib/tmpfi
 install -m 0644 "$ROOT/executor/package/etc/pam.d/mayi-approve" "$PKGROOT/etc/pam.d/mayi-approve"
 install -m 0644 "$ROOT/executor/package/usr/share/doc/mayi/copyright" \
   "$PKGROOT/usr/share/doc/mayi/copyright"
+for doc in HISTORY_DESIGN HISTORY_SCHEMA HISTORY_CORRELATION HISTORY_SECURITY; do
+  install -m 0644 "$ROOT/$doc.md" "$PKGROOT/usr/share/doc/mayi/$doc.md"
+done
 printf '%s\n' /etc/pam.d/mayi-approve > "$PKGROOT/DEBIAN/conffiles"
 chmod 0644 "$PKGROOT/DEBIAN/conffiles"
 install -m 0644 "$ROOT/man/mayi.1" "$PKGROOT/usr/share/man/man1/mayi.1"

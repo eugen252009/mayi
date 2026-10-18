@@ -6,7 +6,7 @@ Runtime/code files: new executor/src/audit.rs and broker_audit_tests.rs; logging
 
 Native records replace event=... stderr audit sites. MESSAGE retains bounded readable compatibility, but fields are native and independently filterable. Queue mapping is projected from existing bounded state, view nonces are hashed, optional values omitted and exit/signal formats explicit. Dispatch, child start, completed result, failed spawn and unknown outcome are not conflated. No logging queue/thread, new database, history privilege, signing/publishing code, or runtime socket override.
 
-All eleven requested observability documents are in this worktree root. TEST_RESULTS.md distinguishes actual runs, failed attempts and the dedicated Debian 13 lifecycle retry. REQUEST_CORRELATION.md explains why the unchanged executor/PAM protocols require a cross-service join rather than invented rq_ IDs. History CLI is deferred; journalctl reuses existing read permissions.
+All eleven requested observability documents are in this worktree root. TEST_RESULTS.md distinguishes actual runs, failed attempts and the dedicated Debian 13 lifecycle retry. REQUEST_CORRELATION.md explains why the unchanged executor/PAM protocols require a cross-service join rather than invented rq_ IDs. The subsequent journald5 development adds read-only `mayi history`; see HISTORY_DESIGN.md and HISTORY_SCHEMA.md. It reuses existing journal permissions without new services or authorization changes.
 
 Earlier UI reports inherited from the baseline are historical and do not qualify this candidate. The 0.4.1-9 release/staging bundles and operator UI4 installation are not edited. Development packages stay in dist/ and qualification data outside completed release collections.
 

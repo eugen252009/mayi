@@ -11,6 +11,20 @@ mayi --help
 mayi inspect|check COMMAND_TEXT
 mayi -u USER inspect|check COMMAND_TEXT
 .fi
+.SH HISTORY
+.B mayi history
+reads recent native Journald metadata using existing system-journal permissions.
+It never contacts the broker, grants approval, or restores capabilities.
+Options: --limit N (1..1000, default 20), --all (bounded 2000 identities),
+--status STATE, --request FULL_REQUEST_ID, --since JOURNAL_TIMESTAMP, --json.
+Nonterminal observations have a question mark and UNKNOWN current status;
+retention, rate limiting, restarts and bounded scans can remove events.
+Full identifiers and event timelines are available with --request and --json.
+The scan is bounded to 20000 records, 16 MiB and 20 seconds.
+No automatic privilege escalation is performed. Exit 12 means invalid arguments,
+13 journal access denied, and 15 journal read/unavailable/timeout failure.
+See /usr/share/doc/mayi/HISTORY_SCHEMA.md for stable JSON schema v1.
+Use mayi -- history to execute a program literally named history.
 .SH DESCRIPTION
 .B mayi
 submits one executable and structured argument vector (argv) to the local broker. It does not implicitly invoke a shell, expand variables, or interpret shell metacharacters. A synchronous request waits for a human decision and the execution result. A queued request returns an opaque ID before approval or execution; it still requires explicit approval.

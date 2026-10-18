@@ -21,6 +21,6 @@ journalctl _SYSTEMD_UNIT=mayi-privileged-executor.service MAYI_EXECUTION_ID="$EX
 
 The test harness records exact queries, exit codes and raw JSON for success/failure/request/requester/executor/PAM filters. Signals appear on actual executor records as MAYI_CHILD_SIGNAL, not a fake exit code. Unknown results use *_OUTCOME_UNKNOWN, not FINISHED. Field absence is meaningful; record absence may also be loss/rate limiting. RQ-only scope and cross-service join are explained in REQUEST_CORRELATION.md.
 
-No mayi history command was added. A future read-only wrapper should reuse journalctl as the caller and preserve existing journal access restrictions; it must not create a privileged history endpoint, auto-elevate access or become a capability recovery/replay path.
+Development journald5 adds `mayi history` as an unprivileged bounded journalctl wrapper. See HISTORY_DESIGN.md and HISTORY_SCHEMA.md. It adds no privileged history endpoint, access elevation or recovery/replay path.
 
 The operator's installed UI4 package is not replaced by this task, so these native fields are not retroactively present on its historical service messages.

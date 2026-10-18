@@ -326,6 +326,9 @@ def _status_cli(argv):
 
 def main(argv=None):
     argv = list(argv) if argv is not None else sys.argv[1:]
+    if argv and argv[0] == "history":
+        from .history import main as history_main
+        return history_main(argv[1:])
     if argv and argv[0] == "--queue":
         return _queue_cli(argv[1:])
     if argv and argv[0] == "--wait":
@@ -333,7 +336,7 @@ def main(argv=None):
     if argv and argv[0] == "--status":
         return _status_cli(argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
-        print("Usage: mayi <executable> [arguments ...]\n       mayi --queue [--after REQUEST_ID] <executable> [arguments ...]\n       mayi --wait [--fail=N] [--fail-instant] REQUEST_ID...\n       mayi --status REQUEST_ID\n       mayi-approve (persistent approval console)\n       mayi inspect|check <legacy shell snippet>")
+        print("Usage: mayi <executable> [arguments ...]\n       mayi --queue [--after REQUEST_ID] <executable> [arguments ...]\n       mayi --wait [--fail=N] [--fail-instant] REQUEST_ID...\n       mayi --status REQUEST_ID\n       mayi history [--limit N|--all] [--status STATE] [--request REQUEST_ID] [--since TIME] [--json]\n       mayi-approve (persistent approval console)\n       mayi inspect|check <legacy shell snippet>")
         return 0 if argv else 2
     if argv[0] in ("inspect", "check") or argv[0] == "-u":
         return _legacy_cli(argv)

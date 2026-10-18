@@ -1,0 +1,15 @@
+# History JSON schema v1
+
+--json emits exactly one JSON object, no human text/ANSI on stdout. Success keys: schema_version=1, requests (ordered newest retained event first, identity tie-break), returned, matched (within bounded window), scanned_records, ignored_records, scan_truncated, bytes_read, omitted_records, limits {records:20000,bytes:16777216,identities:2000,seconds:20}, historical_only=true, completeness.
+
+Each requests[] element has stable keys: identity (queue ID, ch_ challenge, ex_ execution or event_ scan-local discriminator), request_id (actual rq_ or null), boot_id, broker_instance_id (or null), timestamp (latest trusted realtime, local ISO8601 offset/microseconds), requester_uid (integer/null), status, observed_state (string/null), current_state_known=false, correlation_incomplete (boolean), result (Mayi integer/null), exit_code (observed normal child integer/null), signal (integer/null), events.
+
+Events are chronological within their boot using trusted monotonic time where present (realtime fallback), with deterministic tie-breaks. Each has event,timestamp,boot_id,source_unit and request_id,broker_instance_id,challenge_id,request_digest,execution_id,state,requester_uid,approver_uid,result,exit_code,signal (null when unavailable). No raw MESSAGE, capability/session/view nonce, reason, arguments, output or environment. Exact duplicate cursor/event projections are deduplicated; repeat views at different timestamps/cursors remain events but not extra request rows.
+
+status is a historical terminal observation or UNKNOWN. observed_state can preserve PENDING/APPROVED/RUNNING; it is never proof of current activity. Conflicting terminal observations also produce UNKNOWN. correlation_incomplete is true for unassociated/nonqueue identities, missing namespace, or unknown/contradictory outcome. False means explicit queue correlation and a known terminal observation, NOT complete journal retention. scan_truncated/omitted/ignored and completeness must also be considered.
+
+--request matches a full queue ID exactly, across available boot/instance namespaces without combining them. Unassociated events with that actual ID but missing broker identity stay separate incomplete rows. No guessed suffix or UID/time match.
+
+Errors with --json: {schema_version:1,error:{code:string,message:string}}; exit 12 invalid arguments/timestamp, 13 insufficient system journal access (including partial-read warnings), 15 unavailable/read/timeout error, 130 interruption. Help exits 0; conventional malformed argparse usage returns 12. Successful empty/partial bounded history exits 0; truncation is metadata, not hidden. A pipe closed by its consumer may exit 0. Request statuses do not change the command's success exit code.
+
+Identifiers are full lowercase canonical hex; numbers JSON integers or null, never Some(0). Deterministic ordering holds for the same exported window/local timezone; scan-local orphan event identities are not durable references. Unknown or malformed fields are not rendered. JSON output is bounded by input scan limits, not intended as an unbounded export API.
