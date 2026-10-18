@@ -36,6 +36,14 @@ fn queued_mapping_is_available_before_proposal_logging_and_views_reuse_it() {
     assert!(!Broker::new().unwrap().pending.contains_key(cid));
 }
 #[test]
+fn failed_spawn_is_not_reported_as_observed_completion() {
+    for queued in [false, true] {
+        assert!(broker_execution_event(queued, "FAILED", false).ends_with("DISPATCH_FAILED"));
+        assert!(broker_execution_event(queued, "FAILED", true).ends_with("FINISHED"));
+        assert!(broker_execution_event(queued, "UNKNOWN", false).ends_with("OUTCOME_UNKNOWN"));
+    }
+}
+#[test]
 fn synchronous_requests_do_not_get_invented_queue_ids() {
     let mut broker = Broker::new().unwrap();
     let request=broker.propose(&json!({"type":"PROPOSE_REQUEST","protocol":VERSION,"target":{"uid":1000,"gid":1000},"operations":[{"type":"exec","executable":"/usr/bin/true","argv":["true"]}]}),1000);
