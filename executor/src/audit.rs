@@ -93,7 +93,7 @@ fn valid_value(key: Field, value: &str) -> bool {
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     }
     match key {
-        Field::RequestId => value.strip_prefix("rq_").is_some_and(|v| hex(v, 32)),
+        Field::RequestId => crate::request_ids::valid(value),
         Field::ExecutionId => hex(value, 32),
         Field::BrokerInstanceId | Field::ChallengeId => hex(value, 48),
         Field::RequestDigest | Field::ViewIdHash => hex(value, 64),

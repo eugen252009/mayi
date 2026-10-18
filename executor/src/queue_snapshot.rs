@@ -3,6 +3,9 @@ use super::*;
 
 impl Broker {
     pub(super) fn queue_snapshot(&self) -> Value {
+        if self.stopping {
+            return self.stopping_response();
+        }
         let instant = Instant::now();
         let snapshot_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)

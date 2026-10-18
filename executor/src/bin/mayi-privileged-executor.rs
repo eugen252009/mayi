@@ -1,5 +1,8 @@
 #[path = "../audit.rs"]
 mod audit;
+#[path = "../request_ids.rs"]
+#[allow(dead_code)]
+mod request_ids;
 use audit::Field as F;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -53,6 +56,8 @@ struct ExecRequest {
     r#type: String,
     protocol: u8,
     request_id: String,
+    #[serde(default)]
+    broker_instance_id: Option<String>,
     executable: String,
     argv: Vec<String>,
 }
@@ -507,6 +512,17 @@ fn validate_request(req: &ExecRequest) -> io::Result<([u8; 16], PathBuf)> {
             "unsupported executor request",
         ));
     }
+    if req.broker_instance_id.as_ref().is_some_and(|id| {
+        id.len() != 48
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid broker epoch",
+        ));
+    }
     let id = parse_request_id(&req.request_id)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if req.argv.is_empty() || req.argv.len() > MAX_ARG_COUNT {
@@ -587,14 +603,15 @@ fn run<'a>(
         Err(_) => return failure(req, "EXECUTION_FAILED"),
     };
     started();
-    audit::emit(
-        "EXECUTION_STARTED",
-        &[
-            (F::ExecutionId, req.request_id.clone()),
-            (F::ExecutorUid, unsafe { libc::geteuid() }.to_string()),
-            (F::ExecutorGid, unsafe { libc::getegid() }.to_string()),
-        ],
-    );
+    let mut start_fields = vec![
+        (F::ExecutionId, req.request_id.clone()),
+        (F::ExecutorUid, unsafe { libc::geteuid() }.to_string()),
+        (F::ExecutorGid, unsafe { libc::getegid() }.to_string()),
+    ];
+    if let Some(id) = &req.broker_instance_id {
+        start_fields.push((F::BrokerInstanceId, id.clone()));
+    }
+    audit::emit("EXECUTION_STARTED", &start_fields);
     let stdout_pipe = child.stdout.take().expect("piped stdout");
     let stderr_pipe = child.stderr.take().expect("piped stderr");
     let stdout = thread::spawn(move || read_capped(stdout_pipe));
@@ -607,6 +624,9 @@ fn run<'a>(
         .join()
         .unwrap_or_else(|_| Err(io::Error::other("stderr reader panicked")));
     let mut fields = vec![(F::ExecutionId, req.request_id.clone())];
+    if let Some(id) = &req.broker_instance_id {
+        fields.push((F::BrokerInstanceId, id.clone()));
+    }
     if let Ok(status) = &status {
         fields.push((
             F::State,
@@ -651,13 +671,14 @@ fn run<'a>(
 }
 
 fn failure<'a>(req: &'a ExecRequest, status: &'static str) -> ExecResponse<'a> {
-    audit::emit(
-        "EXECUTION_REJECTED",
-        &[
-            (F::ExecutionId, req.request_id.clone()),
-            (F::Reason, status.into()),
-        ],
-    );
+    let mut fields = vec![
+        (F::ExecutionId, req.request_id.clone()),
+        (F::Reason, status.into()),
+    ];
+    if let Some(id) = &req.broker_instance_id {
+        fields.push((F::BrokerInstanceId, id.clone()));
+    }
+    audit::emit("EXECUTION_REJECTED", &fields);
     ExecResponse {
         r#type: "EXEC_RESPONSE",
         protocol: VERSION,

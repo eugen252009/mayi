@@ -4,7 +4,7 @@ if [ "${1:-}" = purge ]; then
     if command -v deb-systemd-helper >/dev/null 2>&1; then
         deb-systemd-helper purge mayi-broker.service mayi-pam-auth.service mayi-privileged-executor.service >/dev/null || true
     fi
-    rm -rf -- /var/lib/mayi-privileged-executor
+    rm -rf -- /var/lib/mayi-privileged-executor /var/lib/mayi-broker
     # Human role accounts and role groups are administrator-managed. Never
     # remove identities by name; retain package service accounts as harmless
     # system-account remnants, as permitted by Debian package lifecycle policy.

@@ -5,7 +5,8 @@ import sys
 import time
 
 from .adapters import analyze, AnalysisError
-from .executor import ExecutorError, RustExecutorClient
+from .request_ids import valid_request_id
+from .executor import BrokerEpochChangedError, BrokerRestartedError, ExecutorError, RustExecutorClient
 from .operations import Kind, Operation
 from .parser import ShellSyntaxError
 from .policy import default_policy
@@ -180,6 +181,9 @@ def _execute_request(argv):
         while True:
             try:
                 status = client.request_status(instance, challenge, digest)["status"]
+            except BrokerRestartedError:
+                progress.stop()
+                return _mayi_error("MAYI_BROKER_RESTARTED: authorization INVALIDATED; execution UNKNOWN; reconcile before any new request", 16)
             except (ExecutorError, OSError) as error:
                 progress.stop()
                 text = str(error)
@@ -205,6 +209,8 @@ def _execute_request(argv):
 
     try:
         result = client.consume_approved(instance, challenge, digest)
+    except BrokerRestartedError:
+        return _mayi_error("MAYI_BROKER_RESTARTED: authorization INVALIDATED; execution UNKNOWN; reconcile before any new request", 16)
     except (ExecutorError, OSError, ValueError) as error:
         text = str(error)
         code = 11 if "REQUEST_EXPIRED" in text else 13 if isinstance(error, PermissionError) or any(item in text for item in ("UNAUTHORIZED", "ROLE_SEPARATION")) else 16
@@ -280,7 +286,7 @@ def _queue_status(client, request_id):
         return client.queue_status(request_id), None
     except (ExecutorError, OSError, ValueError) as error:
         text = str(error)
-        code = 13 if "UNAUTHORIZED" in text else 16 if any(x in text for x in ("NOT_FOUND", "BROKER_INSTANCE")) else 15
+        code = 13 if "UNAUTHORIZED" in text else 16 if any(x in text for x in ("NOT_FOUND", "BROKER_INSTANCE", "BROKER_EPOCH_CHANGED")) else 15
         return None, (text, code)
 
 
@@ -302,7 +308,7 @@ def _wait_cli(argv):
             return _mayi_error(f"MAYI_INVALID_REQUEST: unknown wait option {item}", 12)
         else:
             ids.append(item)
-    if not ids or any(not isinstance(item, str) or len(item) != 35 or not item.startswith("rq_") or any(c not in "0123456789abcdef" for c in item[3:]) for item in ids) or len(set(ids)) != len(ids):
+    if not ids or any(not valid_request_id(item) for item in ids) or len(set(ids)) != len(ids):
         return _mayi_error("MAYI_INVALID_REQUEST: --wait requires unique request IDs", 12)
     client = RustExecutorClient(socket_path=BROKER_SOCKET, timeout=5, expected_broker_uid=BROKER_UID)
     known = {}
@@ -334,9 +340,19 @@ def _wait_cli(argv):
 
 
 def _status_cli(argv):
+    as_json=bool(argv and argv[0]=="--json")
+    if as_json:argv=argv[1:]
     if len(argv) != 1:
         return _mayi_error("MAYI_INVALID_REQUEST: --status requires one request ID", 12)
     client = RustExecutorClient(socket_path=BROKER_SOCKET, timeout=5, expected_broker_uid=BROKER_UID)
+    if as_json:
+        import json
+        try:result=client.queue_status(argv[0])
+        except BrokerEpochChangedError as error:
+            print(json.dumps(error.response,sort_keys=True));return 16
+        except (ExecutorError,OSError,ValueError) as error:
+            return _mayi_error(str(error),16 if "NOT_FOUND" in str(error) else 15)
+        print(json.dumps(result,sort_keys=True));return 0
     result, error = _queue_status(client, argv[0])
     if error:
         return _mayi_error(f"MAYI_STATUS_ERROR: {error[0]}", error[1])

@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 import time
+from .recovery import classify_recovery
+from .request_ids import REQUEST_ID_PATTERN,encoded_epoch
 
 JOURNALCTL = '/usr/bin/journalctl'
 MAX_RECORDS = 20000
@@ -20,13 +22,13 @@ UNITS = {'mayi-broker.service': '23002', 'mayi-pam-auth.service': '0',
          'mayi-privileged-executor.service': '0'}
 HEX = {32: re.compile(r'^[0-9a-f]{32}$'), 48: re.compile(r'^[0-9a-f]{48}$'),
        64: re.compile(r'^[0-9a-f]{64}$')}
-RQ = re.compile(r'^rq_[0-9a-f]{32}$')
+RQ = re.compile('^'+REQUEST_ID_PATTERN+'$')
 EVENT = re.compile(r'^[A-Z][A-Z0-9_]{0,63}$')
 CH = re.compile(r'^ch_[0-9a-f]{48}$')
 # Only typed lifecycle observations from the credential/unit-checked broker
 # establish requests. A session/login/health/error record is not a proposal.
 REQUEST_EVENTS = frozenset({
-    'PROPOSED', 'QUEUE_SUBMITTED', 'VIEW_CREATED', 'VIEW_REPLACED',
+    'PROPOSED', 'QUEUE_SUBMITTED', 'REQUEST_INVALIDATED', 'VIEW_CREATED', 'VIEW_REPLACED',
     'VIEW_EXPIRED', 'VIEW_APPROVED', 'VIEW_DENIED', 'VIEW_EXPLAINED',
     'EXPIRED', 'CONSUMED', 'QUEUE_DISPATCH_STARTED', 'QUEUE_EXECUTION_FINISHED',
     'QUEUE_DISPATCH_FAILED', 'QUEUE_EXECUTION_OUTCOME_UNKNOWN', 'QUEUE_BLOCKED',
@@ -44,7 +46,7 @@ ALIASES = {'SUCCESS': 'SUCCEEDED', 'FAILURE': 'FAILED', 'PENDING_APPROVAL': 'PEN
            'PROPOSED': 'PENDING', 'READY': 'APPROVED', 'WAITING_DEPENDENCY': 'APPROVED',
            'EXECUTION_UNKNOWN': 'UNKNOWN', 'EXPLAINED': 'EXPLAIN_REQUESTED'}
 STATES = {'PENDING', 'APPROVED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'DENIED',
-          'EXPIRED', 'UNKNOWN', 'BLOCKED', 'EXPLAIN_REQUESTED'}
+          'EXPIRED', 'UNKNOWN', 'BLOCKED', 'EXPLAIN_REQUESTED', 'INVALIDATED'}
 
 
 class HistoryError(Exception):
@@ -73,6 +75,7 @@ def arguments(argv):
     limits.add_argument('--all', action='store_true', help='all within scan bounds, at most 2000 identities')
     p.add_argument('--status', type=str.upper, help='status or last observed nonterminal state')
     p.add_argument('--request', help='full rq_ or ch_ ID; show each boot/instance/binding separately')
+    p.add_argument('--epoch', help='full existing 48-hex broker instance ID')
     p.add_argument('--events', action='store_true', help='chronological native audit events, not request rows')
     p.add_argument('--since', help='journalctl timestamp, e.g. "1 hour ago"')
     p.add_argument('--json', action='store_true', help='stable schema v2 JSON')
@@ -80,7 +83,9 @@ def arguments(argv):
     if not 1 <= a.limit <= 1000:
         raise invalid('--limit must be between 1 and 1000')
     if a.request and not (RQ.fullmatch(a.request) or CH.fullmatch(a.request)):
-        raise invalid('--request requires full rq_ (32 hex) or ch_ (48 hex) identity')
+        raise invalid('--request requires a full legacy rq_, rq_v2_ or ch_ identity')
+    if a.epoch and not HEX[48].fullmatch(a.epoch):
+        raise invalid('--epoch requires full 48-lowercase-hex broker instance ID')
     if a.since and (len(a.since) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in a.since)):
         raise invalid('--since must be a bounded single-line journal timestamp')
     if a.status:
@@ -236,12 +241,15 @@ def decode(line):
         # Only the broker can provide an authoritative queue identity/bridge.
         if unit != 'mayi-broker.service':
             out['request_id'] = None
+        out['invalidation_reason'] = 'BROKER_STOPPING' if event == 'REQUEST_INVALIDATED' and raw.get('MAYI_REASON') == 'BROKER_STOPPING' else None
         return out
     except (ValueError, TypeError, OverflowError, OSError, RecursionError):
         return None
 
 
 def request_anchor(row):
+    if row['request_id'] and encoded_epoch(row['request_id']):
+        if encoded_epoch(row['request_id'])!=row['broker_instance_id'] or row['request_id'].split('_')[4]!=row['request_digest']:return False
     return (row['source_unit'] == 'mayi-broker.service'
             and row['event'] in REQUEST_EVENTS and row['broker_instance_id']
             and row['challenge_id'] and row['request_digest']
@@ -291,6 +299,8 @@ def _partition(records, maximum=MAX_GROUPS):
                     key = next(iter(candidates))
         if key is None and row['source_unit'] == 'mayi-privileged-executor.service' and row['execution_id']:
             candidates = bridges.get((row['boot_id'], row['execution_id']), set())
+            if row['broker_instance_id']:
+                candidates={candidate for candidate in candidates if candidate[1]==row['broker_instance_id']}
             if len(candidates) == 1:
                 key = next(iter(candidates))
         if key is None and row['source_unit'] == 'mayi-pam-auth.service':
@@ -308,6 +318,14 @@ def _partition(records, maximum=MAX_GROUPS):
 def reconstruct(records, maximum=MAX_GROUPS, partition=None):
     groups, _, overflow = partition if partition is not None else _partition(records, maximum)
     result = []
+    stops, starts = {}, {}
+    for row in records:
+        if row['source_unit']!='mayi-broker.service' or not row['broker_instance_id']:continue
+        epoch=(row['boot_id'],row['broker_instance_id'])
+        if row['event']=='BROKER_STOPPING':stops[epoch]=max(stops.get(epoch,-1),row['_order'])
+        if row['event']=='BROKER_STARTED':
+            table=starts.setdefault(row['boot_id'],{});table[row['broker_instance_id']]=max(table.get(row['broker_instance_id'],-1),row['_order'])
+    latest={boot:sorted(((order,epoch) for epoch,order in table.items()),reverse=True)[:2] for boot,table in starts.items()}
     for key, rows in groups.items():
         if not rows:continue
         seen, events = set(), []
@@ -345,8 +363,19 @@ def reconstruct(records, maximum=MAX_GROUPS, partition=None):
         request_ids = {r['request_id'] for r in events if r['request_id']}
         request_id = next(iter(request_ids)) if len(request_ids) == 1 else None
         incomplete = status == 'UNKNOWN' or len(terminal) > 1
-        public = [{k:v for k,v in row.items() if not k.startswith('_')} for row in events]
-        result.append(dict(identity=key[2], request_id=request_id, challenge_id=key[3], request_digest=key[4],
+        public = [dict({k:v for k,v in row.items() if not k.startswith('_')},epoch_id=row['broker_instance_id']) for row in events]
+        explicit = any(r['event']=='REQUEST_INVALIDATED' and r['state']=='INVALIDATED' and r.get('invalidation_reason')=='BROKER_STOPPING' for r in events)
+        first_order=min(r['_order'] for r in events)
+        stopped=stops.get((key[0],key[1]),-1)>=first_order
+        successor=any(order>first_order and epoch!=key[1] for order,epoch in latest.get(key[0],[]))
+        invalid=explicit or stopped or successor
+        recovery=classify_recovery(public)
+        result.append(dict(identity=key[2], request_id=request_id, challenge_id=key[3], request_digest=key[4], epoch_id=key[1],
+                           authorization_state='INVALIDATED' if invalid else 'NOT_ESTABLISHED',
+                           invalidation_reason='BROKER_STOPPING' if explicit or stopped else 'BROKER_RESTARTED' if successor else None,
+                           invalidation_evidence='EXPLICIT_REQUEST_FENCE' if explicit else 'EPOCH_LIFECYCLE_INFERENCE' if invalid else None,
+                           execution_outcome=status if recovery=='COMPLETED' else 'NOT_DISPATCHED' if recovery=='SAFE_TO_RECREATE_REQUEST' else 'UNKNOWN',
+                           recovery_classification=recovery,
                            boot_id=key[0], broker_instance_id=key[1], status=status,
                            observed_state=status if status != 'UNKNOWN' else observed,
                            current_state_known=False, correlation_incomplete=incomplete,
@@ -369,7 +398,8 @@ def event_rows(records, links):
             continue
         seen.add(fingerprint)
         event = {k:v for k,v in row.items() if not k.startswith('_')}
-        event.update(request_identity=key[2] if key else None,
+        event.update(epoch_id=row['broker_instance_id'], correlated_epoch_id=key[1] if key else None,
+                     request_identity=key[2] if key else None,
                      request_broker_instance_id=key[1] if key else None,
                      correlation_incomplete=key is None)
         events.append((event, key))
@@ -381,15 +411,18 @@ def document(records, stats, args):
     rows, omitted = reconstruct(records, partition=partition)
     if args.request:
         rows = [r for r in rows if r['identity'] == args.request]
+    if args.epoch:
+        rows = [r for r in rows if r['epoch_id']==args.epoch]
     if args.status:
-        rows = [r for r in rows if r['status'] == args.status or
+        rows = [r for r in rows if (args.status=='INVALIDATED' and r['authorization_state']=='INVALIDATED') or r['status'] == args.status or
                 (r['status']=='UNKNOWN' and r['observed_state']==args.status)]
     output_events = []
     if args.events:
         allowed = {(r['boot_id'],r['broker_instance_id'],r['identity'],
                     r['challenge_id'],r['request_digest']) for r in rows}
         available = [event for event,key in event_rows(records, partition[1])
-                     if (not args.request and not args.status) or key in allowed]
+                     if ((not args.request and not args.status) or key in allowed)
+                     and (not args.epoch or event['epoch_id']==args.epoch or (key is not None and key[1]==args.epoch))]
         matched = len(available)
         output_events = available[-(MAX_RECORDS if args.all else args.limit):]
         rows = []
@@ -410,14 +443,28 @@ def render(doc, detail=False, width=None):
     width = max(24, min(160, width or shutil.get_terminal_size((80,24)).columns))
     is_events = doc.get('mode') == 'events'
     lines = ['MAYI - Audit Events' if is_events else 'MAYI - Request History', '']
+    previous_epoch=object()
+    def epoch_separator(epoch, boot):
+        nonlocal previous_epoch
+        current=(boot,epoch)
+        if current!=previous_epoch:
+            if isinstance(previous_epoch,tuple):lines.append('--- NEW EPOCH ---' if epoch else '--- UNKNOWN EPOCH ---')
+            lines.append('Epoch: '+(epoch[:12]+'...' if epoch else 'UNKNOWN (legacy/unassociated)'))
+            previous_epoch=current
     if is_events:
         event_width = max(8, min(34, width-30))
         lines.append('{:<8}  {:<{ew}}  {}'.format('TIME','EVENT','REQUEST / ID',ew=event_width))
         for event in doc['events']:
+            epoch_separator(event.get('epoch_id'),event['boot_id'])
             lines.append('{:<8}  {:<{ew}}  {}'.format(event['timestamp'][11:19],safe(event['event'],event_width),safe(event['request_identity'] or '-',18),ew=event_width))
     elif detail:
         for row in doc['requests']:
+            epoch_separator(row.get('epoch_id'),row['boot_id'])
             lines.extend(['Request: ' + row['identity'], 'Boot: ' + row['boot_id'],
+                          'Created in epoch: '+str(row.get('epoch_id') or 'UNKNOWN'),
+                          'Current epoch: NOT QUERIED (history is not live state)',
+                          'Authorization: '+str(row.get('authorization_state'))+'; reason: '+str(row.get('invalidation_reason')),
+                          'Execution: '+str(row.get('execution_outcome'))+'; recovery: '+str(row.get('recovery_classification')),
                           'Broker: ' + (row['broker_instance_id'] or '-'),
                           'Status: ' + row['status'], 'Last observed: ' + (row['observed_state'] or '-'),
                           'Mayi code: ' + str(row['result']), 'Child exit: ' + str(row['exit_code']),
@@ -428,7 +475,9 @@ def render(doc, detail=False, width=None):
         id_width = max(6, min(18, width - 30))
         lines.append('{:<8}  {:<{iw}}  {:<12} {}'.format('TIME','REQUEST / ID','STATUS','RESULT', iw=id_width))
         for row in doc['requests']:
+            epoch_separator(row.get('epoch_id'),row['boot_id'])
             status = (row['observed_state'] or 'UNKNOWN') + '?' if row['status']=='UNKNOWN' else row['status']
+            if row.get('recovery_classification')=='SAFE_TO_RECREATE_REQUEST':status='INVALIDATED'
             stamp = row['timestamp'][11:19]
             result = '-' if row['result'] is None else str(row['result'])
             identity = row['request_id'] or (row['events'][-1]['event'] if row['identity'].startswith('event_') else row['identity'])

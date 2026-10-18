@@ -70,10 +70,24 @@ def public(value):
     return result
 
 
+def preflight(value=None, error=None):
+    if error is not None:
+        return dict(schema_version=1, preflight='UNKNOWN', broker=error.broker,
+                    error=dict(code=error.code,message=str(error))), 4
+    result = dict(value)
+    outcome = 'BUSY' if result['total_active'] else 'UNKNOWN' if result['outcome_unknown_terminal'] else 'READY'
+    result.update(preflight=outcome, preflight_schema_version=1,
+                  admission_fenced=False, physical_processes_verified=False)
+    return result, {'READY':0,'BUSY':3,'UNKNOWN':4}[outcome]
+
+
 def render(value=None, error=None, width=None):
     width = max(20, min(120, width or shutil.get_terminal_size((80,24)).columns))
     lines = ['MAYI - Approval Status', '', 'Broker: ' + (value['broker'] if value else error.broker), '']
     if value:
+        lines.append('Broker epoch: '+value['broker_instance_id'][:12]+'...')
+        if 'preflight' in value:
+            lines.append('Update preflight: '+value['preflight']+' (not an idle lock)')
         labels = [('Pending approval', 'pending_approval'), ('Waiting on dependencies', 'waiting_dependency'),
                   ('Approved / ready', 'approved_ready'), ('Awaiting requester consume', 'awaiting_consumption'),
                   ('Dispatching / unconfirmed start', 'dispatching'), ('Running (observed start)', 'running'),
@@ -95,12 +109,15 @@ def main(argv=None):
             raise StatusError(12,'UNAVAILABLE','Invalid status arguments; see mayi-approve status --help.')
     parser = Parser(prog='mayi-approve status',description='Read-only approver snapshot; no PAM or approval session.')
     parser.add_argument('--json',action='store_true',help='JSON; --watch produces one JSON object per line')
+    parser.add_argument('--preflight',action='store_true',help='read-only update observation: READY=0, BUSY=3, UNKNOWN=4; not an idle lock')
     parser.add_argument('--watch',action='store_true',help='one-second snapshots; human mode requires a supported TTY')
     parser.add_argument('--interval',type=float,default=None,help='watch refresh seconds, 0.5..60')
     terminal = False
     previous = {}
     try:
         args = parser.parse_args(argv)
+        if args.preflight and args.watch:
+            raise StatusError(12,'UNAVAILABLE','--preflight cannot be combined with --watch.')
         if args.interval is not None and (not args.watch or not math.isfinite(args.interval) or not .5 <= args.interval <= 60):
             raise StatusError(12,'UNAVAILABLE','--interval requires --watch and a finite value from 0.5 to 60.')
         if args.watch and not args.json:
@@ -118,6 +135,13 @@ def main(argv=None):
             value = error = None
             try:value = public(fetch())
             except StatusError as failure:error = failure
+            if args.preflight:
+                record, code = preflight(value,error)
+                if args.json:print(json.dumps(record,sort_keys=True,ensure_ascii=True),flush=True)
+                else:
+                    print('Update preflight: UNKNOWN' if error else render(record),end='\n' if error else '')
+                    if error:print(str(error),file=sys.stderr)
+                return code
             if args.json:
                 record = value if value is not None else dict(schema_version=1,broker=error.broker,error=dict(code=error.code,message=str(error)))
                 print(json.dumps(record,sort_keys=True,ensure_ascii=True),flush=True)

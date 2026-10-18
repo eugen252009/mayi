@@ -2,7 +2,41 @@
 from __future__ import annotations
 import json,socket
 from .protocol import MAX_REQUEST_BYTES,proposal_document
+from .request_ids import valid_request_id,encoded_epoch
+
 class ExecutorError(RuntimeError):pass
+class BrokerRestartedError(ExecutorError):
+    """An epoch mismatch invalidates old authority, never proves no execution."""
+    def __init__(self, previous, current):
+        super().__init__('BROKER_RESTARTED: old authorization INVALIDATED; execution UNKNOWN; reconciliation required')
+        self.previous_broker_instance_id=previous
+        self.broker_instance_id=current
+        self.authorization_state='INVALIDATED'
+        self.execution_outcome='UNKNOWN'
+        self.recovery_classification='RECONCILIATION_REQUIRED'
+
+class BrokerEpochChangedError(BrokerRestartedError):
+    def __init__(self, request_id, current, response):
+        super().__init__(encoded_epoch(request_id),current)
+        self.request_id=request_id
+        self.response=response
+        self.args=('BROKER_EPOCH_CHANGED: authenticated request belongs to a previous broker epoch; authorization INVALIDATED; execution UNKNOWN. Reconcile before creating a new request with fresh approval.',)
+
+def _check_epoch(result, previous, request_id=None):
+    if isinstance(result,dict) and result.get('code')=='BROKER_EPOCH_CHANGED':
+        error=result.get('error',{})
+        epoch=encoded_epoch(request_id)
+        current=result.get('broker_instance_id')
+        if (result.get('protocol')!=5 or not epoch or result.get('request_id')!=request_id or result.get('epoch_id')!=epoch or not isinstance(current,str) or len(current)!=48 or any(c not in '0123456789abcdef' for c in current) or current==epoch or error!={'code':'BROKER_EPOCH_CHANGED','request_id':request_id,'retryable':False,'requires_new_request':True,'requires_new_approval':True}):
+            raise ExecutorError('invalid authenticated epoch response')
+        raise BrokerEpochChangedError(request_id,current,result)
+    if isinstance(result,dict) and result.get('code')=='BROKER_INSTANCE_MISMATCH' and previous:
+        current=result.get('broker_instance_id')
+        valid=lambda s:isinstance(s,str) and len(s)==48 and all(c in '0123456789abcdef' for c in s)
+        if result.get('protocol')!=5 or not valid(previous) or not valid(current) or current==previous:
+            raise ExecutorError('invalid broker epoch mismatch response')
+        raise BrokerRestartedError(previous,current)
+
 
 def _frame(data):
     if len(data)>MAX_REQUEST_BYTES:raise ExecutorError('request exceeds size limit')
@@ -65,12 +99,17 @@ class RustExecutorClient:
         if not isinstance(result,dict) or result.get('ok') is not True or result.get('protocol')!=5 or result.get('type')!='QUEUE_RESPONSE' or result.get('response_to')!='QUEUE_REQUEST':
             raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','invalid queue response')}" if isinstance(result,dict) else 'invalid queue response')
         request_id=result.get('request_id')
-        if not isinstance(request_id,str) or len(request_id)!=35 or not request_id.startswith('rq_') or any(c not in '0123456789abcdef' for c in request_id[3:]):raise ExecutorError('invalid broker request ID')
+        if not valid_request_id(request_id):raise ExecutorError('invalid broker request ID')
         return result
-    def queue_status(self,request_id):
+    def queue_status(self,request_id,broker_instance_id=None):
         if not self.socket_path: raise ExecutorError('protocol v5 status requires the broker request socket')
-        if not isinstance(request_id,str) or len(request_id)!=35 or not request_id.startswith('rq_') or any(c not in '0123456789abcdef' for c in request_id[3:]):raise ValueError('invalid request ID')
-        result=_exchange(self.socket_path,{'type':'GET_QUEUE_STATUS','protocol':5,'request_id':request_id},self.timeout,self.expected_broker_uid)
+        if not valid_request_id(request_id):raise ValueError('invalid request ID')
+        doc={'type':'GET_QUEUE_STATUS','protocol':5,'request_id':request_id}
+        if broker_instance_id is not None:
+            if not isinstance(broker_instance_id,str) or len(broker_instance_id)!=48 or any(c not in '0123456789abcdef' for c in broker_instance_id):raise ValueError('invalid broker instance')
+            doc['broker_instance_id']=broker_instance_id
+        result=_exchange(self.socket_path,doc,self.timeout,self.expected_broker_uid)
+        _check_epoch(result,broker_instance_id,request_id)
         if not isinstance(result,dict) or result.get('ok') is not True or result.get('protocol')!=5 or result.get('response_to')!='GET_QUEUE_STATUS':
             raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','invalid queue status')}" if isinstance(result,dict) else 'invalid queue status')
         if result.get('request_id')!=request_id or result.get('state') not in {'PENDING_APPROVAL','APPROVED','WAITING_DEPENDENCY','READY','RUNNING','SUCCEEDED','FAILED','DENIED','EXPLAIN_REQUESTED','EXPIRED','EXECUTION_UNKNOWN','BLOCKED'}:raise ExecutorError('invalid queue status response')
@@ -87,6 +126,7 @@ class RustExecutorClient:
                 raise ValueError('invalid consume correlation identifier')
         doc={'type':'CONSUME_APPROVED','protocol':5,'broker_instance_id':broker_instance_id,'challenge_id':challenge_id,'request_digest':request_digest}
         result=_exchange(self.socket_path,doc,self.timeout,self.expected_broker_uid)
+        _check_epoch(result,broker_instance_id)
         if not isinstance(result,dict) or not isinstance(result.get('ok'),bool) or result.get('protocol')!=5:
             raise ExecutorError('invalid consume response schema')
         if not result.get('ok'):
@@ -98,6 +138,7 @@ class RustExecutorClient:
         if not self.socket_path:raise ExecutorError('protocol v5 status requires the broker request socket')
         doc={'type':'GET_REQUEST_STATUS','protocol':5,'broker_instance_id':broker_instance_id,'challenge_id':challenge_id,'request_digest':request_digest}
         result=_exchange(self.socket_path,doc,self.timeout,self.expected_broker_uid)
+        _check_epoch(result,broker_instance_id)
         if not isinstance(result,dict) or result.get('ok') is not True or result.get('protocol')!=5 or result.get('response_to')!='GET_REQUEST_STATUS':
             raise ExecutorError(f"{result.get('code','INTERNAL_ERROR')}: {result.get('message','invalid request status')}" if isinstance(result,dict) else 'invalid request status')
         if result.get('broker_instance_id')!=broker_instance_id or result.get('challenge_id')!=challenge_id or result.get('request_digest')!=request_digest or result.get('status') not in {'PENDING','APPROVED','DENIED','EXPLAINED','EXPIRED','CONSUMED'}:

@@ -3,6 +3,7 @@ mod audit;
 mod broker;
 mod filesystem;
 mod pam_auth;
+mod request_ids;
 use serde_json::Value;
 use std::{
     env,

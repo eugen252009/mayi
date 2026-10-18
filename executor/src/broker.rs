@@ -484,12 +484,19 @@ mod console_session_tests;
 #[path = "console_sessions.rs"]
 mod console_sessions;
 
+#[path = "broker_epoch.rs"]
+mod broker_epoch;
+#[cfg(test)]
+#[path = "broker_epoch_tests.rs"]
+mod broker_epoch_tests;
 #[path = "queue_snapshot.rs"]
 mod queue_snapshot;
 #[cfg(test)]
 #[path = "queue_snapshot_tests.rs"]
 mod queue_snapshot_tests;
 struct Broker {
+    stopping: bool,
+    request_id_key: [u8; 32],
     console_sessions: console_sessions::Sessions,
     // Observation-only entries bounded by the request worker pool. Keep normal
     // consumed-request retention/authorization quotas completely unchanged.
@@ -510,15 +517,8 @@ fn random_id() -> io::Result<String> {
     fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
     Ok(hex::encode(b))
 }
-fn random_request_id() -> io::Result<String> {
-    let mut bytes = [0u8; 16];
-    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-    Ok(format!("rq_{}", hex::encode(bytes)))
-}
 fn valid_request_id(value: &str) -> bool {
-    value
-        .strip_prefix("rq_")
-        .is_some_and(|tail| valid_hex(Some(&Value::String(tail.to_owned())), 32))
+    crate::request_ids::valid(value)
 }
 fn fresh_token(counter: &mut u64) -> io::Result<String> {
     let mut entropy = [0u8; 16];
@@ -760,7 +760,11 @@ impl Broker {
             .all(|id| visit(self, new_id, id, &mut active, &mut done))
     }
     fn new() -> io::Result<Self> {
+        let mut request_id_key = [0u8; 32];
+        fs::File::open("/dev/urandom")?.read_exact(&mut request_id_key)?;
         Ok(Self {
+            request_id_key,
+            stopping: false,
             console_sessions: console_sessions::Sessions::default(),
             synchronous_executions: HashMap::new(),
             instance: random_id()?,
@@ -798,6 +802,9 @@ impl Broker {
         }
     }
     fn propose(&mut self, v: &Value, peer: u32) -> Value {
+        if self.stopping {
+            return self.stopping_response();
+        }
         self.expire();
         let Some(o) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
@@ -878,6 +885,9 @@ impl Broker {
                         "invalid or duplicate dependency ID",
                     );
                 }
+                if let Some(error) = self.request_id_error(id) {
+                    return error;
+                }
                 let Some(dep) = self
                     .pending
                     .values()
@@ -938,8 +948,13 @@ impl Broker {
             Ok(id) => id,
             Err(_) => return response_error("INTERNAL_ERROR", "challenge generation failed"),
         };
+        let ttl_seconds = if queued { 24 * 60 * 60 } else { MAX_TTL };
+        let ttl = Duration::from_secs(ttl_seconds);
+        let expires = now() + ttl_seconds as i64;
+        let material = json!({"broker_instance_id":self.instance,"challenge_id":challenge,"dependencies":dependencies,"expires_at":expires,"operations":ops,"protocol":VERSION,"requester_uid":peer,"target_gid":gid,"target_uid":uid});
+        let digest = hex::encode(Sha256::digest(canonical(&material).as_bytes()));
         let request_id = if queued {
-            match random_request_id() {
+            match crate::request_ids::issue(&self.request_id_key, &self.instance, &digest) {
                 Ok(id)
                     if !self
                         .pending
@@ -953,16 +968,9 @@ impl Broker {
         } else {
             None
         };
-        let ttl_seconds = if queued { 24 * 60 * 60 } else { MAX_TTL };
-        let ttl = Duration::from_secs(ttl_seconds);
-        let expires = now() + ttl_seconds as i64;
-        let material = json!({"broker_instance_id":self.instance,"challenge_id":challenge,"dependencies":dependencies,"expires_at":expires,"operations":ops,"protocol":VERSION,"requester_uid":peer,"target_gid":gid,"target_uid":uid});
         if queued && !self.dependency_graph_acyclic(request_id.as_deref().unwrap(), &dependencies) {
             return response_error("DEPENDENCY_CYCLE", "dependency graph must be acyclic");
         }
-        let mut h = Sha256::new();
-        h.update(canonical(&material).as_bytes());
-        let digest = hex::encode(h.finalize());
         let req = Request {
             instance: self.instance.clone(),
             challenge: challenge.clone(),
@@ -1157,6 +1165,9 @@ impl Broker {
         peer: u32,
         session_deadline: Option<console_sessions::Deadline>,
     ) -> Value {
+        if self.stopping {
+            return self.stopping_response();
+        }
         self.expire();
         let Some(o) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
@@ -1422,6 +1433,9 @@ impl Broker {
         }
     }
     fn consume_request(&mut self, v: &Value, peer: u32) -> Value {
+        if self.stopping {
+            return self.stopping_response();
+        }
         self.expire();
         #[cfg(test)]
         security_regressions::after_expiry_sweep();
@@ -1459,7 +1473,7 @@ impl Broker {
             return response_error("INVALID_PROTOCOL", "invalid consume identifiers");
         }
         if instance != self.instance {
-            return response_error("BROKER_INSTANCE_MISMATCH", "broker instance mismatch");
+            return self.instance_mismatch();
         }
         let Some(r) = self.pending.get_mut(id) else {
             return response_error("CHALLENGE_NOT_FOUND", "challenge unavailable");
@@ -1499,7 +1513,17 @@ impl Broker {
                 audit_request(r, "CONSUMED", &[]);
                 json!({"ok":true,"protocol":VERSION,"status":"CONSUMED","state":"CONSUMED","execution":"EXECUTION_PENDING","broker_instance_id":r.instance,"challenge_id":r.challenge,"request_digest":r.digest})
             }
-            State::Consumed => response_error("ALREADY_CONSUMED", "approval already consumed"),
+            State::Consumed => {
+                let mut v = response_error("ALREADY_CONSUMED", "approval already consumed");
+                v["error"] = json!({"code":"REQUEST_CONSUMED"});
+                v
+            }
+            State::Denied => {
+                let mut v =
+                    response_error("INVALID_STATE_TRANSITION", "operator denied authorization");
+                v["error"] = json!({"code":"AUTHORITY_DENIED"});
+                v
+            }
             State::Expired => response_error("REQUEST_EXPIRED", "challenge expired"),
             _ => response_error("INVALID_STATE_TRANSITION", "request not approved"),
         }
@@ -1510,8 +1534,10 @@ impl Broker {
         let Some(object) = v.as_object() else {
             return response_error("INVALID_PROTOCOL", "message must be object");
         };
-        if !only_keys(object, &["type", "protocol", "request_id"])
-            || object.get("type").and_then(Value::as_str) != Some("GET_QUEUE_STATUS")
+        if !only_keys(
+            object,
+            &["type", "protocol", "request_id", "broker_instance_id"],
+        ) || object.get("type").and_then(Value::as_str) != Some("GET_QUEUE_STATUS")
             || object.get("protocol").and_then(Value::as_i64) != Some(VERSION)
         {
             return response_error("INVALID_PROTOCOL", "invalid queue status request");
@@ -1521,6 +1547,17 @@ impl Broker {
         };
         if !valid_request_id(id) {
             return response_error("INVALID_REQUEST_ID", "invalid request ID");
+        }
+        if let Some(error) = self.request_id_error(id) {
+            return error;
+        }
+        if let Some(instance) = object.get("broker_instance_id") {
+            if !valid_hex(Some(instance), 48) {
+                return response_error("INVALID_PROTOCOL", "invalid broker instance");
+            }
+            if instance.as_str() != Some(self.instance.as_str()) {
+                return self.instance_mismatch();
+            }
         }
         let Some(request) = self
             .pending
@@ -1538,7 +1575,16 @@ impl Broker {
         let Some(state) = request.queue_state else {
             return response_error("INVALID_REQUEST_ID", "request is not queued");
         };
-        json!({"ok":true,"protocol":VERSION,"request_id":id,"requester_uid":peer,"state":state.label(),"mayi_result":request.mayi_result,"child_exit_status":request.child_exit_status,"blocking_dependency":request.blocking_dependency,"dependencies":request.dependencies})
+        let authorization_error = match state {
+            QueueState::Expired => Some("REQUEST_EXPIRED"),
+            QueueState::Denied => Some("AUTHORITY_DENIED"),
+            QueueState::ExecutionUnknown => Some("OUTCOME_UNKNOWN"),
+            QueueState::Running | QueueState::Succeeded | QueueState::Failed => {
+                Some("REQUEST_CONSUMED")
+            }
+            _ => None,
+        };
+        json!({"ok":true,"protocol":VERSION,"request_id":id,"epoch_id":request.instance,"authorization_error":authorization_error,"requester_uid":peer,"state":state.label(),"mayi_result":request.mayi_result,"child_exit_status":request.child_exit_status,"blocking_dependency":request.blocking_dependency,"dependencies":request.dependencies})
     }
     fn status_request(&mut self, v: &Value, peer: u32) -> Value {
         self.expire();
@@ -1566,8 +1612,14 @@ impl Broker {
         ) else {
             return response_error("INVALID_PROTOCOL", "status identifiers required");
         };
+        if !valid_hex(Some(&Value::String(instance.to_owned())), 48)
+            || !valid_hex(Some(&Value::String(id.to_owned())), 48)
+            || !valid_hex(Some(&Value::String(digest.to_owned())), 64)
+        {
+            return response_error("INVALID_PROTOCOL", "invalid status identifiers");
+        }
         if instance != self.instance {
-            return response_error("BROKER_INSTANCE_MISMATCH", "broker instance mismatch");
+            return self.instance_mismatch();
         }
         let Some(request) = self.pending.get(id) else {
             return response_error("CHALLENGE_NOT_FOUND", "challenge unavailable");
@@ -2881,9 +2933,11 @@ fn call_privileged_executor(
     identity: &str,
     operation: &Value,
     started: impl FnOnce(),
+    instance: &str,
 ) -> (Value, bool) {
     let mut completed = false;
-    let outcome = call_privileged_executor_observed(identity, operation, &mut completed, started);
+    let outcome =
+        call_privileged_executor_observed(identity, operation, &mut completed, started, instance);
     (outcome, completed)
 }
 fn broker_execution_event(queued: bool, outcome: &str, completed: bool) -> &'static str {
@@ -2901,16 +2955,15 @@ fn call_privileged_executor_observed(
     operation: &Value,
     audit_completed: &mut bool,
     started: impl FnOnce(),
+    instance: &str,
 ) -> Value {
     *audit_completed = false;
-    let request_id = if valid_request_id(identity) {
-        &identity[3..]
-    } else {
-        &identity[..32]
-    };
+    let execution_identity = crate::request_ids::execution_id(identity);
+    let request_id = execution_identity.as_str();
     let message = json!({
         "type": "EXEC_REQUEST_OBSERVE",
         "protocol": 1,
+        "broker_instance_id": instance,
         "request_id": request_id,
         "executable": operation["executable"],
         "argv": operation["argv"]
@@ -3022,6 +3075,9 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
         let Ok(mut state) = broker.lock() else {
             return;
         };
+        if state.stopping {
+            return;
+        }
         state.expire();
         #[cfg(test)]
         security_regressions::after_expiry_sweep();
@@ -3095,10 +3151,19 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                     audit_request(
                         request,
                         "QUEUE_DISPATCH_STARTED",
-                        &[(crate::audit::Field::ExecutionId, id[3..].into())],
+                        &[(
+                            crate::audit::Field::ExecutionId,
+                            crate::request_ids::execution_id(&id),
+                        )],
                     );
                     if let Some(operation) = request.ops.first().cloned() {
-                        ready.push((id, request.requester, request.approver_uid, operation));
+                        ready.push((
+                            id,
+                            request.instance.clone(),
+                            request.requester,
+                            request.approver_uid,
+                            operation,
+                        ));
                     } else {
                         request.queue_state = Some(QueueState::ExecutionUnknown);
                         request.mayi_result = Some(16);
@@ -3110,7 +3175,7 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
             }
         }
     }
-    for (request_id, _requester, _approver, operation) in ready {
+    for (request_id, instance, _requester, _approver, operation) in ready {
         let worker_broker = broker.clone();
         let worker_request_id = request_id.clone();
         let spawn = std::thread::Builder::new()
@@ -3128,8 +3193,12 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                             }
                         }
                     };
-                let (outcome, audit_completed) =
-                    call_privileged_executor(&worker_request_id, &operation, notify_started);
+                let (outcome, audit_completed) = call_privileged_executor(
+                    &worker_request_id,
+                    &operation,
+                    notify_started,
+                    &instance,
+                );
                 let execution = outcome["execution"].as_str().unwrap_or("UNKNOWN");
                 let child = outcome["exit_code"]
                     .as_i64()
@@ -3156,7 +3225,7 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                                 (crate::audit::Field::Result, code.to_string()),
                                 (
                                     crate::audit::Field::ExecutionId,
-                                    worker_request_id[3..].into(),
+                                    crate::request_ids::execution_id(&worker_request_id),
                                 ),
                             ];
                             if let Some(child) = child {
@@ -3433,32 +3502,38 @@ fn handle_with_auth(
     let mut state = broker
         .lock()
         .map_err(|_| io::Error::other("broker state poisoned"))?;
-    let mut r = match authentication_error {
-        Some(error) => error,
-        None => match authorization {
-            Err(error) => error,
-            Ok(()) if approval && decision_operation && pam_authenticated => {
-                match state.validate_decision(&v, peer) {
-                    Ok(()) => console_auth::apply_decision(
-                        &mut state,
-                        &v,
-                        peer,
-                        session_key,
-                        session_token.as_ref(),
-                    ),
-                    Err(error) => error,
+    let mut r = if state.stopping {
+        state.stopping_response()
+    } else {
+        match authentication_error {
+            Some(error) => error,
+            None => match authorization {
+                Err(error) => error,
+                Ok(()) if approval && decision_operation && pam_authenticated => {
+                    match state.validate_decision(&v, peer) {
+                        Ok(()) => console_auth::apply_decision(
+                            &mut state,
+                            &v,
+                            peer,
+                            session_key,
+                            session_token.as_ref(),
+                        ),
+                        Err(error) => error,
+                    }
                 }
-            }
-            Ok(()) if approval && decision_operation => response_error(
-                "PAM_AUTHENTICATION_FAILED",
-                "approval decision lacks successful PAM authentication",
-            ),
-            Ok(()) if approval => state.authority(&v, peer),
-            Ok(()) if message_type == "CONSUME_APPROVED" => state.consume_request(&v, peer),
-            Ok(()) if message_type == "GET_REQUEST_STATUS" => state.status_request(&v, peer),
-            Ok(()) if message_type == "GET_QUEUE_STATUS" => state.queue_status_request(&v, peer),
-            Ok(()) => state.propose(&v, peer),
-        },
+                Ok(()) if approval && decision_operation => response_error(
+                    "PAM_AUTHENTICATION_FAILED",
+                    "approval decision lacks successful PAM authentication",
+                ),
+                Ok(()) if approval => state.authority(&v, peer),
+                Ok(()) if message_type == "CONSUME_APPROVED" => state.consume_request(&v, peer),
+                Ok(()) if message_type == "GET_REQUEST_STATUS" => state.status_request(&v, peer),
+                Ok(()) if message_type == "GET_QUEUE_STATUS" => {
+                    state.queue_status_request(&v, peer)
+                }
+                Ok(()) => state.propose(&v, peer),
+            },
+        }
     };
     if r["ok"] == false {
         use crate::audit::Field as F;
@@ -3549,8 +3624,13 @@ fn handle_with_auth(
                 }
             }
         };
+        let instance = fields
+            .iter()
+            .find(|(k, _)| *k == F::BrokerInstanceId)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("");
         let (outcome, audit_completed) =
-            call_privileged_executor(&challenge, &operation, notify_started);
+            call_privileged_executor(&challenge, &operation, notify_started, instance);
         if let Ok(mut state) = broker.lock() {
             state.synchronous_executions.remove(&challenge);
             if let Some(r) = state.pending.get_mut(&challenge) {
@@ -3690,7 +3770,10 @@ pub fn serve(
     let request_socket_path = super::secure_socket_path(&request_path)?;
     let approval_socket_path = super::secure_socket_path(&approval_path)?;
     super::install_broker_shutdown_handlers();
-    let broker = Arc::new(Mutex::new(Broker::new()?));
+    let mut state = Broker::new()?;
+    state.request_id_key =
+        crate::request_ids::load_key(std::path::Path::new("/var/lib/mayi-broker"))?;
+    let broker = Arc::new(Mutex::new(state));
     let request_active = Arc::new(AtomicUsize::new(0));
     let approval_active = Arc::new(AtomicUsize::new(0));
     let (req, req_metadata) = super::listener_for(&request_path, request_gid)?;
@@ -3709,6 +3792,15 @@ pub fn serve(
     };
     req.set_nonblocking(true)?;
     auth.set_nonblocking(true)?;
+    let instance = broker
+        .lock()
+        .map_err(|_| io::Error::other("broker state poisoned"))?
+        .instance
+        .clone();
+    crate::audit::emit(
+        "BROKER_STARTED",
+        &[(crate::audit::Field::BrokerInstanceId, instance)],
+    );
     while !super::broker_shutdown_requested() {
         let mut activity = false;
         match req.accept() {
@@ -3745,6 +3837,13 @@ pub fn serve(
         if !activity {
             std::thread::sleep(Duration::from_millis(100))
         }
+    }
+    let records = broker
+        .lock()
+        .map_err(|_| io::Error::other("broker state poisoned"))?
+        .begin_stopping();
+    for (event, fields) in records {
+        crate::audit::emit(event, &fields);
     }
     drop(req);
     drop(auth);
