@@ -1,0 +1,11 @@
+# Local metadata and safe dispatch
+
+Root cause confirmed in installed status1 and source: main() recognized history/queue/wait/status/help/legacy analysis, but not --version/-V. Other tokens fell through to _execute_request and trusted executable lookup. mayi-approve separately accepted only no arguments or status. Existing __version__=0.1.0 was unrelated component metadata, not Debian package identity.
+
+Minimal correction: retain existing main dispatcher; shared cli_metadata.dispatch_metadata handles only a sole leading --help/-h/--version/-V, locally. No new general argument parser or broker protocol. Mayi -- is checked FIRST and hands the remaining list directly to the unchanged _execute_request. Recognized existing modes retain their dispatch. Unknown leading hyphen options now fail usage12 before resolution/IPC; argv after a normal executable is never scanned for Mayi options. Empty primary invocation keeps help +exit2; missing executable after -- is usage12.
+
+Version authority is executor/package/tpa.json control.version. mayi/version.py validates/reads it for source/build, build-deb.sh derives filename and stamp from that value (no duplicated package version in the shell script). A bounded plain _build_version file is written ONLY in the fresh package root. Packaged Python CLI reads its sibling stamp and never queries dpkg/environment/broker/other installed distributions. A bad existing stamp is an error15, not fallback. Source checkout (no stamp) reads its own relative tpa.json. mayi.__version__ resolves through the same provider. Cargo/pyproject component versions remain internal metadata, not a claimed CLI/package version.
+
+Metadata options used with extra arguments reject usage12 instead of silently discarding input. Help/version need no TTY, journal, broker, approval session or PAM. Help does not require version metadata. mayi-approve shares local metadata handling before console exec/status dispatch. Status/history help remain their own established subparser help; --version after a real executable remains a child argument.
+
+Authorization, exact command binding/argv, trusted directories, requester identity, PAM/TTL/one-shot/replay, native journaling, history/live snapshots/watch and approval console code are unchanged. Rust source and execution IPC are untouched by this correction.

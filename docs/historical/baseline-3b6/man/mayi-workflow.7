@@ -1,0 +1,214 @@
+.TH MAYI-WORKFLOW 7 "2026-09-27" "Mayi 0.4.1" "Mayi Manual"
+.SH NAME
+mayi-workflow \- requester and approver guide for Mayi's exact-command approval workflow
+.SH DESCRIPTION
+Mayi lets a requester ask for privileged local execution without giving the requester direct root credentials. The requester supplies an executable and structured argv; a human reviews the request in the persistent approval console and authenticates separately through PAM. The broker owns the immutable request and approval lifecycle; the separate executor runs only the broker-authorized stored operation.
+.PP
+Mayi approves processes, not shell command strings. The requester's shell processes quotes and expansions before Mayi receives argv. Mayi does not interpret shell metacharacters. A shell or other interpreter becomes relevant only when that executable is itself explicitly requested and approved.
+.SH SECURITY BOUNDARY
+.nf
+agent / requester
+        | exact executable + argv
+        v
+broker-owned immutable request
+        | one-shot view
+        v
+human approval console -- PAM authenticates the human account
+        | one-shot decision; broker rechecks identity and role
+        v
+broker -- forwards stored operation only
+        v
+privileged executor -- checks exact broker UID
+        | direct executable + argv, no shell mediation
+        v
+approved process
+.fi
+.PP
+The roles are deliberately distinct concepts:
+.IP \(bu 3
+Requester identity is the Unix UID authenticated by the broker through
+.BR SO_PEERCRED .
+It owns its requests and queue dependencies.
+.IP \(bu 3
+Group membership grants a requester or approver role; it is not PAM authentication.
+.IP \(bu 3
+The human approver authenticates the same Unix account that runs
+.B mayi-approve
+through the broker before the console displays any request.
+.IP \(bu 3
+The rendered terminal text is not execution input. Approval applies to broker-owned immutable request state, not text copied from the display.
+.IP \(bu 3
+The privileged executor accepts only the configured broker UID. Direct executor access is not an authorization path.
+.PP
+Shell access alone does not make a process an approver. However,
+.B SO_PEERCRED
+identifies an OS UID, not a process; processes sharing an account are not distinguished. PAM authenticates the account entering the console and does not replace the broker's peer-UID, NSS group, request-view, or one-shot checks. Separate requester and human accounts are recommended where practical. A single account may hold both roles, but every new console process still requires interactive PAM authentication.
+.SH REQUESTER WORKFLOW
+.SS Synchronous request
+Run a command directly through Mayi:
+.PP
+.nf
+.RS
+mayi /usr/bin/systemctl reload nginx
+.fi
+.RE
+.PP
+The requester waits for a human decision. If allowed, Mayi executes the stored executable and argv once and returns the child's output. Denial and follow-up execute nothing. Approval is not proof of successful completion; inspect the result and, where necessary, verify system state.
+.SS Exact executable and argv
+An absolute executable path is clearest. Mayi can also resolve a command name using its fixed trusted system directories. The resolved canonical executable is stored separately; the token supplied as the command is retained as argv[0]. The approver display shows both.
+.PP
+For example:
+.PP
+.nf
+.RS
+mayi /usr/bin/printf '%s\\n' 'hello world' '$HOME' '; rm -rf /'
+.fi
+.RE
+.PP
+The caller's shell removes the quoting and passes literal argument values. Mayi does not expand
+.B $HOME
+or interpret the semicolon as a command separator. No shell is invoked implicitly. In contrast:
+.PP
+.nf
+.RS
+mayi /bin/bash -c 'printf "%s\\n" hello'
+.fi
+.RE
+.PP
+explicitly requests Bash, which interprets its
+.B -c
+argument. The human must review the executable and every argument. Mayi does not determine whether the requested program is safe.
+.SS Submit a queue
+Submit each command separately and capture the broker-generated ID:
+.PP
+.nf
+.RS
+d1=$(mayi --queue /usr/sbin/nginx -t)
+d2=$(mayi --queue --after "$d1" /usr/bin/systemctl reload nginx)
+d3=$(mayi --queue --after "$d2" /usr/bin/systemctl is-active nginx)
+.fi
+.RE
+.PP
+This example assumes nginx is installed and configured; use executable paths present on the host. A successful queue submission prints exactly one opaque ID beginning with
+.B rq_
+followed by 32 lowercase hexadecimal characters, then returns before approval or execution. Do not invent or edit IDs. Submission is not approval.
+.SS Dependencies
+Place each
+.B --after REQUEST_ID
+before the executable; repeat it to require multiple dependencies. Dependencies must be retained queued requests owned by the same authenticated requester UID. Unknown, duplicate, invalid, non-queued, cyclic, or cross-requester dependencies are rejected.
+.PP
+Every request in a chain requires its own human approval. A child may be approved while waiting, but executes only after every dependency succeeds. Denial, follow-up, expiry, failure, or another unsuccessful terminal dependency blocks descendants.
+.SS Wait and status
+Observe the entire chain:
+.PP
+.nf
+.RS
+mayi --wait --fail=0 "$d1" "$d2" "$d3"
+.fi
+.RE
+.PP
+.B --wait
+observes requests; it does not approve, execute, cancel, or retry them. Every terminal state other than
+.B SUCCEEDED
+uses one unit of the failure budget. The default is zero; with
+.B --fail=0
+all observed requests must succeed for the wait command to return zero. With
+.B --fail=N ,
+up to N unsuccessful terminal requests are permitted. With
+.BR --fail-instant ,
+wait may return as soon as observed failures exceed the budget. Other requests continue and are not cancelled.
+.PP
+A successful result resembles:
+.PP
+.nf
+.RS
+rq_<id> SUCCEEDED mayi=0 child=0
+.fi
+.RE
+.PP
+The per-request state and
+.B mayi=
+result are distinct from the exit status of
+.BR mayi --wait .
+A successful
+.B --status REQUEST_ID
+query reports one job but does not imply that the job succeeded; inspect the printed state.
+.SH APPROVER WORKFLOW
+.SS Start and authenticate
+In the human approver's interactive terminal, start one persistent console:
+.PP
+.nf
+.RS
+$ mayi-approve
+Authenticate to unlock approvals (5-minute idle timeout).
+Password:
+Waiting for Mayi requests...
+.fi
+.RE
+.PP
+The exact PAM prompt can vary by host policy. Successful authentication is quiet: the console proceeds to waiting/request display without an
+.B Authenticated.
+banner. PAM authentication goes through the broker before request display. Passwords are read from the controlling terminal with echo disabled, not from argv, environment variables, or piped stdin. Authentication is bound to this process and terminal, with a five-minute sliding idle window. Only successful approve, deny, or follow-up decisions reset it. Incoming requests, navigation, and status polling do not reset it. On expiry the console locks and exits; start mayi-approve again to authenticate. Exiting the process, terminal disconnect, or broker restart invalidates the session. Cached decisions still check NSS roles and PAM account policy. Authentication never approves requests automatically.
+.SS Review a request
+The display presents the resolved executable, actual argv[0], remaining arguments, queue state, requester UID, request ID, dependencies, and privileged execution identity. A simple command appears approximately as:
+.PP
+.nf
+.RS
+Commands: 1
+[0] /usr/bin/systemctl [argv0=/usr/bin/systemctl] (PENDING_APPROVAL)
+     restart \\
+     nginx \\
+     requester UID: 1001
+.fi
+.RE
+.PP
+Argument display values are escaped/quoted for readability and are not a shell command. For a linear chain, a downward arrow points from each prerequisite to its dependent. Branching graphs list prerequisite indices and appear in topological order. The displayed executor identity is UID 0 / primary GID 23012.
+.SS Decisions
+At the main prompt:
+.TP
+.B a
+Allow all pending commands in the displayed connected set. This is explicit approval; a command may still be waiting for its dependencies.
+.TP
+.B s
+Skip the set for now. This changes local UI navigation only: it does not approve or deny. Pending skipped work may resurface.
+.TP
+.B d
+Deny all or selected pending commands. Denial is an authorization decision; denied commands do not execute.
+.TP
+.B f
+Request follow-up for all or selected pending commands. Follow-up executes nothing and does not authorize the command; dependent jobs cannot succeed.
+.TP
+.B y , n , e
+Aliases for allow, deny, and follow-up, respectively.
+.TP
+.B 0 , 1 , 012 , ...
+Select displayed indices by typing digits. Current limitation: each digit denotes one index, so individual numeric selection supports indices 0 through 9 only. Use
+.B a
+when a displayed set contains higher indices; selecting those higher indices individually is not supported by this console.
+.TP
+.B q
+Exit without approving, denying, or cancelling pending requests. Restart the console and authenticate again to continue.
+.PP
+Deny and follow-up prompt for
+.B all
+or selected indices. Invalid input is rejected; review the display before trying again. After a fully correlated successful allow, deny, or follow-up decision, the console clears only the visible screen when stdout is a TTY and
+.B TERM
+is supported. Scrollback is not erased. Failed decisions preserve the display. The console remains open and returns to waiting.
+.SH RESULTS AND LIMITS
+The principal synchronous process exit statuses are: 0 for successful execution, 10 for denial, 11 for request expiry, 12 for invalid request/options, 13 for authorization failure, 14 for child failure, 15 for internal error or disabled execution, 16 for an unknown/ambiguous outcome, and 20 for follow-up. For
+.BR --wait ,
+0 means the result set is within its failure budget and 1 means it exceeds the budget. See
+.BR mayi (1)
+for the complete CLI status table.
+.PP
+Queue state and results live in broker memory. Mayi makes no persistence claim for a broker restart: a restart loses pending queue state and results, and requests are not replayed. Retained queues are bounded (128 records globally and at most eight active requests per requester); non-running queued requests expire after 24 hours.
+.PP
+Approved commands run as UID 0 with a cleared, fixed environment, cwd
+.IR / ,
+and stdin
+.IR /dev/null .
+Output is bounded. Execution is at most once, not transactional: a command may partially change system state before failure, and Mayi does not roll it back or retry an ambiguous handoff. The child has no runtime deadline.
+.PP
+The filesystem executor remains disconnected and incomplete. Structured filesystem operations are not enabled for privileged execution. Mayi is not a semantic policy engine and does not establish that an approved executable, shell, or argument is safe.
+.SH SEE ALSO
+.BR mayi (1)

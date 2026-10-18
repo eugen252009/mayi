@@ -1,4 +1,4 @@
-.TH MAYI-WORKFLOW 7 "2026-09-27" "Mayi 0.4.1" "Mayi Manual"
+.TH MAYI-WORKFLOW 7 "2026-10-18" "Mayi 0.4.1-11" "Mayi Manual"
 .SH NAME
 mayi-workflow \- requester and approver guide for Mayi's exact-command approval workflow
 .SH DESCRIPTION
@@ -89,9 +89,9 @@ d3=$(mayi --queue --after "$d2" /usr/bin/systemctl is-active nginx)
 .fi
 .RE
 .PP
-This example assumes nginx is installed and configured; use executable paths present on the host. A successful queue submission prints exactly one opaque ID beginning with
-.B rq_
-followed by 32 lowercase hexadecimal characters, then returns before approval or execution. Do not invent or edit IDs. Submission is not approval.
+This example assumes nginx is installed and configured; use executable paths present on the host. A successful queue submission prints exactly one authenticated-format opaque
+.B rq_v2_
+ID, then returns before approval or execution. Legacy rq_32hex IDs are historical syntax. Do not invent, abbreviate or edit IDs. Submission is not approval.
 .SS Dependencies
 Place each
 .B --after REQUEST_ID
@@ -154,15 +154,14 @@ The display presents the resolved executable, actual argv[0], remaining argument
 .PP
 .nf
 .RS
-Commands: 1
-[0] /usr/bin/systemctl [argv0=/usr/bin/systemctl] (PENDING_APPROVAL)
-     restart \\
-     nginx \\
-     requester UID: 1001
+MAYI  /  Permission requested
+Executor: UID 0 / GID 23012
+systemctl restart nginx
+Requested by UID 1001 | One use
 .fi
 .RE
 .PP
-Argument display values are escaped/quoted for readability and are not a shell command. For a linear chain, a downward arrow points from each prerequisite to its dependent. Branching graphs list prerequisite indices and appear in topological order. The displayed executor identity is UID 0 / primary GID 23012.
+Argument display values are escaped/quoted for readability and are not a shell command. Space exposes full technical details and brackets page the data. Pending rows appear before dependency context while ORIGINAL numeric indices and broker dependency execution order remain unchanged. New-arrival notices do not replace the current bound selection. The displayed executor identity is UID 0 / primary GID 23012. Supported approval geometry is 30x8 or larger.
 .SS Decisions
 At the main prompt:
 .TP

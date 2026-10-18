@@ -1,9 +1,7 @@
-# Initial approval workflow review
+# APPROVAL WORKFLOW REVIEW — reference location
 
-Observed: basename plus escaped same-line argument preview is good: bash -c 'echo hallo' exposes shell code and warns that it interprets commands. Complete path, argv0, dependencies, digest and IDs are in JSON details, paged without lossy deletion. No natural-language side-effect claim is generated. Untrusted Unicode/control data is ASCII-escaped; malformed JSON UTF8 fails closed. Requester identity is UID only; origin application identity is not known and must not be invented.
+Current authoritative reference: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
-Finding A1 HIGH: at30x8 frozen compact output is13 lines, details15;80x24 details25 lines and100x30 details31. Reproduce renderer matrix/audit PTY resize. Controls/body may scroll out of the same viewport. Fix actual-height accounting including every wrapped header/footer and page controls; retain all details across pages and enforce one body line minimum. Acceptance all six requested dimensions, all pages <=height and <=width-1, inspect/approve/deny/quit reachable, resize restores modes, no hidden data or changed input binding.
-
-A2 MEDIUM: initial render says requester UID/One use, but executor UID0/GID23012 only in details. A user cannot directly distinguish requester identity from executor identity. Fix always-visible truthful executor header, not an arrow or guessed account name. Acceptance visible on all pages/sizes without removing exact technical data.
-
-A3 MEDIUM: renderer walks dependency-topological component order, so terminal/non-actionable ancestors can occupy the first page before the pending child. Existing component construction excludes wholly non-actionable components and actual selection already filters pending. Fix presentation-only stable pending-first order with ORIGINAL component numbers retained and explicit context labels; do not change component arrays, decision mapping, broker ordering or scheduling. Acceptance selected number remains same request/digest, nonpending cannot be approved, context remains inspectable. Skipping/follow-up and subset controls remain available.
+The former source-era text is preserved verbatim in [docs/historical/baseline-3b6/APPROVAL_WORKFLOW_REVIEW.md](docs/historical/baseline-3b6/APPROVAL_WORKFLOW_REVIEW.md).
+Its candidate/version/test/host statements are historical, not a new release verdict.
+See [documentation authority](docs/INDEX.md) and [qualification scope](docs/QUALIFICATION.md).

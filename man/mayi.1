@@ -1,4 +1,4 @@
-.TH MAYI 1 "2026-09-27" "Mayi 0.4.1" "User Commands"
+.TH MAYI 1 "2026-10-18" "Mayi 0.4.1-11" "User Commands"
 .SH NAME
 mayi \- request exact-command execution or observe queued requests
 .SH SYNOPSIS
@@ -102,9 +102,9 @@ to display the resolved target identity. This does not change execution identity
 .SH OPTIONS
 .TP
 .B --queue
-Select asynchronous submission. A successful invocation prints one broker-generated ID beginning with
-.B rq_
-followed by 32 lowercase hexadecimal characters. Submission is not approval or execution.
+Select asynchronous submission. A successful invocation prints one broker-generated opaque
+.B rq_v2_
+identifier binding epoch, random nonce, request digest and provenance MAC. Legacy rq_ plus 32 hexadecimal characters is historical readable syntax, not a newly issued authenticated ID. Use full returned IDs, never human nonce abbreviations. Submission is not approval or execution.
 .TP
 .B --after REQUEST_ID
 Make a queued request depend on another retained queued request. Repeat before the executable to require multiple dependencies. Dependencies must belong to the same authenticated requester UID.
@@ -257,12 +257,13 @@ Each approval is one-shot and bound to broker-owned request/view state and the a
 .B SO_PEERCRED
 identifies an operating-system UID, not a particular process or human. PAM adds account authentication at the console; it does not replace broker peer checks or group authorization. Processes sharing an account are not distinguished. Mayi does not prove that an approved program is safe. Execution is at most once, not transactional; a command may partially alter state before failure, and Mayi provides no rollback. The child has no runtime deadline.
 .PP
-Structured filesystem operations remain disconnected from the privileged executor and return
-.BR EXECUTION_DISABLED .
+Structured filesystem operations remain disconnected from the privileged executor. The live broker rejects them with
+.B UNSUPPORTED_OPERATION
+before pending admission. Historical direct-core EXECUTION_DISABLED examples do not enable a production path.
 The filesystem executor remains disconnected and incomplete; it is not production functionality.
 .SH APPROVER AUTHENTICATION
 .B mayi-approve
-accepts no command-line options. It checks the caller's NSS-backed approver-group membership, then authenticates the same Unix account using the host PAM policy configured by
+with no arguments opens the interactive console. Local --help/--version and the read-only status subcommand are handled separately without PAM or a console. Interactive startup checks the caller's NSS-backed approver-group membership, then authenticates the same Unix account using the host PAM policy configured by
 .IR /etc/pam.d/mayi-approve .
 Authentication is performed through the broker and its PAM helper before the console displays requests. After five minutes without a successful decision the console locks and exits; run mayi-approve again to authenticate. Approve, deny, and follow-up decisions reset the window only after a successful broker transition. Requests still require explicit decisions. Each cached decision rechecks NSS role membership and PAM account policy without password prompts. Password authentication itself is not repeated inside the window; an unattended unlocked console can be used by someone with access to it. Legacy protocol clients without console sessions still authenticate each decision. Request/view expiration and one-shot checks remain independent.
 .SH FILES
@@ -281,7 +282,8 @@ PAM service configuration, installed as a package conffile and including the hos
 Separate privileged command executor managed by systemd.
 .PP
 The package enables
-.B mayi-broker.service
+.BR mayi-broker.service ,
+.B mayi-pam-auth.service
 and
 .BR mayi-privileged-executor.service .
 .SH EXAMPLES

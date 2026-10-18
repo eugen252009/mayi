@@ -1,11 +1,12 @@
-# Filesystem executor status
+# Filesystem executor — DISCONNECTED / INCOMPLETE
 
-**Status: DISCONNECTED / INCOMPLETE.** Mayi 0.4.1 does not enable privileged filesystem execution. Structured filesystem operations remain disconnected from the privileged executor and return `EXECUTION_DISABLED`; they are not production functionality.
+The live broker rejects non-exec structured filesystem proposals with
+UNSUPPORTED_OPERATION before pending admission. They cannot be approved/queued/
+consumed through the enabled production path. Historical direct-core or retired
+consume examples mentioning EXECUTION_DISABLED do not establish live support.
 
-The direct filesystem core has historical, limited ext4 test evidence, but its qualification is incomplete. Open items include syscall-generated failure coverage, caller-visible cleanup status, stalled-syscall behavior, live LSM-label/device-node coverage, and independent security review. Those experiments do not qualify the broker-to-executor authorization handoff and must not be treated as a supported feature.
-
-Do not connect, enable, or claim production support for filesystem execution as part of ordinary maintenance. The detailed historical reports are retained under [`history/filesystem/`](history/filesystem/):
-
-- [`FILESYSTEM_EXECUTOR_REMEDIATION.md`](history/filesystem/FILESYSTEM_EXECUTOR_REMEDIATION.md) — qualification evidence, limitations, and remaining blockers.
-- [`OPENAT2_HARDENING.md`](history/filesystem/OPENAT2_HARDENING.md) — path-resolution and filesystem-admission evidence.
-- [`RACE_HARDENING.md`](history/filesystem/RACE_HARDENING.md) — historical race tests and gaps.
+[filesystem.rs](../executor/src/filesystem.rs), fixtures and regression tests remain
+preserved; do not remove tests, connect the core or infer qualification from their
+presence. [Historical research](history/README.md), [test isolation](TEST_ISOLATION.md)
+and [current limits](LIMITATIONS.md) explain scope. The former status text is
+[preserved verbatim](historical/baseline-3b6/docs/FILESYSTEM_EXECUTOR_STATUS.md).

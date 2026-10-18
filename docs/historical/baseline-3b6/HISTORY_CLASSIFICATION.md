@@ -1,0 +1,13 @@
+# Request classification
+
+Root cause: schema1's reconstruct() put every unassociated Mayi record into ex_/event_N groups and passed them to the request table. Session/PAM/health diagnostics consequently consumed request limits and appeared as UNKNOWN? fake requests. This was presentation/classification, not missing logger data.
+
+Request proof now requires the existing credential/unit-checked native broker source, a known request-lifecycle event, valid boot32/broker48/challenge48/digest64 and stored requester UID. Lifecycle allowlist: PROPOSED,QUEUE_SUBMITTED,VIEW_CREATED/REPLACED/EXPIRED/APPROVED/DENIED/EXPLAINED,EXPIRED,CONSUMED,QUEUE_DISPATCH_STARTED/EXECUTION_FINISHED/DISPATCH_FAILED/EXECUTION_OUTCOME_UNKNOWN/BLOCKED and synchronous EXECUTION_DISPATCH_STARTED/FINISHED/DISPATCH_FAILED/OUTCOME_UNKNOWN. Merely spelling rq_/ch_ or supplying IDs on console/auth/health/error records is not proof.
+
+Valid identity: actual queue rq_32, otherwise ch_48 challenge. Full scope includes boot,broker instance,identity,challenge,digest; never timestamp/UID guesses. Retained late lifecycle rows can establish a request even if PROPOSED was rotated away. Missing binding/owner proof remains a diagnostic event, not an invented request. Incomplete outcome on a proved request remains UNKNOWN. PAM success or consumption alone never establishes execution success.
+
+Unique explicit broker execution-ID bridges and exact broker-instance/challenge/digest PAM mappings remain. No queue-prefix inference; ambiguous mappings remain unassociated. Missing queue IDs in another event of the same unique binding can join that queue without a duplicate challenge row. Conflicting bindings never merge just because ID strings match. Request counts/limits are independent of unrelated diagnostics.
+
+Operator's actual window was recaptured using existing unprivileged permissions:24 native records,10 old identities (3 requests +7 diagnostics), no ignored/omitted/truncated records. The user originally reported23/9 (3+6); one additional diagnostic is now retained. Exact supplied successful/denied challenge IDs are present. New request view returns3 (DENIED,DENIED,SUCCEEDED), complete successful9-event broker/PAM/executor timeline preserved. Raw original JSON/native records and before/after outputs remain in candidate evidence, not committed/shipped private operator logs. A public deterministic23-record fixture separately reproduces exactly3 requests +6 standalone system events.
+
+No scanner/permission/audit-emitter/broker/protocol/authorization change. --events retains all valid projected diagnostics without assigning fake request identities. Bounded resource limits and journal retention still limit completeness.
