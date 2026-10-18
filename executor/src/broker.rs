@@ -2800,6 +2800,7 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
         let mut view = approval_ui::View {
             details: false,
             page: 0,
+            notice: false,
         };
         view.draw(&rows, &component, None);
         let started = Instant::now();
@@ -2833,9 +2834,8 @@ fn approval_console_persistent(path: PathBuf, broker_uid: u32) -> io::Result<()>
                     if announced.insert(id) {
                         // Never print another indexed set above the current action prompt:
                         // the action still belongs to the original displayed snapshot.
-                        println!("\nQueue updated. Finish or skip the current set to review it.");
-                        print!("Mayi (current set) > ");
-                        io::stdout().flush()?;
+                        view.notice = true;
+                        view.draw(&rows, &component, None);
                     }
                 }
                 Ok(())

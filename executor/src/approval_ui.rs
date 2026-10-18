@@ -45,6 +45,18 @@ pub(super) fn render(
     width: usize,
     height: usize,
 ) -> (String, usize) {
+    render_with_notice(rows, component, details, page, width, height, false)
+}
+
+fn render_with_notice(
+    rows: &[Value],
+    component: &[usize],
+    details: bool,
+    page: usize,
+    width: usize,
+    height: usize,
+    notice: bool,
+) -> (String, usize) {
     let width = width.clamp(12, 120) - 1;
     let height = height.clamp(8, 100);
     let compact = width < 59 || height < 18;
@@ -114,7 +126,9 @@ pub(super) fn render(
                 seconds % 60
             ));
         }
-        if row["queue_state"] != "PENDING_APPROVAL" {
+        if row["queue_state"] == "RUNNING" {
+            body.push_str("Context: dispatched; start unconfirmed here\n");
+        } else if row["queue_state"] != "PENDING_APPROVAL" {
             body.push_str(&format!(
                 "Context state: {}\n",
                 render_console_arg(row["queue_state"].as_str().unwrap_or("UNKNOWN"))
@@ -140,7 +154,7 @@ pub(super) fn render(
             })
             .collect()
     };
-    let header = if compact {
+    let mut header = if compact {
         "MAYI | Exec UID 0 GID 23012".to_owned()
     } else {
         format!(
@@ -152,6 +166,9 @@ pub(super) fn render(
             }
         )
     };
+    if notice {
+        header.push_str("\nQueue changed; s:next set");
+    }
     let footer = |current: usize, pages: usize| {
         let mut lines = Vec::new();
         lines.push(
@@ -217,6 +234,7 @@ pub(super) fn render(
 pub(super) struct View {
     pub details: bool,
     pub page: usize,
+    pub notice: bool,
 }
 impl View {
     pub fn draw(&mut self, rows: &[Value], component: &[usize], key: Option<u8>) {
@@ -230,7 +248,19 @@ impl View {
             _ => {}
         }
         let (width, height) = dimensions();
-        let (text, pages) = render(rows, component, self.details, self.page, width, height);
+        let (text, pages) = if self.notice {
+            render_with_notice(
+                rows,
+                component,
+                self.details,
+                self.page,
+                width,
+                height,
+                true,
+            )
+        } else {
+            render(rows, component, self.details, self.page, width, height)
+        };
         self.page = self.page.min(pages - 1);
         if visible_screen_clear_supported() {
             let _ = io::stdout().write_all(CLEAR_VISIBLE_SCREEN);
@@ -311,6 +341,40 @@ mod tests {
         );
         assert_eq!(component, vec![0, 1]);
         assert_eq!(rows, before);
+    }
+    #[test]
+    fn queue_notice_is_bounded_without_switching_set_or_inventing_start() {
+        let rows = vec![
+            json!({"requester_uid":1000,"queue_state":"PENDING_APPROVAL","operations":[{"type":"exec","executable":"/usr/bin/bash","argv":["bash","-c","echo hello"]}]}),
+            json!({"requester_uid":1000,"queue_state":"RUNNING","operations":[{"type":"exec","executable":"/usr/bin/true","argv":["true"]}]}),
+        ];
+        let original = rows.clone();
+        for (width, height) in [(120, 40), (100, 30), (80, 24), (60, 20), (40, 12), (30, 8)] {
+            for details in [false, true] {
+                let (_, pages) =
+                    render_with_notice(&rows, &[0, 1], details, 0, width, height, true);
+                let mut all = String::new();
+                for p in 0..pages {
+                    let text =
+                        render_with_notice(&rows, &[0, 1], details, p, width, height, true).0;
+                    assert!(
+                        text.lines().count() <= height && text.lines().all(|l| l.len() < width),
+                        "{text}"
+                    );
+                    assert!(
+                        text.contains("Queue changed")
+                            && text.contains("s:next set")
+                            && text.contains("UID 0")
+                    );
+                    all.push_str(&text);
+                    all.push('\n');
+                }
+                if width >= 80 && height >= 24 {
+                    assert!(all.contains("start unconfirmed"));
+                }
+            }
+        }
+        assert_eq!(rows, original);
     }
     #[test]
     fn basename_and_escaping() {

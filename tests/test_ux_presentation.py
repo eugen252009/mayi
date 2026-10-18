@@ -96,3 +96,20 @@ def test_safe_broker_guidance_preserves_code(capsys):
     out=capsys.readouterr();assert not out.out and 'MAYI_BROKER_ERROR' in out.err and 'Reconcile' in out.err
     assert cli._mayi_error('MAYI_EXECUTION_UNKNOWN',16)==16
     assert 'do not automatically retry' in capsys.readouterr().err
+
+
+def test_unsized_pty_is_positive_even_with_python39_shutil(monkeypatch):
+    monkeypatch.setattr(s.os,'get_terminal_size',lambda *args:os.terminal_size((0,0)))
+    monkeypatch.setattr(s.shutil,'get_terminal_size',lambda *args:os.terminal_size((0,0)))
+    assert tuple(s.terminal_size())==(80,24)
+
+
+def test_watch_error_leaves_alternate_screen_before_explanation(monkeypatch):
+    class TTY(io.StringIO):
+        def isatty(self):return True
+    out=TTY();monkeypatch.setattr(s.sys,'stdout',out);monkeypatch.setattr(s.sys,'stderr',out)
+    monkeypatch.setenv('TERM','xterm');monkeypatch.setattr(s,'terminal_size',lambda:os.terminal_size((30,8)))
+    monkeypatch.setattr(s,'fetch',lambda:snapshot())
+    assert s.main(['--watch','--details'])==12
+    text=out.getvalue();reset='\x1b[?25h\x1b[?1049l'
+    assert text.count(reset)==1 and text.index(reset)<text.index('MAYI_STATUS_ERROR') and '--plain' in text

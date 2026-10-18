@@ -86,7 +86,10 @@ def terminal_size():
         size=os.get_terminal_size(sys.stdout.fileno())
         if size.columns>0 and size.lines>0:return size
     except (OSError,ValueError,AttributeError):pass
-    return shutil.get_terminal_size((80,24))
+    size=shutil.get_terminal_size((80,24))
+    # Python3.9 may return a real but unsized PTY's 0x0 instead of fallback.
+    return os.terminal_size((size.columns if size.columns>0 else 80,
+                             size.lines if size.lines>0 else 24))
 
 
 def render(value=None, error=None, width=None, details=False, height=None):
@@ -179,6 +182,9 @@ def main(argv=None):
             if not args.watch:return error.code if error else 0
             time.sleep(args.interval or 1)
     except StatusError as error:
+        if terminal:
+            # Leave alternate screen BEFORE explaining a human-mode error.
+            sys.stdout.write('\x1b[?25h\x1b[?1049l');sys.stdout.flush();terminal=False
         if want_json:print(json.dumps(dict(schema_version=1,broker=error.broker,error=dict(code=error.code,message=str(error))),sort_keys=True))
         else:print('MAYI_STATUS_ERROR: '+str(error),file=sys.stderr)
         return error.code
