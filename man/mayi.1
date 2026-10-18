@@ -38,14 +38,16 @@ See /usr/share/doc/mayi/STATUS_JSON_SCHEMA.md and QUEUE_STATE_MAPPING.md.
 reads recent native Journald metadata using existing system-journal permissions.
 It never contacts the broker, grants approval, or restores capabilities.
 Options: --limit N (1..1000, default 20), --all (bounded 2000 identities),
---status STATE, --request FULL_REQUEST_ID, --since JOURNAL_TIMESTAMP, --json.
+--status STATE, --request FULL_RQ_OR_CH_ID, --since JOURNAL_TIMESTAMP, --json,
+--events (chronological diagnostic audit view). Default history contains only
+proved authorization requests; PAM/session/health events are not request rows.
 Nonterminal observations have a question mark and UNKNOWN current status;
 retention, rate limiting, restarts and bounded scans can remove events.
 Full identifiers and event timelines are available with --request and --json.
 The scan is bounded to 20000 records, 16 MiB and 20 seconds.
 No automatic privilege escalation is performed. Exit 12 means invalid arguments,
 13 journal access denied, and 15 journal read/unavailable/timeout failure.
-See /usr/share/doc/mayi/HISTORY_SCHEMA.md for stable JSON schema v1.
+See /usr/share/doc/mayi/HISTORY_SCHEMA.md for JSON schema v2 (request-only default and separate diagnostic events array).
 Use mayi -- history to execute a program literally named history.
 .SH DESCRIPTION
 .B mayi

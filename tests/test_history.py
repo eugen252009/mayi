@@ -62,7 +62,7 @@ def test_filters_and_json(capsys,monkeypatch):
     monkeypatch.setattr(h,'read_journal',lambda since:([done()],dict(scanned_records=1,ignored_records=0,scan_truncated=False,bytes_read=1)))
     assert cli(['history','--json','--status','success','--since','1 hour ago'])==0
     value=json.loads(capsys.readouterr().out)
-    assert value['schema_version']==1 and value['requests'][0]['exit_code']==0
+    assert value['schema_version']==2 and value['mode']=='requests' and value['requests'][0]['exit_code']==0
     assert doc([event()],'--status','pending')['returned']==1
     assert doc([done()],'--status','failed')['returned']==0
     assert doc([done()],'--request','rq_'+'2'*32)['returned']==0
@@ -86,7 +86,11 @@ def test_missing_finish_and_view_expiry_do_not_prove_expiration():
     ('PAM_AUTHENTICATION_FINISHED','SUCCEEDED',None,None,'UNKNOWN')])
 def test_authority(name,state,result,child,expected):
     r=event(name,MAYI_STATE=state,MAYI_RESULT=result,MAYI_CHILD_EXIT_STATUS=child)
-    assert doc([r])['requests'][0]['status']==expected
+    result=doc([r])
+    if name=='PAM_AUTHENTICATION_FINISHED':
+        assert result['requests']==[]
+        assert doc([r],'--events')['events'][0]['event']==name
+    else:assert result['requests'][0]['status']==expected
 
 
 def test_conflicting_terminal_is_unknown():
@@ -103,26 +107,33 @@ def test_explicit_bridges_only():
               MAYI_BROKER_INSTANCE_ID=None,MAYI_CHALLENGE_ID=None,MAYI_REQUEST_DIGEST=None,
               MAYI_EXECUTION_ID='1'*32,MAYI_STATE='SUCCEEDED',MAYI_CHILD_EXIT_STATUS='0')
     executor=event('EXECUTION_FINISHED',**root)
-    assert len(doc([event(),executor])['requests'])==2  # no rq_ prefix inference
+    assert len(doc([event(),executor])['requests'])==1  # no fabricated orphan request
+    standalone=doc([event(),executor],'--events')['events']
+    assert next(e for e in standalone if e['source_unit']=='mayi-privileged-executor.service')['request_identity'] is None
     mapped=doc([event(MAYI_EXECUTION_ID='1'*32),executor])['requests']
     assert len(mapped)==1 and mapped[0]['status']=='SUCCEEDED'
     ambiguous=doc([event(MAYI_EXECUTION_ID='1'*32),event(MAYI_EXECUTION_ID='1'*32,MAYI_BROKER_INSTANCE_ID='e'*48),executor])
-    assert len(ambiguous['requests'])==3
+    assert len(ambiguous['requests'])==2
+    diagnostics=doc([event(MAYI_EXECUTION_ID='1'*32),event(MAYI_EXECUTION_ID='1'*32,MAYI_BROKER_INSTANCE_ID='e'*48),executor],'--events')['events']
+    assert next(e for e in diagnostics if e['source_unit']=='mayi-privileged-executor.service')['request_identity'] is None
     capped,omitted=h.reconstruct([event(MAYI_EXECUTION_ID='1'*32),event(MAYI_EXECUTION_ID='1'*32,MAYI_BROKER_INSTANCE_ID='e'*48),executor],1)
-    assert len(capped[0]['events'])==1 and omitted==2
+    assert len(capped[0]['events'])==1 and omitted==1
 
 
 def test_pam_requires_exact_mapping():
     pam=event('PAM_ACCOUNT_CHECK_FINISHED', _SYSTEMD_UNIT='mayi-pam-auth.service',_UID='0',MAYI_REQUEST_ID=None)
     assert len(doc([event(),pam])['requests'])==1
     pam['request_digest']='e'*64
-    assert len(doc([event(),pam])['requests'])==2
+    assert len(doc([event(),pam])['requests'])==1
+    assert next(e for e in doc([event(),pam],'--events')['events'] if e['source_unit']=='mayi-pam-auth.service')['request_identity'] is None
 
 
 def test_missing_instance_does_not_merge_but_request_still_filterable():
     rows=[event(MAYI_BROKER_INSTANCE_ID=None), event(MAYI_BROKER_INSTANCE_ID=None,__REALTIME_TIMESTAMP='1792306800000001')]
     d=doc(rows,'--request','rq_'+'1'*32)
-    assert len(d['requests'])==2 and all(r['correlation_incomplete'] for r in d['requests'])
+    assert d['requests']==[]
+    events=doc(rows,'--events')['events']
+    assert len(events)==2 and all(r['correlation_incomplete'] and r['request_identity'] is None for r in events)
 
 
 @pytest.mark.parametrize('fields',[{'MAYI_EVENT':'BAD\nFAKE'}, {'MAYI_STATE':'OK\x1b'}, {'MAYI_RESULT':'Some(0)'},

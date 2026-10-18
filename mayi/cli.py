@@ -19,7 +19,7 @@ Usage:
   mayi --queue [--after REQUEST_ID] <executable> [arguments ...]
   mayi --wait [--fail=N] [--fail-instant] REQUEST_ID...
   mayi --status REQUEST_ID
-  mayi history [--limit N|--all] [--status STATE] [--request ID] [--since TIME] [--json]
+  mayi history [--limit N|--all] [--status STATE] [--request ID] [--since TIME] [--json] [--events]
   mayi inspect|check <legacy shell snippet>
   mayi -u USER inspect|check <legacy shell snippet>
 

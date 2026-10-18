@@ -22,6 +22,17 @@ HEX = {32: re.compile(r'^[0-9a-f]{32}$'), 48: re.compile(r'^[0-9a-f]{48}$'),
        64: re.compile(r'^[0-9a-f]{64}$')}
 RQ = re.compile(r'^rq_[0-9a-f]{32}$')
 EVENT = re.compile(r'^[A-Z][A-Z0-9_]{0,63}$')
+CH = re.compile(r'^ch_[0-9a-f]{48}$')
+# Only typed lifecycle observations from the credential/unit-checked broker
+# establish requests. A session/login/health/error record is not a proposal.
+REQUEST_EVENTS = frozenset({
+    'PROPOSED', 'QUEUE_SUBMITTED', 'VIEW_CREATED', 'VIEW_REPLACED',
+    'VIEW_EXPIRED', 'VIEW_APPROVED', 'VIEW_DENIED', 'VIEW_EXPLAINED',
+    'EXPIRED', 'CONSUMED', 'QUEUE_DISPATCH_STARTED', 'QUEUE_EXECUTION_FINISHED',
+    'QUEUE_DISPATCH_FAILED', 'QUEUE_EXECUTION_OUTCOME_UNKNOWN', 'QUEUE_BLOCKED',
+    'EXECUTION_DISPATCH_STARTED', 'EXECUTION_FINISHED', 'EXECUTION_DISPATCH_FAILED',
+    'EXECUTION_OUTCOME_UNKNOWN',
+})
 FIELDS = {'request_id': 'MAYI_REQUEST_ID', 'broker_instance_id': 'MAYI_BROKER_INSTANCE_ID',
           'challenge_id': 'MAYI_CHALLENGE_ID', 'request_digest': 'MAYI_REQUEST_DIGEST',
           'execution_id': 'MAYI_EXECUTION_ID', 'state': 'MAYI_STATE',
@@ -61,14 +72,15 @@ def arguments(argv):
     limits.add_argument('--limit', type=int, default=20, metavar='N', help='1..1000 requests (default 20)')
     limits.add_argument('--all', action='store_true', help='all within scan bounds, at most 2000 identities')
     p.add_argument('--status', type=str.upper, help='status or last observed nonterminal state')
-    p.add_argument('--request', help='full rq_ ID; show each boot/instance separately')
+    p.add_argument('--request', help='full rq_ or ch_ ID; show each boot/instance/binding separately')
+    p.add_argument('--events', action='store_true', help='chronological native audit events, not request rows')
     p.add_argument('--since', help='journalctl timestamp, e.g. "1 hour ago"')
-    p.add_argument('--json', action='store_true', help='stable schema v1 JSON')
+    p.add_argument('--json', action='store_true', help='stable schema v2 JSON')
     a = p.parse_args(argv)
     if not 1 <= a.limit <= 1000:
         raise invalid('--limit must be between 1 and 1000')
-    if a.request and not RQ.fullmatch(a.request):
-        raise invalid('--request requires a full rq_ plus 32 lowercase hex ID')
+    if a.request and not (RQ.fullmatch(a.request) or CH.fullmatch(a.request)):
+        raise invalid('--request requires full rq_ (32 hex) or ch_ (48 hex) identity')
     if a.since and (len(a.since) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in a.since)):
         raise invalid('--since must be a bounded single-line journal timestamp')
     if a.status:
@@ -229,44 +241,72 @@ def decode(line):
         return None
 
 
-def reconstruct(records, maximum=MAX_GROUPS):
-    groups, bridges, challenges = {}, {}, {}
-    def add_mapping(table, key, group):
-        table.setdefault(key, set()).add(group)
-    # All mappings must be explicit broker fields; never derive rq_ from execution IDs.
-    for row in records:
-        if row['source_unit'] != 'mayi-broker.service' or not row['broker_instance_id']:
-            continue
-        identity = row['request_id'] or ('ch_' + row['challenge_id'] if row['challenge_id'] else None)
-        if not identity:
-            continue
-        key = (row['boot_id'], row['broker_instance_id'], identity)
-        if len(groups) < maximum or key in groups:
-            groups.setdefault(key, [])
-        if row['execution_id']:
-            add_mapping(bridges, (row['boot_id'], row['execution_id']), key)
-        if row['challenge_id'] and row['request_digest']:
-            add_mapping(challenges, (row['boot_id'], row['broker_instance_id'], row['challenge_id'], row['request_digest']), key)
-    overflow = 0
+def request_anchor(row):
+    return (row['source_unit'] == 'mayi-broker.service'
+            and row['event'] in REQUEST_EVENTS and row['broker_instance_id']
+            and row['challenge_id'] and row['request_digest']
+            and row['requester_uid'] is not None)
+
+
+def _partition(records, maximum=MAX_GROUPS):
+    """One bounded correlation model shared by requests, detail and event mode."""
+    anchors, queue_bindings = {}, {}
+    def binding(row):
+        return (row['boot_id'], row['broker_instance_id'], row['challenge_id'], row['request_digest'])
     for index, row in enumerate(records):
-        key = None
-        if row['source_unit'] == 'mayi-broker.service' and row['broker_instance_id']:
-            ident = row['request_id'] or ('ch_' + row['challenge_id'] if row['challenge_id'] else None)
-            if ident:
-                key = (row['boot_id'], row['broker_instance_id'], ident)
+        if not request_anchor(row):
+            continue
+        identity = row['request_id'] or 'ch_' + row['challenge_id']
+        key = (row['boot_id'], row['broker_instance_id'], identity,
+               row['challenge_id'], row['request_digest'])
+        anchors[index] = key
+        if row['request_id']:
+            queue_bindings.setdefault(binding(row), set()).add(key)
+    # Only an explicit unique binding can supply a missing queue ID.
+    for index, key in list(anchors.items()):
+        if not records[index]['request_id']:
+            candidates = queue_bindings.get(binding(records[index]), set())
+            if len(candidates) == 1:
+                anchors[index] = next(iter(candidates))
+    keys = dict.fromkeys(anchors.values())
+    groups = {key: [] for key in list(keys)[:maximum]}
+    bridges, challenges = {}, {}
+    for index, key in anchors.items():
+        row = records[index]
+        challenges.setdefault(binding(row), set()).add(key)
+        if row['execution_id']:
+            bridges.setdefault((row['boot_id'], row['execution_id']), set()).add(key)
+    links, overflow = [], 0
+    for index, row in enumerate(records):
+        key = anchors.get(index)
+        if key is None and row['source_unit'] == 'mayi-broker.service':
+            if row['request_id']:
+                candidate = (row['boot_id'], row['broker_instance_id'], row['request_id'],
+                             row['challenge_id'], row['request_digest'])
+                if candidate in keys:
+                    key = candidate
+            if key is None and not row['request_id']:
+                candidates = challenges.get(binding(row), set())
+                if len(candidates) == 1:
+                    key = next(iter(candidates))
         if key is None and row['source_unit'] == 'mayi-privileged-executor.service' and row['execution_id']:
             candidates = bridges.get((row['boot_id'], row['execution_id']), set())
-            if len(candidates) == 1:key = next(iter(candidates))
+            if len(candidates) == 1:
+                key = next(iter(candidates))
         if key is None and row['source_unit'] == 'mayi-pam-auth.service':
-            candidates = challenges.get((row['boot_id'], row['broker_instance_id'], row['challenge_id'], row['request_digest']), set())
-            if len(candidates) == 1:key = next(iter(candidates))
-        if key is None:
-            # Independently identifiable failures must not disappear. No timestamp/UID join.
-            ident = 'ex_' + row['execution_id'] if row['execution_id'] else 'event_' + str(index)
-            key = (row['boot_id'], row['broker_instance_id'], ident)
-        if key not in groups and len(groups) >= maximum:
-            overflow += 1;continue
-        groups.setdefault(key, []).append(row)
+            candidates = challenges.get(binding(row), set())
+            if len(candidates) == 1:
+                key = next(iter(candidates))
+        links.append(key)
+        if key in groups:
+            groups[key].append(row)
+        elif key is not None:
+            overflow += 1
+    return groups, links, overflow
+
+
+def reconstruct(records, maximum=MAX_GROUPS, partition=None):
+    groups, _, overflow = partition if partition is not None else _partition(records, maximum)
     result = []
     for key, rows in groups.items():
         if not rows:continue
@@ -304,9 +344,9 @@ def reconstruct(records, maximum=MAX_GROUPS):
         status = next(iter(terminal)) if len(terminal) == 1 else 'UNKNOWN'
         request_ids = {r['request_id'] for r in events if r['request_id']}
         request_id = next(iter(request_ids)) if len(request_ids) == 1 else None
-        incomplete = not request_id or not key[1] or status == 'UNKNOWN' or len(terminal) > 1
+        incomplete = status == 'UNKNOWN' or len(terminal) > 1
         public = [{k:v for k,v in row.items() if not k.startswith('_')} for row in events]
-        result.append(dict(identity=key[2], request_id=request_id,
+        result.append(dict(identity=key[2], request_id=request_id, challenge_id=key[3], request_digest=key[4],
                            boot_id=key[0], broker_instance_id=key[1], status=status,
                            observed_state=status if status != 'UNKNOWN' else observed,
                            current_state_known=False, correlation_incomplete=incomplete,
@@ -319,21 +359,63 @@ def reconstruct(records, maximum=MAX_GROUPS):
     return result, overflow
 
 
-def document(records, stats, args):
-    rows, omitted = reconstruct(records)
-    if args.request:rows = [r for r in rows if r['request_id'] == args.request]
-    if args.status:rows = [r for r in rows if r['status'] == args.status or (r['status']=='UNKNOWN' and r['observed_state']==args.status)]
-    matched = len(rows)
-    rows = rows[:MAX_GROUPS if args.all or args.request else args.limit]
-    return dict(schema_version=1, requests=rows, returned=len(rows), matched=matched,
-                **stats, omitted_records=omitted, limits=dict(records=MAX_RECORDS, bytes=MAX_BYTES, identities=MAX_GROUPS, seconds=TIMEOUT),
-                historical_only=True, completeness='Best-effort retained journal window; not live broker state.')
+def event_rows(records, links):
+    seen, events = set(), []
+    for row, key in sorted(zip(records, links), key=lambda pair: (
+            pair[0]['_time'], pair[0]['boot_id'], pair[0]['_order'],
+            pair[0]['source_unit'], pair[0]['event'], pair[0]['_cursor'] or '')):
+        fingerprint = (row['source_unit'], row['_cursor']) if row['_cursor'] else json.dumps(row, sort_keys=True)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        event = {k:v for k,v in row.items() if not k.startswith('_')}
+        event.update(request_identity=key[2] if key else None,
+                     request_broker_instance_id=key[1] if key else None,
+                     correlation_incomplete=key is None)
+        events.append((event, key))
+    return events
 
+
+def document(records, stats, args):
+    partition = _partition(records)
+    rows, omitted = reconstruct(records, partition=partition)
+    if args.request:
+        rows = [r for r in rows if r['identity'] == args.request]
+    if args.status:
+        rows = [r for r in rows if r['status'] == args.status or
+                (r['status']=='UNKNOWN' and r['observed_state']==args.status)]
+    output_events = []
+    if args.events:
+        allowed = {(r['boot_id'],r['broker_instance_id'],r['identity'],
+                    r['challenge_id'],r['request_digest']) for r in rows}
+        available = [event for event,key in event_rows(records, partition[1])
+                     if (not args.request and not args.status) or key in allowed]
+        matched = len(available)
+        output_events = available[-(MAX_RECORDS if args.all else args.limit):]
+        rows = []
+        returned = len(output_events)
+    else:
+        matched = len(rows)
+        rows = rows[:MAX_GROUPS if args.all or args.request else args.limit]
+        returned = len(rows)
+    return dict(schema_version=2, mode='events' if args.events else 'requests',
+                count_unit='events' if args.events else 'requests',
+                requests=rows, events=output_events, returned=returned, matched=matched,
+                **stats, omitted_records=omitted,
+                diagnostic_records=sum(key is None for key in partition[1]),
+                limits=dict(records=MAX_RECORDS, bytes=MAX_BYTES, identities=MAX_GROUPS, seconds=TIMEOUT),
+                historical_only=True, completeness='Best-effort retained journal window; not live broker state.')
 
 def render(doc, detail=False, width=None):
     width = max(24, min(160, width or shutil.get_terminal_size((80,24)).columns))
-    lines = ['MAYI - Request History', '']
-    if detail:
+    is_events = doc.get('mode') == 'events'
+    lines = ['MAYI - Audit Events' if is_events else 'MAYI - Request History', '']
+    if is_events:
+        event_width = max(8, min(34, width-30))
+        lines.append('{:<8}  {:<{ew}}  {}'.format('TIME','EVENT','REQUEST / ID',ew=event_width))
+        for event in doc['events']:
+            lines.append('{:<8}  {:<{ew}}  {}'.format(event['timestamp'][11:19],safe(event['event'],event_width),safe(event['request_identity'] or '-',18),ew=event_width))
+    elif detail:
         for row in doc['requests']:
             lines.extend(['Request: ' + row['identity'], 'Boot: ' + row['boot_id'],
                           'Broker: ' + (row['broker_instance_id'] or '-'),
@@ -352,8 +434,8 @@ def render(doc, detail=False, width=None):
             identity = row['request_id'] or (row['events'][-1]['event'] if row['identity'].startswith('event_') else row['identity'])
             label = safe(identity, id_width)
             lines.append('{:<8}  {:<{iw}}  {:<12} {}'.format(stamp,label,status,result,iw=id_width))
-    if not doc['requests']:lines.append('No matching retained events.')
-    lines.extend(['', 'Showing {} of {} matched identities.'.format(doc['returned'],doc['matched']),
+    if not (doc['events'] if is_events else doc['requests']):lines.append('No matching retained events.' if is_events else 'No matching retained requests.')
+    lines.extend(['', 'Showing {} of {} matched {}.'.format(doc['returned'],doc['matched'],doc['count_unit']),
                   '? = last observed only; current state UNKNOWN. No live broker query.',
                   'History may be incomplete (retention, restart, rate limits).'])
     if doc['scan_truncated'] or doc['omitted_records']:lines.append('Scan bound reached; narrow --since for more detail.')
@@ -376,7 +458,7 @@ def main(argv=None):
         return 0
     except HistoryError as error:
         if want_json:
-            print(json.dumps(dict(schema_version=1,error=dict(code=error.name,message=str(error))),sort_keys=True))
+            print(json.dumps(dict(schema_version=2,error=dict(code=error.name,message=str(error))),sort_keys=True))
         else:
             print('MAYI_HISTORY_ERROR: '+safe(str(error)),file=sys.stderr)
         return error.code

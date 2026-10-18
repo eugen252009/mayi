@@ -1,8 +1,10 @@
 # History design
 
+**status3 correction:** default rows are now only authoritative broker-lifecycle rq_/ch_ requests; diagnostics move to --events. History JSON is schema2; see HISTORY_CLASSIFICATION.md, HISTORY_EVENTS_MODE.md and HISTORY_JSON_COMPATIBILITY.md. These supersede the original mixed-identity v1 contract below.
+
 `mayi history` is a Python-standard-library read-only projection of the existing native journal. It never connects to either broker socket, authenticates an approver, executes a request, restores a capability or reads the executor claim ledger.
 
-Options: default latest 20 identities; --limit 1..1000; --all up to 2000 identities in the bounded window; --request full rq_ ID (all matching boot/instance namespaces); --since journalctl timestamp; --status case-insensitive state; --json schema v1. --all and --limit conflict. The reserved word history can still be executed as an executable with `mayi -- history ...`.
+Options: default latest 20 identities; --limit 1..1000; --all up to 2000 identities in the bounded window; --request full rq_ or ch_ ID (all matching boot/instance namespaces); --since journalctl timestamp; --status case-insensitive state; --json schema v2; --events selects chronological diagnostics. --all and --limit conflict. The reserved word history can still be executed as an executable with `mayi -- history ...`.
 
 Reader invokes fixed /usr/bin/journalctl with an argument vector, --no-pager, JSON, --reverse, --lines=20000, --all and early native schema/transport/unit/UID matches. It deliberately does not use --system/--user: system-service records can be stored in UID-split journals (broker UID 23002). Kernel unit/UID filtering, not file partition, establishes scope. This does not grant access to files the caller cannot already read. User timestamps are one bounded --since=value argument, never shell input. Environment contains only fixed C locale/color settings. stdout and stderr are incrementally drained with selectors; per-line bound 64 KiB, total 16 MiB, deadline 20 seconds. At most 20,000 projected events and 2,000 identities; scan and identity omission counts are exposed. No persistent cache/database. Default limit bounds presentation, not scanning; this preserves older lifecycle context within the window. --all does not promise unlimited retention access.
 
