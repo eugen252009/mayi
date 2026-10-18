@@ -1,16 +1,16 @@
-# Installed package matrix — journald6
+# Status1 installed Debian matrix
 
-| Platform | systemd | Exact install/native/history/permissions/restart | PAM, identity, one-shot, expiry | Remove/reinstall |
+| Platform | systemd | Status counts / JSON / watch / access / restart | History / native audit / PAM / security | Install/remove/reinstall |
 |---|---|---|---|---|
-| Debian 11 | 247.3-7+deb11u8 | PASS | PASS | PASS |
-| Debian 12 | 252.39-1~deb12u2 | PASS | PASS | PASS |
-| Debian 13 | 257.13-1~deb13u1 | PASS | PASS | PASS |
+| Debian11 |247.3-7+deb11u8|PASS|PASS|PASS|
+| Debian12 |252.39-1~deb12u2|PASS|PASS|PASS|
+| Debian13 |257.13-1~deb13u1|PASS|PASS|PASS|
 
-Eleven gates each, final exit 0 each, 248 raw native records each; independent audit PASS. Actual root and ordinary synthetic requester CLI invocations, real PTYs/PAM and journalctl records, not build-only inference. UID-split scope regression reproduced and corrected on all three. No journal group membership or security sandbox weakening needed.
+Exact artifact,14 gates and final exit0 each;46 independently validated snapshots and552 native records each. Actual synthetic roles, controlling PTYs and installed systemd services, not compilation inference. Shared dependencies produce waiting2/running1/active3; full128 pending queue produces exactly128, not edge/view count. Human watch Ctrl-C/resize restores cursor/screen and unchanged termios; NDJSON watch observes actual broker stop/start without stale counters.
 
-Earlier journald4 Debian 13 package-cycle exit 2 had missing stderr; that cause remains historically unproven. This task captures every failed dpkg command's stderr/exit/time and package-manager process snapshot. Only explicit exit-2 lock errors receive a <=180-second cooperative wait; never force/unlock/kill package managers or disable security updates. Final journald6 Debian 11/13 cycles had no failed dpkg attempts. Debian 12 removal encountered 52 captured exit-2 attempts over 54.46 seconds: stderr identifies frontend-lock PID 1492 and process snapshots identify /usr/bin/unattended-upgrade. The bounded cooperative retry then completed the unchanged full cycle. All 52 attempts remain FAILED evidence, independently classified as package-manager contention; only the completed cycle is PASS. No lock was removed, package manager killed or security update disabled.
+The inherited Debian13 dpkg anomaly is not erased. This task's driver captures failed dpkg stderr/exit/time and process snapshots and cooperatively waits <=180s only on explicit exit2 lock errors; no force/unlock/kill/masked updates. All three final status1 cycles have no captured failed dpkg attempts (independent audit). Earlier history6 Debian12 lock-denied attempts and journald4 Debian13 unproven cause remain distinct historical evidence.
 
-Fresh child overlays of historical Debian qualification bases; boot-provisioned synthetic fixtures only. Operator host not installed/restarted. Current final evidence under /home/eugen/projekte/mayi-qualification/history-0.4.1-10-journald6; initial failing history5 evidence retained separately. Both ELF max GLIBC_2.30, within Debian 11 >=2.31; systemd native/query compatibility confirmed through 257.
+Fresh disposable child overlays; historical backing disks read-only. Host installed journald6 unchanged; no active host service restart. Two Debian11 fresh Cargo targets/locked offline builds byte-identical, GLIBC maximum2.30 <=2.31, PIE/RELRO/NX/BIND_NOW/needed-library gate PASS, existing dependencies preserved. No added crate/libsystemd/new ABI.
 
 
-Package runtime/source commit: c511c7f948e4b811baec9e83976fec6ec5b898ba. Version: 0.4.1-10~journald6 amd64. Package and independent rebuild SHA-256: 7149d79e8aec0f8a7c119a9f8aa0f9ede00f7120cd2674c6b3754d2d8bccb51a.
+Tested package source: 90a65fd6d8432f5b6c1e297b24dc91bd80a18f1a. Development 0.4.1-10~status1 amd64. First/rebuild SHA-256: 4ce927013fb811ffa21d9540ac007ff5f47cfff1d9f0c8d2fe3f8e6632e3aab4.
