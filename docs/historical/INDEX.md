@@ -93,20 +93,23 @@ Historical AGENTS text has .txt suffix so it cannot become competing agent polic
 | `docs/FILESYSTEM_EXECUTOR_STATUS.md` | current pointer will replace obsolete guide; original preserved; versions 0.4.1 | [verbatim](baseline-3b6/docs/FILESYSTEM_EXECUTOR_STATUS.md) / [original-base links](https://github.com/eugen252009/mayi/blob/3b6b6127c6af682e3f7894dd1b98bac31a04a2e3/docs/FILESYSTEM_EXECUTOR_STATUS.md) |
 | `executor/package/README.md` | current pointer will replace obsolete guide; original preserved; versions 0.4.0, 0.4.1, 0.4.1-1, 0.4.1-3, 0.4.1-4, 0.4.1-5 | [verbatim](baseline-3b6/executor/package/README.md) / [original-base links](https://github.com/eugen252009/mayi/blob/3b6b6127c6af682e3f7894dd1b98bac31a04a2e3/executor/package/README.md) |
 
-## Retained worktrees — ONE repository, not competing project authorities
+## Canonical repository and retained historical worktrees
 
-- /home/eugen/projekte/mayi/: canonical consolidation review branch; current source/docs/tests.
-- /home/eugen/projekte/mayi-preserved-original-consolidation/: old dirty main working state AND shared .git administration. Required for every linked worktree; DO NOT DELETE. Not authoritative application source.
+- /home/eugen/projekte/mayi/: self-contained canonical repository on main, matching GitHub default main; independent .git/object storage, current source/docs/tests/manuals.
+- /home/eugen/projekte/mayi-preserved-consolidated-worktree/: former linked canonical checkout at a500150, relocated through git worktree move and preserved unchanged on the historical consolidation branch. No longer current authority.
+- /home/eugen/projekte/mayi-preserved-original-consolidation/: old dirty main working state AND historical shared .git administration. Required for its nine historical linked/main worktrees, but NOT for standalone canonical mayi/. DO NOT DELETE. Not authoritative application source.
 - mayi-stable-development/: preserved post-release status3b6 snapshot, superseded as the working location by canonical mayi/.
 - mayi-release-0.4.1-11/: immutable source snapshot c547; no consolidation changes applied there.
 - mayi-ux-development/, mayi-ui-development/, mayi-journald-development/: historical scoped development branches; not current contracts.
 - qualification release-source worktrees for8/9: preserved qualified historical source identities.
 
 Do not remove/clean unknown files in any worktree. Keep unfinished experiments
-separate; do not merge them by filename/mtime. Shared Git storage lives in retained
-original main directory; Git's administrative main-worktree label does not mean
-its old files define current functionality. Full private verified backup and
-migration receipts are outside source under mayi-qualification/repository-consolidation/.
+separate; do not merge them by filename/mtime. Historical shared Git storage lives
+in the retained original directory; Git's administrative main-worktree label does
+not mean its old files define current functionality. The canonical main repository
+is independent of that storage. Original verified backup/consolidation receipts
+remain under mayi-qualification/repository-consolidation/; standalone-main topology,
+integrity, validation and source-push receipts are under mayi-qualification/main-finalization/.
 
 ## Earlier research and qualification
 

@@ -1,14 +1,19 @@
 # Development, build and release
 
-Canonical working directory: /home/eugen/projekte/mayi/. This is a linked worktree
-on the consolidation review branch (not yet pushed). It shares ONE Git repository
-with retained worktrees; [historical index](historical/INDEX.md) documents their roles.
-The original dirty main worktree/common .git is retained at
+Canonical working directory: /home/eugen/projekte/mayi/, checked out on **main**.
+Its self-contained /home/eugen/projekte/mayi/.git has independent object storage,
+no alternates or external common-dir dependency. GitHub's default main contains
+the same consolidated application, documentation and manpages. Create future work
+from canonical main or an explicitly qualified successor.
+
+The older shared repository and all nine original worktrees remain preserved;
+[historical index](historical/INDEX.md) records their roles. The former linked
+canonical checkout is retained at /home/eugen/projekte/mayi-preserved-consolidated-worktree/.
+The original dirty checkout/shared .git remains at
 /home/eugen/projekte/mayi-preserved-original-consolidation/.
-Do NOT delete that directory: Git common storage is there, although its working
-files are NOT the development authority. Do not reset/clean it or import unknown
-experiments. Create future worktrees from the canonical reviewed baseline or an
-explicitly qualified successor; don't reuse historical directories by appearance.
+Do NOT delete/clean/reset those directories or import unknown experiments. They
+are historical/unfinished work, not dependencies of the standalone canonical
+repository. Do not infer authority from Git's administrative main-worktree label.
 
 ## Source and configuration authority
 

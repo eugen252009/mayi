@@ -1,10 +1,13 @@
 # Mayi — STABLE — ACTIVELY MAINTAINED
 
 Canonical source and documentation: **/home/eugen/projekte/mayi/**.
-Current local review branch: **consolidation/single-source-of-truth**, based on
-remote main3b6b6127c6af682e3f7894dd1b98bac31a04a2e3. Consolidation is not pushed.
-Future branches use the reviewed canonical baseline or a qualified successor.
-The old dirty administrative main worktree is preserved, not an alternate authority.
+Authoritative development branch: **main**, synchronized with GitHub's default
+main at git@github.com:eugen252009/mayi.git. Source, current documentation and
+manpages are available together on main, not exclusively on a review branch.
+The canonical checkout has independent Git storage at **/home/eugen/projekte/mayi/.git**.
+Future branches start from main or a qualified successor. The older shared Git
+repository and its worktrees remain preserved historical/unfinished work, not a
+storage dependency or an alternate development authority.
 
 Qualified stable release: **0.4.1-11**,
 source **c5477fb19e1b979be980b451b6242e3565c9425a** (unchanged, **unsigned**).
