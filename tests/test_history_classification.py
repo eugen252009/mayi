@@ -99,7 +99,7 @@ def test_retention_without_proposal_and_unknown_without_execution():
     for name in ['PROPOSED','VIEW_APPROVED','CONSUMED']:
         r=event(name)
         d=doc([r]);assert d['requests'][0]['status']=='UNKNOWN'
-        assert '?' in h.render(d)
+        assert 'UNKNOWN' in h.render(d) and 'not a live pending request' in h.render(d)
     # Only a helper completion without an authoritative broker binding is a diagnostic.
     root=event('EXECUTION_FINISHED',_SYSTEMD_UNIT='mayi-privileged-executor.service',_UID='0',MAYI_STATE='SUCCEEDED',MAYI_CHILD_EXIT_STATUS='0')
     assert not doc([root])['requests'] and doc([root],'--events')['matched']==1

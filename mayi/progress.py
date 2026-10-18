@@ -1,6 +1,7 @@
 """Human-only, timer-driven progress. No network, threads or authorization state."""
 import os
 import sys
+import shutil
 import time
 
 
@@ -27,8 +28,13 @@ class Waiting:
             return
         self.last = frame
         self.active = True
-        self.stream.write("\r\x1b[2K{} Waiting for human approval; elapsed {:02d}:{:02d} (not a health check)".format(
-            "|/-\\"[frame % 4], int(elapsed) // 60, int(elapsed) % 60))
+        try:columns=os.get_terminal_size(self.stream.fileno()).columns
+        except (OSError,ValueError,AttributeError):columns=shutil.get_terminal_size((80,24)).columns
+        if columns<=0:columns=80
+        width=max(0,columns-1)
+        label="Waiting for human approval; elapsed {:02d}:{:02d} (not a health check)" if width>=76 else "Waiting approval {:02d}:{:02d}"
+        text=("{} "+label).format("|/-\\"[frame % 4], int(elapsed)//60,int(elapsed)%60)
+        self.stream.write("\r\x1b[2K"+text[:width])
         self.stream.flush()
 
     def __exit__(self, *_):

@@ -29,8 +29,8 @@ pub(super) fn dimensions() -> (usize, usize) {
         && size.ws_row > 0
     {
         (
-            (size.ws_col as usize).clamp(12, 100),
-            (size.ws_row as usize).clamp(12, 100),
+            (size.ws_col as usize).clamp(12, 120),
+            (size.ws_row as usize).clamp(8, 100),
         )
     } else {
         (80, 24)
@@ -45,17 +45,32 @@ pub(super) fn render(
     width: usize,
     height: usize,
 ) -> (String, usize) {
+    let width = width.clamp(12, 120) - 1;
+    let height = height.clamp(8, 100);
+    let compact = width < 59 || height < 18;
     let mut body = String::new();
-    for (index, row_index) in component.iter().enumerate() {
+    // Presentation only. Keep the original component index on every row:
+    // numeric decisions still bind to the unchanged broker snapshot.
+    let mut display: Vec<_> = component.iter().enumerate().collect();
+    display.sort_by_key(|(_, i)| rows[**i]["queue_state"] != "PENDING_APPROVAL");
+    let pending = component
+        .iter()
+        .filter(|i| rows[**i]["queue_state"] == "PENDING_APPROVAL")
+        .count();
+    if component.len() > 1 {
+        body.push_str(&format!(
+            "{pending} need approval; {} context\n",
+            component.len() - pending
+        ));
+    }
+    for (index, row_index) in display {
         let row = &rows[*row_index];
         let op = &row["operations"][0];
         let path = op["executable"].as_str().unwrap_or("");
-        let label = if component.len() == 1 {
-            String::new()
-        } else {
-            format!("[{index}] ")
-        };
-        body.push_str(&format!("{label}{}", program(path)));
+        if component.len() > 1 {
+            body.push_str(&format!("[{index}] "));
+        }
+        body.push_str(&program(path));
         let basename = path.rsplit('/').next().unwrap_or("");
         let wrapper = [
             "sh", "bash", "dash", "zsh", "fish", "env", "sudo", "su", "busybox", "xargs", "find",
@@ -71,7 +86,7 @@ pub(super) fn render(
                 .map(|arg| render_console_arg(arg.as_str().unwrap_or("<invalid>")))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let limit = width.clamp(12, 100).saturating_sub(5).min(68);
+            let limit = width.saturating_sub(5).min(68);
             if arguments.len() > limit {
                 body.push_str(&format!(" {} ... [more in details]", &arguments[..limit]));
             } else if !arguments.is_empty() {
@@ -101,80 +116,102 @@ pub(super) fn render(
         }
         if row["queue_state"] != "PENDING_APPROVAL" {
             body.push_str(&format!(
-                "State: {}\n",
+                "Context state: {}\n",
                 render_console_arg(row["queue_state"].as_str().unwrap_or("UNKNOWN"))
             ));
         }
         if details {
-            body.push_str("Executor: UID 0 / GID 23012\n");
             body.push_str("More information: exact broker fields (JSON notation)\n");
-            // Includes complete path, argv[0], dependencies, IDs, digest and deadlines.
-            // JSON escapes newlines; terminal_safe additionally escapes non-ASCII/bidi.
             body.push_str(&terminal_safe(&serde_json::to_string_pretty(row).unwrap()));
             body.push('\n');
         }
         body.push('\n');
     }
-    let width = width.clamp(12, 100) - 1;
-    let lines: Vec<String> = body
-        .lines()
-        .flat_map(|line| {
-            if line.is_empty() {
-                return vec![String::new()];
+    let wrap = |text: &str| -> Vec<String> {
+        text.lines()
+            .flat_map(|line| {
+                if line.is_empty() {
+                    return vec![String::new()];
+                }
+                line.as_bytes()
+                    .chunks(width)
+                    .map(|s| String::from_utf8(s.to_vec()).unwrap())
+                    .collect()
+            })
+            .collect()
+    };
+    let header = if compact {
+        "MAYI | Exec UID 0 GID 23012".to_owned()
+    } else {
+        format!(
+            "MAYI  /  Permission requested{}\nExecutor: UID 0 / GID 23012",
+            if component.len() > 1 {
+                format!(" ({})", component.len())
+            } else {
+                String::new()
             }
-            // All input is ASCII escaped. Wrap without dropping any byte.
-            line.as_bytes()
-                .chunks(width)
-                .map(|s| String::from_utf8(s.to_vec()).unwrap())
-                .collect()
-        })
-        .collect();
-    let count = height.clamp(12, 100).saturating_sub(8).max(1);
+        )
+    };
+    let footer = |current: usize, pages: usize| {
+        let mut lines = Vec::new();
+        lines.push(
+            if compact {
+                if details {
+                    "Space:less"
+                } else {
+                    "Space:info"
+                }
+            } else if details {
+                "[Space] Less information"
+            } else {
+                "[Space] More information"
+            }
+            .to_owned(),
+        );
+        if pages > 1 {
+            lines.push(format!("Page {}/{}  [ / ]", current + 1, pages));
+        }
+        if details {
+            lines.push(
+                if compact {
+                    "f:ask s:skip 0-9:subset"
+                } else {
+                    "[f] Follow-up  [s] Skip  [0-9] Subset"
+                }
+                .to_owned(),
+            );
+        }
+        lines.push(
+            if compact {
+                if component.len() == 1 {
+                    "a:approve d:deny q:quit"
+                } else {
+                    "a:ALL pending d:deny q:quit"
+                }
+            } else if component.len() == 1 {
+                "[d] Deny   [a] Approve   [q] Quit"
+            } else {
+                "[d] Deny   [a] Approve ALL pending   [q] Quit"
+            }
+            .to_owned(),
+        );
+        lines.push("Action + Enter: ".to_owned());
+        wrap(&lines.join("\n"))
+    };
+    let lines = wrap(&body);
+    let head = wrap(&header);
+    // Reserve the fully wrapped chrome INCLUDING worst-case page-number width.
+    // Page count cannot exceed the body line count. No content byte is dropped.
+    let maximum = lines.len().max(2);
+    let count = height
+        .saturating_sub(head.len() + footer(maximum - 1, maximum).len())
+        .max(1);
     let pages = lines.len().div_ceil(count).max(1);
     let page = page.min(pages - 1);
-    let mut output = format!(
-        "\nMAYI  /  Permission requested{}\n\n",
-        if component.len() > 1 {
-            format!(" ({})", component.len())
-        } else {
-            String::new()
-        }
-    );
-    for line in lines.iter().skip(page * count).take(count) {
-        output.push_str(line);
-        output.push('\n');
-    }
-    output.push_str(if details {
-        "[Space] Less information\n"
-    } else {
-        "[Space] More information\n"
-    });
-    if pages > 1 {
-        output.push_str(&format!("Page {}/{}  [ / ] Browse\n", page + 1, pages));
-    }
-    if details {
-        output.push_str("[f] Follow-up  [s] Skip  [0-9] Subset\n");
-    }
-    output.push_str(if component.len() == 1 {
-        "\n[d] Deny   [a] Approve   [q] Quit\nAction + Enter: "
-    } else {
-        "\n[d] Deny   [a] Approve ALL pending   [q] Quit\nAction + Enter: "
-    });
-    // Wrap chrome as well as data on narrow terminals. No bytes are hidden.
-    output = output
-        .lines()
-        .flat_map(|line| {
-            if line.is_empty() {
-                return vec![String::new()];
-            }
-            line.as_bytes()
-                .chunks(width)
-                .map(|s| String::from_utf8(s.to_vec()).unwrap())
-                .collect()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    (output, pages)
+    let mut output = head;
+    output.extend(lines.into_iter().skip(page * count).take(count));
+    output.extend(footer(page, pages));
+    (output.join("\n"), pages)
 }
 
 pub(super) struct View {
@@ -204,16 +241,77 @@ impl View {
 }
 
 pub(super) fn waiting(tick: u64, elapsed: u64) -> String {
-    format!(
-        "{} Your decision? ({}s)  Action + Enter: ",
-        ["|", "/", "-", "\\"][(tick % 4) as usize],
-        elapsed
-    )
+    let width = dimensions().0.saturating_sub(1);
+    let spin = ["|", "/", "-", "\\"][(tick % 4) as usize];
+    let text = if width < 60 {
+        format!("{spin} Action + Enter ({elapsed}s): ")
+    } else {
+        format!("{spin} Your decision? ({elapsed}s)  Action + Enter: ")
+    };
+    text.chars().take(width).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn complete_chrome_and_every_page_fit_supported_terminals() {
+        let rows = vec![
+            json!({"requester_uid":1000,"queue_state":"PENDING_APPROVAL","expires_at":now()+300,"challenge_id":"a".repeat(48),"request_digest":"b".repeat(64),"operations":[{"type":"exec","executable":"/usr/bin/bash","argv":["bash","-c","x".repeat(1024)+"END\n\u{1b}\u{202e}"]}]}),
+        ];
+        let original = rows.clone();
+        for (width, height) in [(120, 40), (100, 30), (80, 24), (60, 20), (40, 12), (30, 8)] {
+            for details in [false, true] {
+                let (_, pages) = render(&rows, &[0], details, 0, width, height);
+                let mut all = String::new();
+                for page in 0..pages {
+                    let (text, actual) = render(&rows, &[0], details, page, width, height);
+                    assert_eq!(pages, actual);
+                    assert!(
+                        text.lines().count() <= height,
+                        "{width}x{height} page{page}: {text}"
+                    );
+                    assert!(text.lines().all(|line| line.len() < width));
+                    assert!(text.contains("UID 0") && text.contains("23012"));
+                    assert!(
+                        text.contains("Action + Enter:")
+                            && (text.contains("a:approve") || text.contains("[a] Approve"))
+                    );
+                    assert!(!text.contains('\u{1b}') && text.is_ascii());
+                    all.push_str(&text);
+                    all.push('\n');
+                }
+                if details {
+                    assert!(
+                        all.contains("request_digest")
+                            && all.contains("executable")
+                            && all.contains("END")
+                    );
+                }
+            }
+        }
+        assert_eq!(rows, original);
+    }
+    #[test]
+    fn actionable_rows_first_keep_original_component_indices() {
+        let mut parent = json!({"requester_uid":1000,"queue_state":"SUCCEEDED","operations":[{"type":"exec","executable":"/usr/bin/true","argv":["true"]}]});
+        let mut child = parent.clone();
+        child["queue_state"] = json!("PENDING_APPROVAL");
+        child["operations"][0]["executable"] = json!("/usr/bin/bash");
+        child["operations"][0]["argv"] = json!(["bash", "-c", "echo child"]);
+        parent["request_id"] = json!("parent");
+        let rows = vec![parent, child];
+        let before = rows.clone();
+        let component = vec![0, 1];
+        let text = render(&rows, &component, false, 0, 100, 100).0;
+        assert!(text.find("[1] bash").unwrap() < text.find("[0] true").unwrap());
+        assert!(
+            text.contains("1 need approval; 1 context")
+                && text.contains("Context state: SUCCEEDED")
+        );
+        assert_eq!(component, vec![0, 1]);
+        assert_eq!(rows, before);
+    }
     #[test]
     fn basename_and_escaping() {
         assert_eq!(program("/usr/bin/bash"), "bash");
@@ -236,7 +334,8 @@ mod tests {
         let (_, pages) = render(&rows, &[0], true, 0, 20, 12);
         let all: String = (0..pages)
             .map(|p| render(&rows, &[0], true, p, 20, 12).0)
-            .collect();
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(all.contains("executable"));
         assert!(!all.contains('\x1b'));
         assert!(all.contains("END"));
@@ -277,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_command_is_one_line_and_executor_stays_in_details() {
+    fn simple_command_is_one_line_and_executor_is_always_visible() {
         let rows = vec![
             json!({"requester_uid":1000,"queue_state":"PENDING_APPROVAL",
             "operations":[{"type":"exec","executable":"/usr/bin/echo","argv":["echo","hallo"]}]}),
@@ -285,6 +384,7 @@ mod tests {
         let (compact, _) = render(&rows, &[0], false, 0, 80, 24);
         assert!(compact.lines().any(|line| line == "echo hallo"));
         assert!(!compact.contains("-> root"));
+        assert!(compact.contains("Executor: UID 0 / GID 23012"));
         let (details, _) = render(&rows, &[0], true, 0, 100, 100);
         assert!(details.contains("Executor: UID 0 / GID 23012"));
         assert!(details.contains("/usr/bin/echo"));

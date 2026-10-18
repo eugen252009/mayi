@@ -3771,8 +3771,13 @@ pub fn serve(
     let approval_socket_path = super::secure_socket_path(&approval_path)?;
     super::install_broker_shutdown_handlers();
     let mut state = Broker::new()?;
-    state.request_id_key =
-        crate::request_ids::load_key(std::path::Path::new("/var/lib/mayi-broker"))?;
+    // Existing explicit standalone-development mode must not read or repair the
+    // production-owned key. Broker::new already generated an ephemeral key;
+    // production services never pass this flag and retain the strict disk key.
+    if !development_shared_role_group {
+        state.request_id_key =
+            crate::request_ids::load_key(std::path::Path::new("/var/lib/mayi-broker"))?;
+    }
     let broker = Arc::new(Mutex::new(state));
     let request_active = Arc::new(AtomicUsize::new(0));
     let approval_active = Arc::new(AtomicUsize::new(0));

@@ -27,9 +27,14 @@ with usage exit 12. Bare version remains an executable name, not an alias.
 .SH LIVE APPROVAL STATUS
 .B mayi-approve status
 reads aggregate current broker state under the existing approver role without PAM,
-creating views or starting the interactive console. Options: --json, --watch,
---interval SECONDS (0.5..60, watch only). Human watch needs a supported TTY;
---watch --json emits line-oriented JSON for pipes. Dispatching is not confirmed
+creating views or starting the interactive console. Compact human output groups
+approval, observed running and other active work. --details displays every counter;
+--json always retains all counters. --preflight returns READY=0, BUSY=3 or UNKNOWN=4;
+READY is only a snapshot, not an admission lock or physical process inventory.
+Other options: --watch, --interval SECONDS (0.5..60, watch only).
+ANSI watch needs a supported TTY; --watch --plain provides append-only human
+snapshots without ANSI or a TTY requirement. --watch --json emits NDJSON for pipes.
+If detailed watch does not fit, resize or use --plain. Dispatching is not confirmed
 child start; running means actual spawn observed, final outcome still awaited.
 Unknown outcome does not mean a child was canceled. Snapshot is not persistent.
 See /usr/share/doc/mayi/STATUS_JSON_SCHEMA.md and QUEUE_STATE_MAPPING.md.
@@ -41,7 +46,9 @@ Options: --limit N (1..1000, default 20), --all (bounded 2000 identities),
 --status STATE, --request FULL_RQ_OR_CH_ID, --since JOURNAL_TIMESTAMP, --json,
 --events (chronological diagnostic audit view). Default history contains only
 proved authorization requests; PAM/session/health events are not request rows.
-Nonterminal observations have a question mark and UNKNOWN current status;
+Unconfirmed outcomes display UNKNOWN, not a live pending request.
+Human rq_v2 abbreviations use the random request nonce; use --json for full IDs.
+MAYI/EXIT distinguishes broker result and child exit code. JSON semantics are unchanged;
 retention, rate limiting, restarts and bounded scans can remove events.
 Full identifiers and event timelines are available with --request and --json.
 The scan is bounded to 20000 records, 16 MiB and 20 seconds.
@@ -59,7 +66,10 @@ The requester and approver roles are independently checked by the broker. Before
 .B mayi-approve
 checks the calling UID's approver-group membership and authenticates that same account through PAM. Authentication requires an interactive controlling terminal.
 .PP
-Mayi is broad human-gated root execution, not a command-safety analyzer or semantic allowlist. The approver must assess the resolved executable and every argument. An explicitly requested shell executable can interpret its own arguments.
+Mayi is broad human-gated root execution, not a command-safety analyzer or semantic allowlist. The approver must assess the resolved executable and every argument.
+The approval screen always identifies executor UID 0 / GID 23012. Small screens
+page content while retaining controls; dependency context is shown after pending
+rows without changing original numeric selection indices or execution ordering. An explicitly requested shell executable can interpret its own arguments.
 .SH COMMAND MODES
 .TP
 .B "mayi EXECUTABLE [ARG ...]"

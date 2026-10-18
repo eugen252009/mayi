@@ -81,23 +81,42 @@ def preflight(value=None, error=None):
     return result, {'READY':0,'BUSY':3,'UNKNOWN':4}[outcome]
 
 
-def render(value=None, error=None, width=None):
-    width = max(20, min(120, width or shutil.get_terminal_size((80,24)).columns))
-    lines = ['MAYI - Approval Status', '', 'Broker: ' + (value['broker'] if value else error.broker), '']
+def terminal_size():
+    try:
+        size=os.get_terminal_size(sys.stdout.fileno())
+        if size.columns>0 and size.lines>0:return size
+    except (OSError,ValueError,AttributeError):pass
+    return shutil.get_terminal_size((80,24))
+
+
+def render(value=None, error=None, width=None, details=False, height=None):
+    width = max(20, min(120, width or terminal_size().columns))-1
+    lines = ['MAYI - Approval Status', 'Broker: ' + (value['broker'] if value else error.broker)]
     if value:
-        lines.append('Broker epoch: '+value['broker_instance_id'][:12]+'...')
+        lines.append('Epoch: '+value['broker_instance_id'][:12]+'...')
         if 'preflight' in value:
             lines.append('Update preflight: '+value['preflight']+' (not an idle lock)')
-        labels = [('Pending approval', 'pending_approval'), ('Waiting on dependencies', 'waiting_dependency'),
-                  ('Approved / ready', 'approved_ready'), ('Awaiting requester consume', 'awaiting_consumption'),
-                  ('Dispatching / unconfirmed start', 'dispatching'), ('Running (observed start)', 'running'),
-                  ('Total active requests', 'total_active')]
-        lines += ['{:<31} {}'.format(label+':', value[key]) for label,key in labels]
+        if details:
+            labels = [('Pending approval','pending_approval'),('Waiting on dependencies','waiting_dependency'),
+                      ('Approved / ready','approved_ready'),('Awaiting requester consume','awaiting_consumption'),
+                      ('Dispatching / unconfirmed start','dispatching'),('Running (observed start)','running'),
+                      ('Total active requests','total_active')]
+            lines += ['{:<31} {}'.format(label+':',value[key]) for label,key in labels]
+        else:
+            pending,running,total = value['pending_approval'],value['running'],value['total_active']
+            lines.append('Approval: {} waiting'.format(pending) if pending else 'No pending approvals.')
+            if total:
+                lines.append('Execution: {} running'.format(running))
+                other=total-pending-running
+                if other or value['dispatching']:
+                    lines.append('Other: {}; dispatch: {}'.format(other,value['dispatching']))
+                lines.append('{} active requests'.format(total))
+            else:lines.append('No active requests.')
         if value['blocked_terminal'] or value['outcome_unknown_terminal']:
-            lines += ['', 'Terminal blocked: '+str(value['blocked_terminal']), 'Terminal unknown outcome: '+str(value['outcome_unknown_terminal'])]
-        lines += ['', 'Point-in-time snapshot; console health not tracked.']
+            lines.append('Blocked {} | Unknown {}'.format(value['blocked_terminal'],value['outcome_unknown_terminal']))
+        if height is None:lines.append('Snapshot only; not a process inventory.')
     else:
-        lines += ['Counters: UNAVAILABLE', str(error)]
+        lines += ['Counters: UNAVAILABLE',str(error)]
     return '\n'.join(line[i:i+width] for line in lines for i in (range(0,len(line),width) if line else [0]))+'\n'
 
 
@@ -110,20 +129,24 @@ def main(argv=None):
     parser = Parser(prog='mayi-approve status',description='Read-only approver snapshot; no PAM or approval session.')
     parser.add_argument('--json',action='store_true',help='JSON; --watch produces one JSON object per line')
     parser.add_argument('--preflight',action='store_true',help='read-only update observation: READY=0, BUSY=3, UNKNOWN=4; not an idle lock')
+    parser.add_argument('--details',action='store_true',help='all authoritative counters in human output; JSON always contains all counters')
+    parser.add_argument('--plain',action='store_true',help='with --watch: append-only human snapshots, no ANSI or TTY requirement')
     parser.add_argument('--watch',action='store_true',help='one-second snapshots; human mode requires a supported TTY')
     parser.add_argument('--interval',type=float,default=None,help='watch refresh seconds, 0.5..60')
     terminal = False
     previous = {}
     try:
         args = parser.parse_args(argv)
+        if args.plain and (not args.watch or args.json):
+            raise StatusError(12,'UNAVAILABLE','--plain requires human --watch; use --watch --json for machine output.')
         if args.preflight and args.watch:
             raise StatusError(12,'UNAVAILABLE','--preflight cannot be combined with --watch.')
         if args.interval is not None and (not args.watch or not math.isfinite(args.interval) or not .5 <= args.interval <= 60):
             raise StatusError(12,'UNAVAILABLE','--interval requires --watch and a finite value from 0.5 to 60.')
-        if args.watch and not args.json:
+        if args.watch and not args.json and not args.plain:
             term = os.environ.get('TERM','')
             if not sys.stdout.isatty() or not term.startswith(('xterm','screen','tmux','vt','linux')):
-                raise StatusError(12,'UNAVAILABLE','Human watch requires a supported terminal; use --watch --json for pipes.')
+                raise StatusError(12,'UNAVAILABLE','Human watch needs an ANSI-capable TTY; use --watch --plain without ANSI, or --watch --json for pipes.')
             terminal = True
             sys.stdout.write('\x1b[?1049h\x1b[?25l');sys.stdout.flush()
         if args.watch:
@@ -139,17 +162,20 @@ def main(argv=None):
                 record, code = preflight(value,error)
                 if args.json:print(json.dumps(record,sort_keys=True,ensure_ascii=True),flush=True)
                 else:
-                    print('Update preflight: UNKNOWN' if error else render(record),end='\n' if error else '')
+                    print('Update preflight: UNKNOWN' if error else render(record,details=args.details),end='\n' if error else '')
                     if error:print(str(error),file=sys.stderr)
                 return code
             if args.json:
                 record = value if value is not None else dict(schema_version=1,broker=error.broker,error=dict(code=error.code,message=str(error)))
                 print(json.dumps(record,sort_keys=True,ensure_ascii=True),flush=True)
             else:
-                text = render(value,error)
+                size=terminal_size()
+                text = render(value,error,details=args.details,height=size.lines if terminal else None)
+                if terminal and len(text.splitlines())>size.lines:
+                    raise StatusError(12,'UNAVAILABLE','Snapshot does not fit this terminal; resize or use --watch --plain (and --details if needed).')
                 # Snapshot time is intentionally not in the human canvas; unchanged counts need no repaint.
                 if text != last:
-                    sys.stdout.write(('\x1b[H\x1b[J' if terminal else '')+text);sys.stdout.flush();last=text
+                    sys.stdout.write(('\x1b[H\x1b[J' if terminal else ('Snapshot '+(value['snapshot_time'] if value else 'unavailable')+'\n' if args.plain else ''))+text);sys.stdout.flush();last=text
             if not args.watch:return error.code if error else 0
             time.sleep(args.interval or 1)
     except StatusError as error:

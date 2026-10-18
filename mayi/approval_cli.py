@@ -10,7 +10,9 @@ HELP = """Mayi - Human Approval Console
 
 Usage:
   mayi-approve
-  mayi-approve status [--json] [--watch] [--interval SECONDS]
+  mayi-approve status [--json] [--details] [--watch] [--interval SECONDS]
+  mayi-approve status --watch --plain
+  mayi-approve status --preflight [--json]
 
 Options:
   -h, --help       Show this local help
@@ -29,7 +31,7 @@ def main():
         from .approval_status import main as status_main
         raise SystemExit(status_main(sys.argv[2:]))
     if len(sys.argv) != 1:
-        print("Usage: mayi-approve | mayi-approve status [--json] [--watch] [--interval SECONDS]", file=sys.stderr)
+        print("Usage: mayi-approve | mayi-approve status --help", file=sys.stderr)
         raise SystemExit(2)
     os.execv(
         EXECUTOR,

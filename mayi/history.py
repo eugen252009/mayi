@@ -439,6 +439,13 @@ def document(records, stats, args):
                 limits=dict(records=MAX_RECORDS, bytes=MAX_BYTES, identities=MAX_GROUPS, seconds=TIMEOUT),
                 historical_only=True, completeness='Best-effort retained journal window; not live broker state.')
 
+def display_identity(identity):
+    # Presentation alias only: never accepted by lookup, approval or execution.
+    if identity and RQ.fullmatch(identity) and identity.startswith('rq_v2_'):
+        return 'rq:'+identity.split('_')[3][:12]
+    return identity or '-'
+
+
 def render(doc, detail=False, width=None):
     width = max(24, min(160, width or shutil.get_terminal_size((80,24)).columns))
     is_events = doc.get('mode') == 'events'
@@ -456,7 +463,7 @@ def render(doc, detail=False, width=None):
         lines.append('{:<8}  {:<{ew}}  {}'.format('TIME','EVENT','REQUEST / ID',ew=event_width))
         for event in doc['events']:
             epoch_separator(event.get('epoch_id'),event['boot_id'])
-            lines.append('{:<8}  {:<{ew}}  {}'.format(event['timestamp'][11:19],safe(event['event'],event_width),safe(event['request_identity'] or '-',18),ew=event_width))
+            lines.append('{:<8}  {:<{ew}}  {}'.format(event['timestamp'][11:19],safe(event['event'],event_width),safe(display_identity(event['request_identity']),18),ew=event_width))
     elif detail:
         for row in doc['requests']:
             epoch_separator(row.get('epoch_id'),row['boot_id'])
@@ -473,19 +480,22 @@ def render(doc, detail=False, width=None):
             lines.append('')
     else:
         id_width = max(6, min(18, width - 30))
-        lines.append('{:<8}  {:<{iw}}  {:<12} {}'.format('TIME','REQUEST / ID','STATUS','RESULT', iw=id_width))
+        narrow=width<64
+        lines.append('TIME      STATUS     MAYI/EXIT' if narrow else '{:<8}  {:<{iw}}  {:<12} {}'.format('TIME','REQUEST / ID','STATUS','MAYI/EXIT', iw=id_width))
         for row in doc['requests']:
             epoch_separator(row.get('epoch_id'),row['boot_id'])
-            status = (row['observed_state'] or 'UNKNOWN') + '?' if row['status']=='UNKNOWN' else row['status']
+            status = row['status']
             if row.get('recovery_classification')=='SAFE_TO_RECREATE_REQUEST':status='INVALIDATED'
             stamp = row['timestamp'][11:19]
-            result = '-' if row['result'] is None else str(row['result'])
+            result = ('-' if row['result'] is None else str(row['result']))+'/'+('-' if row['exit_code'] is None else str(row['exit_code']))
             identity = row['request_id'] or (row['events'][-1]['event'] if row['identity'].startswith('event_') else row['identity'])
-            label = safe(identity, id_width)
-            lines.append('{:<8}  {:<{iw}}  {:<12} {}'.format(stamp,label,status,result,iw=id_width))
+            label = safe(display_identity(identity),18 if narrow else id_width)
+            if narrow:lines.extend([stamp+' '+status+' '+result,'  '+label])
+            else:lines.append('{:<8}  {:<{iw}}  {:<12} {}'.format(stamp,label,status,result,iw=id_width))
     if not (doc['events'] if is_events else doc['requests']):lines.append('No matching retained events.' if is_events else 'No matching retained requests.')
     lines.extend(['', 'Showing {} of {} matched {}.'.format(doc['returned'],doc['matched'],doc['count_unit']),
-                  '? = last observed only; current state UNKNOWN. No live broker query.',
+                  'UNKNOWN = unconfirmed outcome; not a live pending request. No live broker query.',
+                  'IDs are abbreviated; --json gives full IDs, --request gives last observed details.',
                   'History may be incomplete (retention, restart, rate limits).'])
     if doc['scan_truncated'] or doc['omitted_records']:lines.append('Scan bound reached; narrow --since for more detail.')
     # Detail IDs remain available in full even on narrow terminals/JSON; wrap safely.

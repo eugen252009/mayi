@@ -144,6 +144,10 @@ def _write_child_output(result):
 
 def _mayi_error(message, code):
     print(message, file=sys.stderr)
+    if message.startswith('MAYI_BROKER_ERROR'):
+        print('Ask the operator to check mayi-approve status. Reconcile any uncertain prior operation before resubmitting.',file=sys.stderr)
+    elif message.startswith('MAYI_EXECUTION_UNKNOWN'):
+        print('Execution may have occurred. Reconcile its outcome; do not automatically retry.',file=sys.stderr)
     return code
 
 
