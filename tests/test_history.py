@@ -143,7 +143,10 @@ def test_controls_and_sensitive_fields_never_displayed():
 def test_fixed_argv_since_not_shell():
     c=h.command('1 hour ago; touch /tmp/never')
     assert c[0]=='/usr/bin/journalctl' and '--since=1 hour ago; touch /tmp/never' in c
-    assert '--system' in c and '--reverse' in c
+    # UID-split system-service journals must remain visible. Trust is filtered by
+    # kernel unit/UID, not by the journal file's system/user partition.
+    assert '--system' not in c and '--user' not in c and '--reverse' in c
+    assert '_UID=23002' in c and '_SYSTEMD_UNIT=mayi-broker.service' in c
 
 
 @pytest.mark.parametrize('code,name',[(13,'JOURNAL_ACCESS_DENIED'),(15,'JOURNAL_UNAVAILABLE'),(15,'JOURNAL_READ_FAILED')])

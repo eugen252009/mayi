@@ -79,7 +79,7 @@ def arguments(argv):
 
 
 def command(since=None):
-    argv = [JOURNALCTL, '--system', '--no-pager', '--output=json', '--reverse',
+    argv = [JOURNALCTL, '--no-pager', '--output=json', '--reverse',
             '--lines=' + str(MAX_RECORDS), '--all']
     if since:
         argv.append('--since=' + since)
