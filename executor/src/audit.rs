@@ -177,6 +177,16 @@ fn send(socket: &UnixDatagram, endpoint: &std::path::Path, record: &[u8]) -> io:
     }
     Ok(())
 }
+pub(crate) fn broker_execution_event(queued: bool, outcome: &str, completed: bool) -> &'static str {
+    if outcome == "FAILED" && !completed {
+        return if queued {
+            "QUEUE_DISPATCH_FAILED"
+        } else {
+            "EXECUTION_DISPATCH_FAILED"
+        };
+    }
+    execution_event(queued, outcome)
+}
 pub(crate) fn execution_event(queued: bool, outcome: &str) -> &'static str {
     match (queued, outcome) {
         (true, "SUCCEEDED" | "FAILED") => "QUEUE_EXECUTION_FINISHED",
@@ -213,6 +223,8 @@ mod tests {
             }
             assert!(execution_event(queued, "INTERNAL_ERROR").ends_with("DISPATCH_FAILED"));
             assert!(execution_event(queued, "SUCCEEDED").ends_with("FINISHED"));
+            assert!(broker_execution_event(queued, "FAILED", false).ends_with("DISPATCH_FAILED"));
+            assert!(broker_execution_event(queued, "FAILED", true).ends_with("FINISHED"));
         }
         assert!(encode("FAILED", &[(Field::ChildExitStatus, "Some(0)".into())]).is_err());
         assert!(encode("FAILED", &[(Field::RequestId, "forged".into())]).is_err());

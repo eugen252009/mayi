@@ -2859,7 +2859,12 @@ pub fn approval_console(path: PathBuf, broker_uid: u32) -> io::Result<()> {
 const PRIVILEGED_EXECUTOR_SOCKET: &str = "/run/mayi/executor/executor.sock";
 const EXECUTOR_MAX_FRAME: usize = 300 * 1024;
 
-fn call_privileged_executor(identity: &str, operation: &Value) -> Value {
+fn call_privileged_executor(
+    identity: &str,
+    operation: &Value,
+    audit_completed: &mut bool,
+) -> Value {
+    *audit_completed = false;
     let request_id = if valid_request_id(identity) {
         &identity[3..]
     } else {
@@ -2925,6 +2930,9 @@ fn call_privileged_executor(identity: &str, operation: &Value) -> Value {
         return json!({"execution":"UNKNOWN"});
     }
     let status = response["status"].as_str().unwrap_or("");
+    // Observability only: EXECUTED is the existing response after child wait.
+    // The flag never influences authority, response fields, retry or state.
+    *audit_completed = status == "EXECUTED";
     let execution = match status {
         "EXECUTION_UNKNOWN" => "UNKNOWN",
         "EXECUTION_FAILED" => "FAILED",
@@ -3041,7 +3049,9 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
         let spawn = std::thread::Builder::new()
             .name("mayi-queued-exec".into())
             .spawn(move || {
-                let outcome = call_privileged_executor(&worker_request_id, &operation);
+                let mut audit_completed = false;
+                let outcome =
+                    call_privileged_executor(&worker_request_id, &operation, &mut audit_completed);
                 let execution = outcome["execution"].as_str().unwrap_or("UNKNOWN");
                 let child = outcome["exit_code"]
                     .as_i64()
@@ -3078,7 +3088,11 @@ fn run_queue_scheduler(broker: &Arc<Mutex<Broker>>) {
                             }
                             audit_request(
                                 request,
-                                crate::audit::execution_event(true, execution),
+                                crate::audit::broker_execution_event(
+                                    true,
+                                    execution,
+                                    audit_completed,
+                                ),
                                 &fields,
                             );
                         }
@@ -3410,7 +3424,8 @@ fn handle_with_auth(
         use crate::audit::Field as F;
         fields.push((F::ExecutionId, challenge[..32].into()));
         crate::audit::emit("EXECUTION_DISPATCH_STARTED", &fields);
-        let outcome = call_privileged_executor(&challenge, &operation);
+        let mut audit_completed = false;
+        let outcome = call_privileged_executor(&challenge, &operation, &mut audit_completed);
         fields.retain(|(key, _)| *key != F::State);
         if let Some(value) = outcome["execution"].as_str() {
             fields.push((F::State, value.into()));
@@ -3429,9 +3444,10 @@ fn handle_with_auth(
             .to_string(),
         ));
         crate::audit::emit(
-            crate::audit::execution_event(
+            crate::audit::broker_execution_event(
                 false,
                 outcome["execution"].as_str().unwrap_or("UNKNOWN"),
+                audit_completed,
             ),
             &fields,
         );
