@@ -1,5 +1,7 @@
 # Mayi
 
+> **Request history correction:** `0.4.1-10~status3` shows only authoritative rq_/ch_ requests by default; `mayi history --events` exposes the broader audit trail. History JSON is now schema2 (live status/native schema1 unchanged). See HISTORY_CLASSIFICATION.md, HISTORY_EVENTS_MODE.md, HISTORY_JSON_COMPATIBILITY.md and FINAL_DECISION.md. No automatic installation/publication.
+
 > **CLI metadata development:** `0.4.1-10~status2` adds local `--version`/`-V` and help to both entrypoints. Executable arguments remain unchanged and approval-gated; use `--` for names colliding with internal commands/options. See CLI_DISPATCH_DESIGN.md, CLI_COMPATIBILITY.md and FINAL_DECISION.md. No automatic installation or release publication.
 
 > **Live status development:** `0.4.1-10~status1` adds `mayi-approve status [--json] [--watch] [--interval SECONDS]`. See STATUS_DESIGN.md, QUEUE_STATE_MAPPING.md and FINAL_DECISION.md. This queries live broker state; `mayi history` remains historical. No automatic installation or release publication.
