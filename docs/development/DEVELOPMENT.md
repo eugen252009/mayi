@@ -34,6 +34,13 @@ repository. Do not infer authority from Git's administrative main-worktree label
 
 ## Local tests, not production qualification
 
+Documentation-only navigation checks use [check_documentation.py](check_documentation.py):
+`python3 docs/development/check_documentation.py --json /tmp/mayi-doc-check.json`.
+It checks local GitHub-style links/anchors, pinned historical bodies, index/source
+coverage and rationale references using the standard library and existing full
+Git history. It never imports the application or contacts production services;
+external URL availability and technical prose still require review.
+
 ```sh
 cargo build --manifest-path executor/Cargo.toml --locked --offline
 python3 -m pytest -q -rs

@@ -159,6 +159,9 @@ Source: [product metadata](../executor/package/tpa.json), [version loader](../ma
 [package identities](../tests/test_package_account_ownership.py).
 [Filesystem fixture isolation](development/TEST_ISOLATION.md) governs existing tests,
 NOT permission to enable production filesystem execution.
+[Documentation checker](development/check_documentation.py) provides reproducible
+local link/anchor, historical-identity and index/rationale coverage checks without
+a website/search daemon; see the [command](development/DEVELOPMENT.md#local-tests-not-production-qualification).
 
 **Root layout constraint:** 21 root detail Markdown files above are exact inputs
 of the unchanged package builder. They remain at those tool-required paths, with
