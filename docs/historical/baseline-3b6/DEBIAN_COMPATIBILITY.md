@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Debian compatibility and qualification record — Mayi
 
 ## Current runtime policy (supersedes historical compatibility claims)
@@ -10,15 +14,15 @@ Runtime support is capability-based, not inferred from a distribution label alon
 
 ## Mayi 0.4.1-5 exact-artifact qualification (direct QEMU systemd guests)
 
-- Exact artifact: `/tmp/mayi-qemu-qualification/artifacts/mayi_0.4.1-5_amd64.deb`, package `mayi 0.4.1-5 amd64`, SHA-256 `cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381`. The package was not rebuilt or modified during qualification.
-- Build provenance: source revision `1da927cc65baf882d557f53e3ddfaf1352dd249f` with 28 dirty/untracked paths; exact source input tar SHA-256 `77e314f0e3d0477089207428e8553e53de3f5634fc12730087f15c37024e6cb1`. Build guest Debian 10, glibc 2.28, GCC 8.3.0, Rust/Cargo 1.95.0, libpam0g-dev 1.3.1-5, TPA CLI 0.6.1. Source diff/status capture is under `/tmp/mayi-qemu-qualification/source-*`.
+- Exact artifact: `[local-only path omitted]`, package `mayi 0.4.1-5 amd64`, SHA-256 `cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381`. The package was not rebuilt or modified during qualification.
+- Build provenance: source revision `1da927cc65baf882d557f53e3ddfaf1352dd249f` with 28 dirty/untracked paths; exact source input tar SHA-256 `77e314f0e3d0477089207428e8553e53de3f5634fc12730087f15c37024e6cb1`. Build guest Debian 10, glibc 2.28, GCC 8.3.0, Rust/Cargo 1.95.0, libpam0g-dev 1.3.1-5, TPA CLI 0.6.1. Source diff/status capture is under `[local-only path omitted]*`.
 - Debian 11 Bullseye: kernel `5.10.0-46-amd64`, systemd `247.3-7+deb11u8`. Debian 12 Bookworm: kernel `6.1.0-53-amd64`, systemd `252.39-1~deb12u2`. Debian 13 Trixie: kernel `6.12.111+deb13-amd64`, systemd `257.13-1~deb13u1`.
 - All three guests passed fresh install and upgrade from packaged Mayi 0.4.1; all services started. Successful stock PAM authentication, wrong-password rejection, locked-account rejection, initial NSS denial, final NSS denial after PAM, direct protocol approval without a terminal FD (`PAM_AUTH_REQUIRED`, request stayed pending), 300-second challenge expiry, and one-shot/replay checks passed. Helper unavailability was tested by stopping its unit: systemd stopped the `Requires=`-dependent broker as well; restarting the broker restored both. No approval path remained available while the helper was unavailable.
 - Two concurrent approval consoles produced exactly one winner on each release. Two concurrent approval consumptions also produced exactly one successful `CONSUMED` result and one `ALREADY_CONSUMED`; the allowed `/usr/bin/true` executor operation succeeded.
 - Actual broker/helper/executor service cgroups matched `/system.slice/mayi-{broker,pam-auth,privileged-executor}.service`. The broker was UID 23002/GID 23012, zero effective/permitted/ambient capabilities, `NoNewPrivileges=1`. The PAM authority was UID 0/GID 23012 with only `CAP_DAC_READ_SEARCH` in effective/permitted/bounding/ambient masks and `NoNewPrivileges=1`. Systemd-reported effective PAM sandbox settings included strict filesystem/home protections, private tmp, kernel/control-group restrictions, `RestrictSUIDSGID`, `RestrictNamespaces`, and `LockPersonality`. The separate privileged executor is intentionally UID 0 with broad execution capabilities and `NoNewPrivileges=1`; broad human-gated root execution remains in independent-review scope.
 - The guest syscall probe successfully executed `openat2` with all four required resolve flags on each supported kernel. `SO_PEERCRED` was checked by the packaged clients; successful PAM decisions also exercised the broker/helper peer credential and exact cgroup checks. Service stop/start/restart and purge lifecycle checks passed. Purge preserved administrator-created accounts named `mayi-approver` and `mayi-requester`.
 - Debian 13 initially reset repeatedly with legacy BIOS firmware; using the same verified image, NoCloud seed, disk, and QEMU arguments with OVMF/UEFI and a writable per-VM variable store booted it successfully. Debian 11 booted with the existing BIOS configuration. No production host configuration or service was changed; no Docker qualification was run.
-- Full evidence, logs, and reusable provisioning/test drivers are in `/tmp/mayi-qemu-qualification/QUALIFICATION-STATUS.md` and its `logs/` directory.
+- Full evidence, logs, and reusable provisioning/test drivers are in `[local-only path omitted]` and its `logs/` directory.
 
 **Qualification status: PASS for the requested Debian 11–13 exact-artifact matrix. Candidate status: READY FOR INDEPENDENT SECURITY REVIEW.** This is not production readiness, deployment, publication, or TPA staging authorization. The published 0.4.1 PAM bypass remains a separate production security concern.
 

@@ -22,11 +22,13 @@
 
 ## Getting Started
 
-Mayi is **STABLE — ACTIVELY MAINTAINED**, with qualified release0.4.1-11.
+Mayi is **STABLE — SECURITY MAINTENANCE**, with qualified release 0.4.1-11.
+The intended feature set is complete; ongoing feature expansion is not planned.
+See [maintenance policy](../PROJECT_STATUS.md) for the scope.
 [PROJECT_STATUS](../PROJECT_STATUS.md) owns the exact status/scope, not a feature
 roadmap. [README](../README.md) introduces the purpose and basic workflow;
 [operations](user/OPERATIONS.md) explains usage. Canonical repository:
-/home/eugen/projekte/mayi/, self-contained Git storage, authoritative **main**.
+this repository, self-contained Git storage, authoritative **main**.
 
 Suggested reading: status → architecture → security → operations → development.
 If diagnosing a subsystem, use the component map or the questions below instead
@@ -125,7 +127,7 @@ native fields and read-only projection. **Why it exists:** give searchable
 correlated observations without granting a history service authorization power.
 Unassociated PAM/health/executor events are diagnostics, not invented requests;
 UNKNOWN is historical uncertainty, not a live pending row.
-Details: [reader design](architecture/HISTORY_DESIGN.md), [schema2](architecture/HISTORY_SCHEMA.md),
+Details: [reader design](architecture/HISTORY_DESIGN.md), [schema 2](architecture/HISTORY_SCHEMA.md),
 [correlation](architecture/HISTORY_CORRELATION.md), [request proof](architecture/HISTORY_CLASSIFICATION.md),
 [diagnostic events](user/HISTORY_EVENTS_MODE.md), [JSON compatibility](architecture/HISTORY_JSON_COMPATIBILITY.md),
 [security boundary](security/HISTORY_SECURITY.md).
@@ -140,7 +142,7 @@ read-only snapshot, reconnect/ANSI/plain behavior and READY/BUSY/UNKNOWN.
 **Why it exists:** distinguish claimed dispatch from observed child spawn without
 turning a query into admission control or authorization cleanup.
 Details: [design](architecture/STATUS_DESIGN.md), [protocol](architecture/STATUS_PROTOCOL.md),
-[schema1](architecture/STATUS_JSON_SCHEMA.md), [counter mapping](architecture/QUEUE_STATE_MAPPING.md),
+[schema 1](architecture/STATUS_JSON_SCHEMA.md), [counter mapping](architecture/QUEUE_STATE_MAPPING.md),
 [watch](user/STATUS_WATCH_MODE.md), [security](security/STATUS_SECURITY.md), [preflight](user/UPDATE_PREFLIGHT.md).
 Source: [snapshot](../executor/src/queue_snapshot.rs), [status client](../mayi/approval_status.py).
 Tests: [snapshot](../executor/src/queue_snapshot_tests.rs), [client/watch](../tests/test_approval_status.py).
@@ -164,13 +166,13 @@ local link/anchor, historical-identity and index/rationale coverage checks witho
 a website/search daemon; see the [command](development/DEVELOPMENT.md#local-tests-not-production-qualification).
 
 **Minimal root:** only README.md, PROJECT_STATUS.md and AGENTS.md remain there.
-The21 package detail inputs now live under architecture/, security/ and user/;
+The 21 package detail inputs now live under architecture/, security/ and user/;
 the builder's explicit source/install paths follow those topics, preserving
 relative cross-document links. These were configurable project paths, not an
 external root-placement requirement. GitHub discovers the [security policy](SECURITY.md)
 in docs/ too. [Packaging path contract](development/DEVELOPMENT.md#documentation-packaging-paths)
-and [root migration map](development/ROOT_DOCUMENTATION_MAP.md) explain all22 moves,
-installed paths and original pinned views. No qualified11 artifact is rebuilt.
+and [root migration map](development/ROOT_DOCUMENTATION_MAP.md) explain all 22 moves,
+installed paths and original pinned views. No qualified 0.4.1-11 artifact is rebuilt.
 
 ## Security Qualification
 
@@ -178,8 +180,8 @@ installed paths and original pinned views. No qualified11 artifact is rebuilt.
 locations, tested properties, skips/failures/retries and signature distinctions.
 **Why it exists:** a pass applies to exact bytes and a declared environment, not
 a blanket “fully secure” label or an earlier candidate's partial results.
-Current11: Debian11/12/13 amd64;242 Python/159 Rust passes,9 documented skips;
-44/44 main installed gates plus separate3/3 package/CLI supplement per target;
+Current 0.4.1-11: Debian 11/12/13 amd64; 242 Python/159 Rust passes, 9 documented skips;
+44/44 main installed gates plus separate 3/3 package/CLI supplement per target;
 60 races/480 attempts/60 consumptions/zero duplicates; reproducible package,
 ABI/hardening, real PAM/terminal/restart and bundle verification. Existing immutable
 raw evidence stays outside source; no huge qualification copy is created.
@@ -232,7 +234,7 @@ supporting source/tests/history. An accepted limitation is NOT invented design h
 
 ## Design Decisions
 
-[Decision index](decisions/INDEX.md) links15 supported mechanisms/tradeoffs to
+[Decision index](decisions/INDEX.md) links 15 supported mechanisms/tradeoffs to
 current contracts, code, tests and original investigations. It distinguishes
 recorded earlier implementations from inferred engineering explanations and
 accepted limitations. No fabricated rejected alternatives or new guarantees.
@@ -245,14 +247,17 @@ accepted limitations. No fabricated rejected alternatives or new guarantees.
 [source-era snapshots](historical/baseline-3b6/README.md),
 [release freeze records](historical/releases/RELEASE_FREEZE_0.4.1-11.md) and
 [former navigation/move map](historical/navigation-03318f6/INDEX.md).
-Original content, failed candidates, partial results and corrected reruns are not
-rewritten into successes. Research availability does not enable a feature.
+Historical commands and verdicts are not current installation or release
+instructions. Use the current user and development guides above. Local-path
+omissions are labelled; original content remains in Git history. Failed candidates,
+partial results and corrected reruns are not rewritten into successes.
+Research availability does not enable a feature.
 
 ## Known Limitations
 
 [Limits/assumptions/unproven scope](security/LIMITATIONS.md) owns current boundaries:
 consumption-time TTL, conservative unknown outcomes, no queue/capability recovery,
-best-effort history, snapshot-only preflight,30x8 measured UI, stock Debian scope,
+best-effort history, snapshot-only preflight, 30x8 measured UI, stock Debian scope,
 trusted host services, cached PAM tradeoffs and disconnected filesystem execution.
 [Qualification](qualification/QUALIFICATION.md) owns what was actually tested.
 

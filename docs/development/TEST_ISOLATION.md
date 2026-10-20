@@ -31,9 +31,8 @@ A future fixture correction should pin the old inode while testing replacement.
 
 The complete unchanged candidate-source test binaries passed 83 + 5 tests on
 each of Debian 11–13 under these conditions. Exact failures, syscall traces,
-capability controls, mount details and all logs are retained under
-`/home/eugen/projekte/mayi-qualification/blocker-resolution/`. Original failure
-logs remain preserved. See `RELEASE_REPORT_0.4.1-6.md` for separate package/runtime
+capability controls, mount details and logs are external qualification evidence,
+not included in this repository. Original failure logs remain preserved. See `RELEASE_REPORT_0.4.1-6.md` for separate package/runtime
 readiness gates; unit-suite success alone is insufficient.
 
 ## Why the tests serialize

@@ -1,6 +1,10 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Performance and bounds
 
-Representative synthetic stream offers 1,000,000 events / 200,000 identities through an independent producer process. The reader intentionally stops at 20,000 events, rather than consuming a million records. Tested pipeline: decode/read 0.433 s; derive/sort 0.111 s; JSON serialization 0.036 s; output 5,746,380 bytes, peak parent RSS 47,192 KiB. 2,000 identities returned, 10,000 events omitted by identity cap, scan_truncated=true. Raw input read 11,129,971 bytes (pipe chunk boundaries can change this). Source benchmark and JSON: /home/eugen/projekte/mayi-qualification/history-0.4.1-10-journald6/benchmark.py, performance-final.json.
+Representative synthetic stream offers 1,000,000 events / 200,000 identities through an independent producer process. The reader intentionally stops at 20,000 events, rather than consuming a million records. Tested pipeline: decode/read 0.433 s; derive/sort 0.111 s; JSON serialization 0.036 s; output 5,746,380 bytes, peak parent RSS 47,192 KiB. 2,000 identities returned, 10,000 events omitted by identity cap, scan_truncated=true. Raw input read 11,129,971 bytes (pipe chunk boundaries can change this). Source benchmark and JSON: [local-only path omitted], performance-final.json.
 
 This measures the bounded reader/reconstruction/serialization, not actual production journal disk/index latency or a full million-record traversal. Actual installed native journal tests collect 248 events per guest and verify indexed native filters, not production-scale performance. No production SLA is inferred.
 

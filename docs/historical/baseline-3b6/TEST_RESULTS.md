@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Native Journald test results
 
 **CONDITIONAL LOGGING GO**: native functionality is qualified; cross-service RQ-only scope limitation is documented rather than fabricated.
@@ -14,7 +18,7 @@ Debian 13's first final package-cycle attempt returned dpkg exit 2 during remova
 
 Earlier iterations retained: prototype 1 normal native tests; 2 outcome-label correction; 3 spawn-observation correction but cross-binary unused-helper Clippy failure and an internal-signature source guard failure. Final code moves broker-only logic to the broker and preserves the actual two-argument stored-operation handoff; tests were not weakened. Prototype versioned packages are not overwritten or qualified as the final candidate.
 
-Evidence: /home/eugen/projekte/mayi-qualification/journald-0.4.1-10-dev/ (v4/debian*/raw, lifecycle-retry/debian13/raw, installed-audit-final.json, builder/build-v4.log, abi-v4.json); local source-test logs in journald-evidence/. Full-disk after-enqueue faults, long 24-hour queued expiry and real 300-second executor-IPC timeout injection were NOT run; encoding/outcome logic, real request expiry and actual send denial/rate limiting cover the stated scope. No claim of durable/complete auditing.
+Evidence: [local-only path omitted] (v4/debian*/raw, lifecycle-retry/debian13/raw, installed-audit-final.json, builder/build-v4.log, abi-v4.json); local source-test logs in journald-evidence/. Full-disk after-enqueue faults, long 24-hour queued expiry and real 300-second executor-IPC timeout injection were NOT run; encoding/outcome logic, real request expiry and actual send denial/rate limiting cover the stated scope. No claim of durable/complete auditing.
 
 
 Tested runtime/package source commit: `08a4d259a6ae7e9a17afecb31ab3cd5b6d9a4724` (unsigned development commit; no release tag). Development package: `0.4.1-10~journald4 amd64`, SHA-256 `cfeb6844af4b50e55ff20003da05ee5a2a686bbdb5bcf793b64e9fa3e6aa2167`.

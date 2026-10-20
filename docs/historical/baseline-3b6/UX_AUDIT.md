@@ -1,6 +1,10 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Initial audit — frozen baseline before implementation
 
-Baseline ecc1ec6c4ccd5a33ee1f2b484b848f70fd642ee3 / Mayi0.4.1-10. Audit captured before application-source changes. Isolated development workspace /home/eugen/projekte/mayi-ux-development; no host approvals, installation or service changes.
+Baseline ecc1ec6c4ccd5a33ee1f2b484b848f70fd642ee3 / Mayi0.4.1-10. Audit captured before application-source changes. Isolated development workspace [local-only path omitted]; no host approvals, installation or service changes.
 
 Methods: actual frozen Rust renderer instrumented ONLY in a disposable source copy (capture_frozen_approval_renderings); Python human renderers with explicit validated synthetic snapshots; read-only installed help/version/error/status/history; disposable installed Debian11 PAM/PTY baseline capture. Renderer counts are layout measurements, not claims of authentication or a terminal emulator. Installed transcripts are separate.
 
@@ -14,4 +18,4 @@ Initial artifacts are immutable audit evidence. Post-implementation tests/result
 Post-implementation results are separate. Initial audit bytes remain unchanged.
 
 
-Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence [local-only path omitted]

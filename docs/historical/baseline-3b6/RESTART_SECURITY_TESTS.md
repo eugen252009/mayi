@@ -1,7 +1,11 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Restart/security qualification — 0.4.1-10~status4
 
 Runtime source: ee22b0a278c2c9110d29bfc37bffcff09ec66bee.
-Evidence: /home/eugen/projekte/mayi-qualification/restart-0.4.1-10-status4/.
+Evidence: [local-only path omitted]
 Read independent-audit-final.json and its exit 0, not just a summary.
 
 ## Source gates

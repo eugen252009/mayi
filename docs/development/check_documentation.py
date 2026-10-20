@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Standard-library GitHub Markdown/navigation audit; no application imports or writes.
 Run from any directory: python3 docs/development/check_documentation.py --json result.json
-Historical bodies are verified at explicit original commit/path, not reinterpreted
+Historical views are verified against explicit original commit/path with only
+maintainer-local path redaction (historical_paths.py), not reinterpreted
 relative to archive destinations. Requires full Git history, not a website/service.
 """
 from pathlib import Path
 import argparse,json,os,re,subprocess,urllib.parse
+from historical_paths import archive_view
 B='03318f689fb70678366de06c3bfa038c00a71567'
 OLD='3b6b6127c6af682e3f7894dd1b98bac31a04a2e3'
 SECTIONS=['Getting Started','Architecture','Security Model','Authentication and PAM','Requests and Capabilities','Broker Restart and Epochs','CLI and Approval Interface','Journald and History','Live Status and Preflight','Building and Packaging','Security Qualification','Why Does This Exist?','Component Map','Design Decisions','Historical Research','Known Limitations','Documentation Authority']
@@ -47,7 +49,7 @@ def audit(root):
   spec=original(name)
   if not spec:continue
   commit,path=spec;r=git(root,'show',commit+':'+path)
-  if r.returncode or r.stdout!=(root/name).read_bytes():errors.append({'file':name,'error':'historical snapshot differs from original commit/path'})
+  if r.returncode or archive_view(r.stdout)!=(root/name).read_bytes():errors.append({'file':name,'error':'historical view differs from original commit/path with only documented local-path redaction'})
   snapshots+=1
  for name in md:
   text=(root/name).read_text();spec=original(name)

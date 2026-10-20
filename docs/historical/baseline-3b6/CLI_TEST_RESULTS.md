@@ -1,8 +1,12 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # CLI dispatch tests
 
 **CLI GO. PACKAGE READY — INSTALLATION PENDING.**
 
-Source:185 Python PASS /9 explicit historical console SKIP, including38 focused new dispatch tests; Rust135+10 PASS; strict all-target Clippy, cargo fmt --check, Python compileall and sh -n PASS. Rust source/Cargo inputs exactly unchanged (rust-unchanged.diff). Commands/logs/exit codes under /home/eugen/projekte/mayi-qualification/cli-0.4.1-10-status2; serialized Rust tests use the documented test-only libpam alias, no operator authentication.
+Source:185 Python PASS /9 explicit historical console SKIP, including38 focused new dispatch tests; Rust135+10 PASS; strict all-target Clippy, cargo fmt --check, Python compileall and sh -n PASS. Rust source/Cargo inputs exactly unchanged (rust-unchanged.diff). Commands/logs/exit codes under [local-only path omitted]; serialized Rust tests use the documented test-only libpam alias, no operator authentication.
 
 Focused tests exercise actual main(), not only helpers: both programs' local flags with poisoned socket/executable entrypoints; extra/unknown flags, no executable, empty source invocation, separator routing; child --help/--version/empty/space/Unicode/metacharacter argv; source subprocesses with socket creation forbidden; history/status routing; normal child offline failure; and standalone version module/stamp differing from unrelated package state. Canonical structured operations are checked before a simulated denial, and consume is forbidden. Initial new test code referenced nonexistent Operation.executable/argv attributes; corrected to inspect actual canonical_operations serialization, not weakened. Original dispatch-first.log retained.
 

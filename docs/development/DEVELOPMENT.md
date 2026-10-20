@@ -1,17 +1,14 @@
 # Development, build and release
 
-Canonical working directory: /home/eugen/projekte/mayi/, checked out on **main**.
-Its self-contained /home/eugen/projekte/mayi/.git has independent object storage,
+Use a checkout of this repository's **main** branch in any working directory.
+Its self-contained Git repository has independent object storage,
 no alternates or external common-dir dependency. GitHub's default main contains
 the same consolidated application, documentation and manpages. Create future work
 from canonical main or an explicitly qualified successor.
 
 The older shared repository and all nine original worktrees remain preserved;
-[historical index](../historical/INDEX.md) records their roles. The former linked
-canonical checkout is retained at /home/eugen/projekte/mayi-preserved-consolidated-worktree/.
-The original dirty checkout/shared .git remains at
-/home/eugen/projekte/mayi-preserved-original-consolidation/.
-Do NOT delete/clean/reset those directories or import unknown experiments. They
+[historical index](../historical/INDEX.md) records their roles.
+Do NOT delete/clean/reset existing historical worktrees or import unknown experiments. They
 are historical/unfinished work, not dependencies of the standalone canonical
 repository. Do not infer authority from Git's administrative main-worktree label.
 
@@ -28,18 +25,18 @@ repository. Do not infer authority from Git's administrative main-worktree label
   and [PAM config](../../executor/package/etc/pam.d/mayi-approve) own installed identities,
   paths/lifecycle. Do not infer them from an outdated release report.
 - [build-deb.sh](../../executor/package/build-deb.sh) derives root from its own location,
-  creates fresh native targets, writes the build stamp, copies the21 topic-owned
+  creates fresh native targets, writes the build stamp, copies the 21 topic-owned
   detail documents with their relative layout, applies deterministic timestamps
   and the ABI gate. Only documentation source/install paths changed; authorization,
   executable payload, dependency and lifecycle definitions did not.
 
 ## Documentation packaging paths
 
-[The complete22-file migration map](ROOT_DOCUMENTATION_MAP.md) records source paths,
-installed destinations and pinned original views. The21 package documents were
+[The complete 22-file migration map](ROOT_DOCUMENTATION_MAP.md) records source paths,
+installed destinations and pinned original views. The 21 package documents were
 an explicit shell list, not a TPA/Debian requirement for root placement. They now
 install under /usr/share/doc/mayi/{architecture,security,user}/ with the same
-basenames/set and0644 modes. This preserves their relative cross-topic links.
+basenames/set and 0644 modes. This preserves their relative cross-topic links.
 The two manuals remain in their established man1/man7 locations; mayi(1)'s three
 document references follow the new installed paths. Copyright/lifecycle/TPA
 configuration are unchanged. The security policy lives at docs/SECURITY.md,
@@ -50,9 +47,48 @@ uppercase extensions or Markdown symlinks hide other root documents. Future
 path migrations must check every intended package document and installed link,
 not just a successful shell exit. Documentation-input changes can change .deb
 bytes; validate distinct disposable development identities in isolated copies,
-never rebuild/replace0.4.1-11 or commit a version solely for documentation.
-Root-cleanup evidence is outside immutable bundles at
-/home/eugen/projekte/mayi-qualification/root-documentation-cleanup/.
+never rebuild/replace 0.4.1-11 or commit a version solely for documentation.
+Root-cleanup raw evidence is not included in this repository and is not a
+prerequisite for the documentation checker below.
+
+## Fresh checkout setup
+
+These steps prepare an unprivileged source-development environment, not an
+installed privileged Mayi service. Use a disposable Linux environment for tests.
+Do not replace a working system installation with a development build.
+
+Prerequisites:
+- Git and Python **3.11 or newer**, with venv/pip support, as required by
+  [pyproject.toml](../../pyproject.toml). The development Python requirement is
+  distinct from the qualified Debian package runtime scope.
+- Rust/Cargo with rustfmt and Clippy. The recorded qualification used Rust/Cargo
+  **1.95.0**; this repository does not declare a tested minimum Rust version.
+- A C compiler/linker and PAM headers/link library (Debian packages
+  `build-essential` and `libpam0g-dev`). Provision these through your environment's
+  authorized administration workflow, not by granting tests host capabilities.
+- Network access for the initial Python and Cargo dependency downloads.
+
+```sh
+git clone https://github.com/eugen252009/mayi.git
+cd mayi
+python3 --version
+cargo --version
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install -e '.[test]'
+cargo fetch --manifest-path executor/Cargo.toml --locked
+```
+
+Use a full clone: the documentation checker reads original historical Git
+objects. A source ZIP or shallow clone is insufficient for that check.
+The editable Python install creates development entry points inside the venv;
+it does not install system services, create approval roles or configure PAM.
+Leave the venv before using an existing system installation.
+
+Only after `cargo fetch` succeeds for the selected platform/toolchain should the
+offline commands below be used. A fresh clone alone contains no Cargo download
+cache. Python test dependencies are also not vendored or fully pinned here.
+These steps describe development setup, not an exact release reproduction.
 
 ## Local tests, not production qualification
 
@@ -62,6 +98,9 @@ It checks local GitHub-style links/anchors, pinned historical bodies, index/sour
 coverage and rationale references using the standard library and existing full
 Git history. It never imports the application or contacts production services;
 external URL availability and technical prose still require review.
+Run documentation regression tests with
+`python3 -m unittest discover -s docs/development -p 'test_*.py'`.
+Neither documentation command requires installing the application.
 
 ```sh
 cargo build --manifest-path executor/Cargo.toml --locked --offline
@@ -73,9 +112,9 @@ python3 mayi/version.py
 sh -n executor/package/build-deb.sh
 ```
 Build standalone debug binary BEFORE Python tests that invoke it. Rust requires
-PAM link development prerequisites; on this qualification host the recorded
-RUSTFLAGS=-L native=/home/eugen/projekte/mayi-qualification/final-signoff-0.4.1-8/test-link
-provides the existing test-link input, not a new production-library choice.
+PAM link development prerequisites (on Debian, the libpam0g-dev package).
+The original qualification host used a host-specific test-link alias; that alias
+is not provided here and must not be assumed to exist on another machine.
 See [test isolation](TEST_ISOLATION.md) for disabled filesystem fixture/kernel
 conditions; do not grant host capabilities for tests. Existing tests remain
 discoverable, including experimental-core regressions. Console skips in the
@@ -84,31 +123,38 @@ passes. No service/installed-package testing is authorized by a docs migration.
 
 ## Reproduction and release boundaries
 
-The qualified build environment is Debian11 amd64, Rust/Cargo1.95.0, GCC10.2.1,
-GLIBC2.31-13+deb11u14, locked offline Cargo, SOURCE_DATE_EPOCH1792195200 and exact
-TPA tool SHA2564da9418be15d2d5e212e21ff399a33519ca342522633afaed6341705765370a7.
-Full prerequisites/instructions are in the immutable bundle BUILD.md. That bundle
-ships source, lock/cache/index and tool, NOT an OS/compiler bootstrap.
-Offline verification is not proof of arbitrary bare-host offline reproduction.
+The qualified build environment is Debian 11 amd64, Rust/Cargo 1.95.0, GCC 10.2.1,
+GLIBC 2.31-13+deb11u14, locked offline Cargo, SOURCE_DATE_EPOCH=1792195200 and exact
+TPA tool SHA-256: 4da9418be15d2d5e212e21ff399a33519ca342522633afaed6341705765370a7.
+The original qualification used a separate immutable bundle containing source,
+Cargo cache/index, the exact TPA tool and build instructions. That bundle and its
+assembly tooling are not supplied by this checkout. The environment description
+above is historical provenance, not a complete reproduction recipe. Do not infer
+that a fresh clone can reproduce the released package offline.
 
 For a FUTURE independently authorized release, build two clean roots/outputs,
-limit parallelism (recorded builds use4 jobs), require cmp/hash equality, exact
-ABI/dependency/PIE/RELRO/NOW/NX gate and no GLIBC requirement newer than2.31;
+limit parallelism (recorded builds use 4 jobs), require cmp/hash equality, exact
+ABI/dependency/PIE/RELRO/NOW/NX gate and no GLIBC requirement newer than 2.31;
 qualify relevant installed Debian/PAM/terminal/security/restart/concurrency gates.
-Package builder command is TPA_BIN=/qualified/copied/tpa CARGO_NET_OFFLINE=true
-CARGO_BUILD_JOBS=4 SOURCE_DATE_EPOCH=1792195200 sh executor/package/build-deb.sh /fresh/output.
-Do NOT run it to regenerate/overwrite0.4.1-11 merely for documentation changes.
+The builder requires an independently obtained TPA executable supporting `json`
+and `build`; it uses `TPA_BIN` or `tpa` on PATH. The source repository is
+[TPA](https://github.com/eugen252009/tpa). A current TPA build is not automatically
+the historical qualified tool. See the checked-in [builder](../../executor/package/build-deb.sh)
+for its inputs and [ABI checker](../../executor/package/verify_abi.py) for artifact checks.
+A future release needs a reviewed build procedure and distinct approved version;
+this document does not provide an automated publication recipe.
+Do NOT run it to regenerate/overwrite 0.4.1-11 merely for documentation changes.
 Verify an existing package read-only with:
 ```sh
 python3 executor/package/verify_abi.py --json /path/to/exact-qualified.deb
 ```
 
-Freeze auditable source first; preserve exact identities/failed attempts/skips,
-assemble a self-contained mayi-release-bundle/1 at ~/projekte/releases/mayi/<version>/
-in an incomplete same-filesystem directory, verify offline/negative copies,
-finalize with existing fsync/RENAME_NOREPLACE convention. Receipt stays outside.
-Do not invent new competing bundle tools in source: use reviewed qualification
-assembly records indexed in [qualification](../qualification/QUALIFICATION.md).
+For a future release, preserve source and artifact hashes, failed attempts, skips
+and exact-environment evidence. Bundle assembly, offline/negative verification and
+no-overwrite finalization require a separately reviewed, available release procedure.
+That procedure is not included here: stop at source checks unless it is supplied
+and release work is explicitly authorized. The [qualification summary](../qualification/QUALIFICATION.md)
+records historical results and identities, not executable assembly instructions.
 
 Central workflow exclusively owns subsequent admission/staging, source attestation,
 release-tag/artifact/APT signing, immutable upload/publication and independent APT
@@ -117,9 +163,10 @@ restart or infrastructure work is implicit in a source/docs task.
 
 ## Change discipline
 
-STABLE — ACTIVELY MAINTAINED: concrete security/correctness/compatibility/usability/
-measured performance needs and useful new features remain welcome, not a permanent
-freeze. Define acceptance criteria, inspect code/contracts, make the smallest
+STABLE — SECURITY MAINTENANCE: the intended feature set is complete and the focus
+is reactive security fixes. Broader work needs a separate explicit decision;
+see [project policy](../../PROJECT_STATUS.md). Define acceptance criteria, inspect
+code/contracts, make the smallest
 change, add focused regressions, run affected checks and qualify exact artifacts.
 Invariant changes require explicit review. Update the ONE owning current document;
 link rather than repeat. Preserve historical originals and evidence scope.

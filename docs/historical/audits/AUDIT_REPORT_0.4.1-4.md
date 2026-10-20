@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Mayi 0.4.1-4 PAM-boundary candidate report
 
 **Status: exact-artifact Debian qualification matrix PASS; release qualification is still pending independent security review.** Candidate `0.4.1-4` is **NOT independently audited, NOT release-qualified, NOT production-ready, and NOT published**. Do not stage or distribute it.
@@ -40,6 +44,6 @@ Repository validation on the final implementation: 82 Rust main tests and 5 priv
 
 ## Audit readiness, residual limits, and handling
 
-The candidate is ready for **independent source and exact-artifact review**, not for deployment or publication. Review should specifically challenge capability confinement, PAM lifecycle/error handling, cgroup peer identity and systemd assumptions, terminal-FD transfer, decision-state revalidation, legacy socket migration, and the package maintainer scripts. The candidate was built from a working-tree source snapshot; no clean-commit/reproducible-build claim is made. The source and package inputs are available in the repository, and the build snapshot used for the final artifact remains at `/tmp/mayi-release-0.4.1-4f/src` on this machine.
+The candidate is ready for **independent source and exact-artifact review**, not for deployment or publication. Review should specifically challenge capability confinement, PAM lifecycle/error handling, cgroup peer identity and systemd assumptions, terminal-FD transfer, decision-state revalidation, legacy socket migration, and the package maintainer scripts. The candidate was built from a working-tree source snapshot; no clean-commit/reproducible-build claim is made. The source and package inputs are available in the repository, and the build snapshot used for the final artifact remains at `[local-only path omitted]` on this machine.
 
 Published Mayi 0.4.1 still has a console-local PAM gate that a direct approval-socket client can bypass. The 0.4.1-2 artifact is deliberately unchanged and unpublished; candidate 0.4.1-4 does not retroactively change that release. Filesystem execution remains **DISCONNECTED / INCOMPLETE** and was not enabled. No production service was stopped or restarted, no host system file was changed, no real-root executor was enabled, and no artifact was staged or published through TPA.run. Queue/result persistence across broker restart remains **NOT CLAIMED**.

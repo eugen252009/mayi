@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Security regressions
 
 Fresh standalone binary built before the complete Python run:242 PASS,9 explicit historical PAM-console skips. Rust146 main +13 executor PASS. fmt, strict locked/offline Clippy, syntax, ABI/hardening pass. Skips are separately covered by installed real PAM/PTY tests, never relabelled source passes.
@@ -8,4 +12,4 @@ Exact command/argv, explicit human/PAM approval, identity/account revalidation, 
 
 No presentation field authorizes, consumes, renews or retries anything. Original/fixed fixture evidence is explicit. No stable release, production service, central policy/stage or TPA/TPA.run changes.
 
-Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence [local-only path omitted]

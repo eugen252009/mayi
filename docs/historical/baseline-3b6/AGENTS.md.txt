@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Privileged operations
 
 - If `mayi` is available on the current machine, use it for privileged operations; run unprivileged commands normally. If `mayi` is unavailable, do not assume it exists or make it mandatory—follow the machine/project's documented privilege workflow.
@@ -15,7 +19,7 @@
 
 # Package publication
 
-- For a newly qualified Debian package that the task requires distributing, publish the exact qualified `.deb` through TPA.run; do not rebuild it before publication. Read `/home/eugen/projekte/tparun/docs/how-to-publish-with-tparun.md` first and follow its current workflow. Discover and confirm the existing `bootstrap` repository through TPA.run; never guess the target or create a replacement.
+- For a newly qualified Debian package that the task requires distributing, publish the exact qualified `.deb` through TPA.run; do not rebuild it before publication. Read `[local-only path omitted]` first and follow its current workflow. Discover and confirm the existing `bootstrap` repository through TPA.run; never guess the target or create a replacement.
 - Record the qualified artifact's SHA-256 and inspect package/version/architecture. Verify `tparun status` before and after staging, and confirm the staged identity and hash match. Treat package + version + architecture as immutable: if that version exists, verify its bytes and do not overwrite it; stop on a hash conflict.
 - Use an isolated, refreshed APT state containing only bootstrap to check versions before and after publication. After publishing, confirm the repository advertises the package, download the exact version without installing it, and verify its SHA-256. The invariant is: qualified artifact = staged artifact = published artifact = APT-downloaded artifact.
 - `tparun publish` verifies the uploaded `.deb` by SHA-256; stop if that check fails and do not rebuild the same version. This upload-integrity check and the independent APT download/hash check are complementary: one verifies the upload path, the other what consumers receive.

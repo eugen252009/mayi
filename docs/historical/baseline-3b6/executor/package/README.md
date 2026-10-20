@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Mayi exact-command approval MVP package
 
 Mayi 0.4.1 remains the published stable baseline. Current supported Debian runtime targets are Debian 11–13 amd64; Debian 10 is not supported, although it remains an acceptable build environment for a portable GLIBC baseline. Candidate 0.4.1-5 requires broker-verified NSS approver-group membership and broker-side PAM authentication for every decision. Its exact artifact passed direct-systemd qualification on Debian 11–13 and is **READY FOR INDEPENDENT SECURITY REVIEW**, not production-ready or published. Keep earlier artifacts unchanged. See [`../../DEBIAN_COMPATIBILITY.md`](../../DEBIAN_COMPATIBILITY.md) for capability requirements and evidence. The package maintainer is Eugen Lupricht <mayi@lupricht.net>. Security reports: mayi-security@lupricht.net.
@@ -67,8 +71,8 @@ Historical 0.4.1 artifact: `executor/target/debian/mayi_0.4.1_amd64.deb`, SHA-25
 
 ## Candidate 0.4.1-5 exact-artifact qualification
 
-- Exact artifact: `/tmp/mayi-qemu-qualification/artifacts/mayi_0.4.1-5_amd64.deb`, `mayi 0.4.1-5 amd64`, SHA-256 `cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381`.
-- Passed direct-systemd exact-artifact tests on Debian 11 Bullseye (kernel 5.10/systemd 247), Debian 12 Bookworm (6.1/252), and Debian 13 Trixie (6.12/257). The matrix and capability evidence are in [`../../DEBIAN_COMPATIBILITY.md`](../../DEBIAN_COMPATIBILITY.md) and `/tmp/mayi-qemu-qualification/QUALIFICATION-STATUS.md`.
+- Exact artifact: `[local-only path omitted]`, `mayi 0.4.1-5 amd64`, SHA-256 `cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381`.
+- Passed direct-systemd exact-artifact tests on Debian 11 Bullseye (kernel 5.10/systemd 247), Debian 12 Bookworm (6.1/252), and Debian 13 Trixie (6.12/257). The matrix and capability evidence are in [`../../DEBIAN_COMPATIBILITY.md`](../../DEBIAN_COMPATIBILITY.md) and `[local-only path omitted]`.
 - **READY FOR INDEPENDENT SECURITY REVIEW**; not production-ready, published, or authorized for staging.
 
 ## Historical candidate 0.4.1-4 artifact and qualification status (not current support policy)

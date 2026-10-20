@@ -1,8 +1,15 @@
 # Historical records and worktree roles
 
 Current authority is [docs/INDEX](../INDEX.md), not a historical verdict below.
-The source-era documents at baseline-3b6/ are exact bytes from commit
+The source-era documents at baseline-3b6/ originate from commit
 3b6b6127c6af682e3f7894dd1b98bac31a04a2e3 (before consolidation).
+At the maintainer's request, local-only checkout, release and temporary evidence
+paths are omitted from archive views. Affected files carry an explicit notice;
+commands with omission markers are not runnable instructions. Original bytes
+remain in Git history. Results, failures, hashes and all non-path text are preserved.
+The documentation checker compares each view against its original after only the
+narrow transformation in [historical_paths.py](../development/historical_paths.py).
+This does not make external evidence available in a clone or requalify a release.
 The disposition table below records the earlier consolidation, not a promise
 that every former root alias remains on current main. [The current move map](navigation-03318f6/INDEX.md)
 records relocated root navigation, release notes, audits and experiments.
@@ -99,9 +106,9 @@ Historical AGENTS text has .txt suffix so it cannot become competing agent polic
 
 ## Canonical repository and retained historical worktrees
 
-- /home/eugen/projekte/mayi/: self-contained canonical repository on main, matching GitHub default main; independent .git/object storage, current source/docs/tests/manuals.
-- /home/eugen/projekte/mayi-preserved-consolidated-worktree/: former linked canonical checkout at a500150, relocated through git worktree move and preserved unchanged on the historical consolidation branch. No longer current authority.
-- /home/eugen/projekte/mayi-preserved-original-consolidation/: old dirty main working state AND historical shared .git administration. Required for its nine historical linked/main worktrees, but NOT for standalone canonical mayi/. DO NOT DELETE. Not authoritative application source.
+- Current repository: self-contained canonical repository on main, matching GitHub default main; independent .git/object storage, current source/docs/tests/manuals.
+- Preserved former canonical worktree (not included): former linked canonical checkout at a500150, relocated through git worktree move and preserved unchanged on the historical consolidation branch. No longer current authority.
+- Preserved original repository (not included): old dirty main working state AND historical shared .git administration. Required for its nine historical linked/main worktrees, but NOT for standalone canonical mayi/. DO NOT DELETE. Not authoritative application source.
 - mayi-stable-development/: preserved post-release status3b6 snapshot, superseded as the working location by canonical mayi/.
 - mayi-release-0.4.1-11/: immutable source snapshot c547; no consolidation changes applied there.
 - mayi-ux-development/, mayi-ui-development/, mayi-journald-development/: historical scoped development branches; not current contracts.

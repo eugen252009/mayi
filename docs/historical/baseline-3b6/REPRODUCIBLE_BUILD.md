@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Reproducible candidate
 
 Verified ordering:0.4.1-10 <0.4.1-11~ui1 <0.4.1-11~ui2 <0.4.1-11.
@@ -7,4 +11,4 @@ Byte-identical final candidate/reproduction; mandatory ABI/dependency/hardening 
 
 ui1 package f25886d3... remains immutable/rejected; ui2 has a new full hash recorded below. No qualified old package was overwritten or stable release rebuilt. No signing/tagging/publication.
 
-Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence [local-only path omitted]

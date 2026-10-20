@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Targeted implementation
 
 Reuse existing Rust approval_ui/View, ASCII escaping, Python Waiting/status/history and raw TTY guards. No framework/dependency or privileged interface was added.
@@ -14,4 +18,4 @@ Additional justified isolation correction: the PRE-EXISTING explicit standalone 
 
 Runtime source and files changed are recorded by git diff ecc1ec6..574a63d and source-commands.json. Initial audit1518b61 and failed ui1 package/source remain preserved. No signing was authorized; development commits are intentionally unsigned.
 
-Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence [local-only path omitted]

@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Before / after
 
 Initial frozen audit evidence is ../ux-0.4.1-11-ui1/audit/, unchanged and hash-pinned. Corrected capture of the SAME stable package is baseline-retry/ there; the first termios-serialization failure remains.
@@ -18,4 +22,4 @@ Before history: three different rows all rq_v2_bbbbbbbbb... PENDING? -.
 After: rq:222222222222, rq:111111111111, rq:000000000000, UNKNOWN -/-.
 The full IDs are unchanged in JSON and abbreviations are never accepted as authority/lookup tokens. See after/ for exact raw output/matrices, including shell-code disclosure and executor identity.
 
-Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence /home/eugen/projekte/mayi-qualification/ux-0.4.1-11-ui2.
+Version0.4.1-11~ui2; runtime/package-input source574a63dd05c70656e4014b363ae06afa75c1f273 (unsigned intentionally; signing forbidden). SHA25657a1f4d3aea949e7926db7d1e67898a2ec502713314a615171b76257d1ee7e12. Evidence [local-only path omitted]

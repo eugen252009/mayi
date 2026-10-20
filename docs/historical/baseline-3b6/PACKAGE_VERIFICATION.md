@@ -1,12 +1,16 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # status3 package verification
 
-Artifact:/home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~status3_amd64.deb
+Artifact:[local-only path omitted]
 
 Two independent fresh-target Debian11 builds from e7f2cc3fe62722bc1bf85d0e502ce3ef2d3601e7, locked offline Cargo, established Mayi/TPA pipeline, SOURCE_DATE_EPOCH=1792195200. Both SHA-256c8285db384a46b4f9489c9700c779171a1fc21b2390b0cae1233e08c9bbc8fbd, cmp PASS. Mandatory exact-package ABI/hardening gate before atomic output; maxGLIBC2.30. Rust/Cargo1.95.0/GCC10.2.1/GLIBC2.31, exact TPA4da9418be15d2d5e212e21ff399a33519ca342522633afaed6341705765370a7. No stale binary/old identity overwrite.
 
 dpkg status3 >status2 PASS; control/amd64/dependencies verified; embedded version stamp matches control; all members root:root, no setuid/setgid/pyc. History+CLI module and five shipped history classification/schema/correlation docs match source. First/rebuild/VM payload bytes identical. Rust/privileged code unchanged; history output schema2 intentional, native/status1 unchanged.
 
-Installed matrix and explicit Debian11 watch rerun retained under /home/eugen/projekte/mayi-qualification/history-classification-0.4.1-10-status3. Exact operator before JSON/native/window captures and after JSON/text retained OUTSIDE source/package; no private operator logs shipped. Two initial classification argument-region edit errors and v1-contract/new synthetic-test assertion failures are retained in task tool/log history and history-old-contract-first.log/history-tests-revised.log/classification-first.log, fixed before artifact build; no final history gate failed.
+Installed matrix and explicit Debian11 watch rerun retained under [local-only path omitted] Exact operator before JSON/native/window captures and after JSON/text retained OUTSIDE source/package; no private operator logs shipped. Two initial classification argument-region edit errors and v1-contract/new synthetic-test assertion failures are retained in task tool/log history and history-old-contract-first.log/history-tests-revised.log/classification-first.log, fixed before artifact build; no final history gate failed.
 
 Preservation-final.json: original/staged8/9 full externally pinned manifests PASS, policy/wrappers unchanged, original dirty main/status/index exact previous snapshot match, operator remains status2 with dpkg -V PASS. No host service restart/sign/tag/push/stage/upload/publish/deployment.
 
@@ -17,7 +21,7 @@ Human approver uses their own interactive TTY/PAM; agent never handles real cred
 ```sh
 mayi-approve
 # Separate terminal:
-mayi /usr/bin/systemd-run --unit=mayi-install-status3 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/mayi_0.4.1-10~status3_amd64.deb
+mayi /usr/bin/systemd-run --unit=mayi-install-status3 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i [local-only path omitted]
 ```
 
 Transient installer avoids stopping its own parent Mayi executor during replacement. Submission/ambiguous result is NOT proof of completion; do not automatically retry/bypass rejection. Verify read-only:
@@ -39,7 +43,7 @@ History/journal reads and live status retain existing reader/approver permission
 Verified exact status2 retained at dist/rollback/mayi_0.4.1-10~status2_amd64.deb, SHA-256af371f6e80b1e7df4366913e7b8ed282a3824c782380cc73fffb50adc055a50f. No rebuild/purge/config deletion:
 
 ```sh
-mayi /usr/bin/systemd-run --unit=mayi-rollback-status2 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i /home/eugen/projekte/mayi-journald-development/dist/rollback/mayi_0.4.1-10~status2_amd64.deb
+mayi /usr/bin/systemd-run --unit=mayi-rollback-status2 --collect --no-block --property=Type=oneshot /usr/bin/dpkg -i [local-only path omitted]
 dpkg-query -W -f='${Version}\n' mayi
 dpkg -V mayi
 mayi --version

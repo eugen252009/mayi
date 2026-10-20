@@ -1,6 +1,6 @@
 # Mayi
 
-**STABLE — ACTIVELY MAINTAINED.** Mayi lets an unprivileged agent or application
+**STABLE — SECURITY MAINTENANCE.** Mayi lets an unprivileged agent or application
 request an exact executable and argument vector for explicit human approval and
 PAM authentication before root execution. It is not a command-safety analyzer:
 the human must assess the program and every argument, especially an interpreter.
@@ -24,10 +24,11 @@ table and [component map](docs/INDEX.md#component-map).
 
 ## Supported scope
 
-Qualified release **0.4.1-11**, **Debian11/12/13 amd64**. Canonical development
-checkout: **/home/eugen/projekte/mayi/**, independent Git storage, authoritative
-**main** on GitHub. Justified security, correctness, compatibility, usability,
-measured performance and new-functionality work remains open.
+Qualified release **0.4.1-11**, **Debian 11/12/13 amd64**. Canonical development
+source: this repository's **main** branch on GitHub. Any checkout location may
+be used; no maintainer-specific directory is required. The intended feature set
+is complete. Maintenance now focuses primarily on responding to security issues;
+there is no planned ongoing feature expansion.
 
 - Exact-command ownership/binding, explicit human/PAM approval and one-shot claims.
 - Per-console authenticated sessions, strict consumption-time expiry and epoch invalidation.
@@ -56,7 +57,8 @@ This repository's version/status is not proof of current APT availability or
 permission to install/restart. [Qualification](docs/qualification/QUALIFICATION.md)
 records identities and central signing/admission/publication prerequisites.
 [Development/build instructions](docs/development/DEVELOPMENT.md) describe external
-dependencies, source checks and release boundaries; do not rebuild immutable11.
+dependencies, [fresh-checkout setup](docs/development/DEVELOPMENT.md#fresh-checkout-setup),
+source checks and release boundaries; do not rebuild the immutable 0.4.1-11 release.
 
 [AGENTS.md](AGENTS.md) guides coding agents. [Historical index](docs/historical/INDEX.md)
 retains earlier investigations without presenting them as current specifications.

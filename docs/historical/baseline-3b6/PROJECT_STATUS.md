@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Mayi: STABLE — ACTIVELY MAINTAINED
 
 Mayi 0.4.1-11 is the qualified stable development baseline. Current functional
@@ -13,9 +17,9 @@ immutable; the project remains open to justified evolution.
   `5499b09620b91ba4770d402e054600117a52a98448cc0d486b7f3d1fe6a3b899`.
 - Source archive SHA-256:
   `f9ed636fbb49b99acab3f5fb034b0823b07aa465a0a079edc0e1b1a3f33273f4`.
-- Bundle `~/projekte/releases/mayi/0.4.1-11/`, manifest SHA-256
+- Bundle `[local-only path omitted]`, manifest SHA-256
   `4ee91e3b78bcf33d306c56ada8992f31e0d68060e6cf98c9c21a9c9b2db75722`.
-- Final evidence: `~/projekte/mayi-qualification/final-0.4.1-11/`;
+- Final evidence: `[local-only path omitted]`;
   bundle-local reports: `evidence/reports/`.
 
 Qualification covers Debian11/12/13 amd64 (44/44 installed gates and a separate
@@ -49,7 +53,7 @@ that baseline in their ancestry. Do not reset/pull over unsaved local work.
 Define a concrete problem and acceptance criteria, inspect the implementation,
 make the smallest appropriate change, add focused regression tests, run affected
 functional/security tests, qualify relevant Debian targets, reproduce exact
-source/package identities and assemble `~/projekte/releases/mayi/<version>/`.
+source/package identities and assemble `[local-only path omitted]`.
 Leave subsequent admission/staging/signing/publication to the central workflow.
 Do not create releases merely because time passed; avoid unnecessary complexity.
 

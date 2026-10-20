@@ -1,8 +1,12 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Mayi 0.4.1-9 candidate
 
 This candidate retains the operator-approved compact UI and five-minute broker-enforced console session policy, plus a qualification-discovered fix for catchable console termination while waiting for input. It is NOT qualified merely by having final-shaped version metadata.
 
-Historical UI reports describe earlier snapshots and do not establish current results. The exact source and package must be independently tested; authoritative new reports live in `/home/eugen/projekte/mayi-qualification/ui-final-0.4.1-9/`. Generated test evidence is excluded from release source; historical evidence remains in prior commits/worktrees. No tag, publication, staging or host installation is authorized by this document.
+Historical UI reports describe earlier snapshots and do not establish current results. The exact source and package must be independently tested; authoritative new reports live in `[local-only path omitted]`. Generated test evidence is excluded from release source; historical evidence remains in prior commits/worktrees. No tag, publication, staging or host installation is authorized by this document.
 
 The console's SIGTERM/SIGINT (also SIGHUP/SIGQUIT) handlers request cancellation instead of abruptly exiting raw input mode. The input polling loop unwinds through its existing TerminalMode guard. This does not claim recovery from SIGKILL of the console, nor prompt interruption recovery beyond independently tested PAM-child supervision. Authorization and strict consumption-time TTL are unchanged by the signal fix.
 

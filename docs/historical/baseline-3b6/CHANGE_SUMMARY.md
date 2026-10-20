@@ -1,6 +1,10 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Native structured audit logging development
 
-Base: qualified 0.4.1-9 signed commit 4964feed6083d758391b7a196bc63305660e9275, not the dirty original main checkout or old UI prototype. Worktree: /home/eugen/projekte/mayi-journald-development, branch observability/journald-dev.
+Base: qualified 0.4.1-9 signed commit 4964feed6083d758391b7a196bc63305660e9275, not the dirty original main checkout or old UI prototype. Worktree: [local-only path omitted], branch observability/journald-dev.
 
 Runtime/code files: new executor/src/audit.rs and broker_audit_tests.rs; logging sites in broker.rs, pam_auth.rs, console_sessions.rs and bin/mayi-privileged-executor.rs; main.rs module registration. Package build script/tpa.json advance only this development identity; .gitignore excludes local evidence. Cargo dependencies and authorization wire protocols unchanged. Existing UI behavior is retained.
 

@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Status qualification
 
 **STATUS GO. Installation: PACKAGE READY — INSTALLATION PENDING.**
@@ -12,7 +16,7 @@ Independent audit validates46 numeric/exclusive snapshots per platform,552 actua
 
 History and all previous native emission/spawn-rejection/PAM worker SIGTERM/SIGKILL/denial/nonzero/signal/owner/replay/restart/log-socket failure/rate limiting/package cycle/real expiry tests repeated. No cancellation protocol exists: watch cancellation only stops viewing; cycles still rejected by existing tests. Physical suspend, power loss, full-disk journal failure and production-scale NSS latency are not newly qualified.
 
-Evidence: /home/eugen/projekte/mayi-qualification/status-0.4.1-10-status1, source tests/*.log in root, debian*/raw/journald-results/, independent-audit.json, check_results.py. Initial compile visibility error (private impl method) is retained as compile-first.log, fixed before artifact build. No final candidate gate failed; earlier journald5/4 failures remain historical evidence in their original directories.
+Evidence: [local-only path omitted], source tests/*.log in root, debian*/raw/journald-results/, independent-audit.json, check_results.py. Initial compile visibility error (private impl method) is retained as compile-first.log, fixed before artifact build. No final candidate gate failed; earlier journald5/4 failures remain historical evidence in their original directories.
 
 
 Tested package source: 90a65fd6d8432f5b6c1e297b24dc91bd80a18f1a. Development 0.4.1-10~status1 amd64. First/rebuild SHA-256: 4ce927013fb811ffa21d9540ac007ff5f47cfff1d9f0c8d2fe3f8e6632e3aab4.

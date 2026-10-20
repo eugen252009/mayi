@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Five-minute console authentication — development 0.4.1-9~ui3
 
 ## User-visible behavior
@@ -58,6 +62,6 @@ Synthetic PAM callbacks are test-only call sites of private functions, not a run
 
 ## Scope and next step
 
-Source: /home/eugen/projekte/mayi-ui-development. Version 0.4.1-9~ui3. The installed version remains 0.4.1-9~ui1; no package was built or installed for this change. Existing ui1 artifact and rollback artifact remain unchanged. No signing, staging, publication, release tags or service restarts. Qualified 0.4.1-8 release/staging files are untouched.
+Source: [local-only path omitted] Version 0.4.1-9~ui3. The installed version remains 0.4.1-9~ui1; no package was built or installed for this change. Existing ui1 artifact and rollback artifact remain unchanged. No signing, staging, publication, release tags or service restarts. Qualified 0.4.1-8 release/staging files are untouched.
 
 Filesystem execution remains disconnected/incomplete; broker queue persistence is not claimed; TTL is strict at consumption, not guaranteed execution start; no general exactly-once side-effect guarantee. Build/install requires a separately requested candidate package and explicit installation authorization.

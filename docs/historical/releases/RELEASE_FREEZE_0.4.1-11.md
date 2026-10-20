@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Mayi 0.4.1-11 release-source freeze
 
 Operator acceptance: “es passt” accepts the 0.4.1-11~ui2 interface only. No host installation/restart, source/release-tag/artifact/repository signing, central admission/staging, upload, publication or push is authorized.
@@ -8,7 +12,7 @@ Parent documentation commit: dd948315b5e486cdef84aabc67ed3887f6e3396f (only repo
 
 The final source differs from that parent ONLY in authoritative executor/package/tpa.json version, the UX_USAGE heading and this freeze record. No Rust/Python code, dependency lock, unit, maintainer script, interface behavior, authorization policy or machine schema changes. Older reports in this source tree describe previous qualification cohorts, not final-version evidence or current host state.
 
-Final-artifact qualification is separate: /home/eugen/projekte/mayi-qualification/final-0.4.1-11/. The release bundle at /home/eugen/projekte/releases/mayi/0.4.1-11/ must contain its self-contained final reports and raw data before no-overwrite finalization. Until those gates pass this source freeze is NOT release approval. No historical package is renamed/repackaged as final.
+Final-artifact qualification is separate: [local-only path omitted] The release bundle at [local-only path omitted] must contain its self-contained final reports and raw data before no-overwrite finalization. Until those gates pass this source freeze is NOT release approval. No historical package is renamed/repackaged as final.
 
 Build identity: Debian11 amd64, Rust/Cargo1.95.0, GCC10.2.1, GLIBC2.31-13+deb11u14, locked offline Cargo dependencies, existing TPA tool SHA2564da9418be15d2d5e212e21ff399a33519ca342522633afaed6341705765370a7, SOURCE_DATE_EPOCH1792195200. Two clean builds and exact-package ABI/hardening, installed Debian11/12/13, PAM/PTY/UI, restart/expiry and60-race/480-attempt gates are mandatory.
 

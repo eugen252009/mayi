@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Classification regression results
 
 **HISTORY GO. PACKAGE READY — INSTALLATION PENDING.**
@@ -12,7 +16,7 @@ Actual installed Debian11/12/13:17 gates each, exact package. Classification cre
 
 Evidence honesty: Debian12/13 primary17 PASS/exit0. Debian11 primary16 PASS +live-status-watch FAIL/exit1: its test signalled the runuser wrapper/process group and an assertion missed the alternate-screen cleanup marker. Initial fixture failed before exporting that transcript, so exact original cause is unproven. A same-artifact targeted rerun delivers SIGINT to the verified UID24702 Mayi Python child, lets wrapper reap it, logs target PID/cmdline and full transcript BEFORE assertions; NDJSON reconnect plus resized TTY/unchanged termios/cursor/screen cleanup PASS/exit0. Original failure remains unchanged, not converted to PASS. No product code change or root signal bypass. Independent audit explicitly checks primary +retry rather than silently ignoring a failure.
 
-Raw:/home/eugen/projekte/mayi-qualification/history-classification-0.4.1-10-status3, independent-audit-final.json/check_results.py, primary debian*/raw and watch-retry/debian11/raw; source/runtime hashes and package identity pinned. No physical power-loss/full-disk/suspend/custom PAM or production-scale storage performance claim.
+Raw:[local-only path omitted], independent-audit-final.json/check_results.py, primary debian*/raw and watch-retry/debian11/raw; source/runtime hashes and package identity pinned. No physical power-loss/full-disk/suspend/custom PAM or production-scale storage performance claim.
 
 
 Runtime/package source: e7f2cc3fe62722bc1bf85d0e502ce3ef2d3601e7. Development0.4.1-10~status3 amd64. Package and independent rebuild SHA-256:c8285db384a46b4f9489c9700c779171a1fc21b2390b0cae1233e08c9bbc8fbd.

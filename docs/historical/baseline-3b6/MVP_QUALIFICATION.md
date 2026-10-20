@@ -1,12 +1,16 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Mayi package and deployment qualification record
 
 > Release/qualification history, not a step-by-step user guide. Supported Debian runtime targets are Debian 11–13 amd64; Debian 10 is not supported despite historical package and binary tests. It remains an acceptable build baseline only. Mayi's stable published baseline is 0.4.1; its known protocol-level PAM bypass remains unchanged and unpublished. Queue/result persistence remains **NOT CLAIMED** and filesystem execution remains **DISCONNECTED / INCOMPLETE**.
 
 ## Candidate 0.4.1-5 — exact supported-platform qualification PASS
 
-- Exact artifact: `/tmp/mayi-qemu-qualification/artifacts/mayi_0.4.1-5_amd64.deb`; SHA-256 `cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381`. No rebuild or artifact modification occurred during qualification.
+- Exact artifact: `[local-only path omitted]`; SHA-256 `cebe101be7cf9f1501ea74949f76ead00bc7e6d593c216ba0a9a6478fa05f381`. No rebuild or artifact modification occurred during qualification.
 - Debian 11/12/13 were booted as isolated QEMU/KVM guests; tests ran directly under guest systemd, without Docker. Exact artifact fresh install, packaged 0.4.1 upgrade, successful/failed/locked PAM, initial/final NSS denial, missing-auth protocol denial, helper outage (systemd dependency closure), 300-second challenge expiry, concurrent approvals, concurrent one-shot consumption/replay, service lifecycle, runtime identities/capabilities/cgroups/sandbox, package removal/purge, and administrator-account preservation passed. `openat2` with required resolve flags was available on all supported kernels.
-- Build source revision `1da927cc65baf882d557f53e3ddfaf1352dd249f` was dirty; source input tar SHA-256 `77e314f0e3d0477089207428e8553e53de3f5634fc12730087f15c37024e6cb1`. Full results and environment provenance: [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md) and `/tmp/mayi-qemu-qualification/QUALIFICATION-STATUS.md`.
+- Build source revision `1da927cc65baf882d557f53e3ddfaf1352dd249f` was dirty; source input tar SHA-256 `77e314f0e3d0477089207428e8553e53de3f5634fc12730087f15c37024e6cb1`. Full results and environment provenance: [`DEBIAN_COMPATIBILITY.md`](DEBIAN_COMPATIBILITY.md) and `[local-only path omitted]`.
 - **Status: PASS for Debian 11–13; READY FOR INDEPENDENT SECURITY REVIEW.** Not production-ready, not published, and no staging/publication/deployment is authorized. Published 0.4.1's PAM bypass remains a separate concern.
 
 ## Historical candidate 0.4.1-4 — old matrix (not current platform policy)
@@ -89,7 +93,7 @@ Queue/result persistence across broker restart remains **NOT CLAIMED**. The file
 ### TPA.run publication and APT consumer verification
 
 - Confirmed public `bootstrap`, repository ID `f102d36c2eca9bbaa8ddcff08b3c645f`, canonical URL `https://tpa.run/r/tparun/bootstrap`.
-- Before cleanup, revalidated all 104 existing staging records: each staged path was a regular file strictly beneath `/tmp/tpahub/staging/artifacts/`, with matching recorded size, SHA-256, and package identity. Cleared the local staging workspace with `tparun unstage --all`; no original source paths were touched and no remote publication/repository operation was requested. The manifest now has zero artifact records and `tparun status` reports no packages staged.
+- Before cleanup, revalidated all 104 existing staging records: each staged path was a regular file strictly beneath `[local-only path omitted]`, with matching recorded size, SHA-256, and package identity. Cleared the local staging workspace with `tparun unstage --all`; no original source paths were touched and no remote publication/repository operation was requested. The manifest now has zero artifact records and `tparun status` reports no packages staged.
 - Refreshed isolated APT metadata with only the bootstrap source before publication. It advertised `mayi 0.4.1` and did not contain `0.4.1-1`; source attribution was unambiguous.
 - Staged only the exact qualified `mayi 0.4.1-1 amd64` artifact. Its staged copy was independently checked as a regular file, size 481320 bytes, with the expected package identity and SHA-256 `665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8`.
 - `tparun publish --yes https://tpa.run/r/tparun/bootstrap` completed successfully: one package published and local staging cleared. Post-publication `tparun status` was empty. TPA.run's staged-artifact/upload verification completed successfully.

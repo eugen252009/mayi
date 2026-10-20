@@ -1,3 +1,7 @@
+> Archive view: maintainer-local paths have been omitted. Commands containing
+> `[local-only path omitted]` are historical records, not runnable instructions.
+> Original bytes remain at the commit/path recorded by the documentation checker.
+
 # Mayi UI local development package
 
 ## Status: PACKAGE READY — INSTALLATION PENDING
@@ -9,7 +13,7 @@ No privileged installation has been submitted or performed. Explicit human appro
 - UI development commit: `fc289b53f63748d49129a8365e7d735fab782352`.
 - Build commit: `a50aecc` (same runtime source; corrects three stale 0.4.1-8 filename/diagnostic literals in build-deb.sh).
 - Version/architecture: `mayi 0.4.1-9~ui1 amd64`.
-- Package: `/home/eugen/projekte/mayi-ui-development/dist/mayi_0.4.1-9~ui1_amd64.deb`.
+- Package: `[local-only path omitted]`.
 - SHA-256: `b3fddaac840fc941952f822b5589954e28a2ee71e52c432d961f0c94b7594879`.
 - Archived build input: `local-install/source.tar`; fresh source extraction and Cargo release target in a disposable Debian 11 VM child overlay. Preserved qualification VM images were backing inputs only; no original image was booted writable.
 
@@ -30,7 +34,7 @@ APT simulation: only mayi upgraded, zero added/removed packages, all declared de
 - Installed: `mayi 0.4.1-1 amd64`, install ok installed. dpkg --verify mayi reported no differences.
 - Existing broker and privileged executor: active/running. PAM helper unit absent, as expected for the old architecture.
 - Original package found in both APT cache and developer artifact directory; hashes match.
-- Preserved rollback: `/home/eugen/projekte/mayi-ui-development/dist/rollback/mayi_0.4.1-1_amd64.deb`.
+- Preserved rollback: `[local-only path omitted]`.
 - Rollback SHA-256: `665d1154f7a0227ae93a5485c6ba493b57c18df856935e2611f8527270edb5d8`.
 - Read-only installed metadata, account/group membership, service properties and public PAM conffile snapshot saved under local-install. No passwords or authentication sessions copied. Existing human memberships unchanged.
 
@@ -46,7 +50,7 @@ mayi /usr/bin/systemd-run \
   --on-active=15s --timer-property=AccuracySec=1s \
   --property=Type=oneshot --property=RemainAfterExit=yes \
   /usr/bin/apt-get --assume-yes --no-download --no-remove install \
-  '/home/eugen/projekte/mayi-ui-development/dist/mayi_0.4.1-9~ui1_amd64.deb'
+  '[local-only path omitted]
 ```
 
 APT's --assume-yes applies only to this explicitly preapproved, simulated package plan; it is not automatic Mayi approval. No --force-* or conffile override. Human PAM occurs only in the human's own mayi-approve terminal. Recheck artifact hash, installed version, locks and simulation before submission after approval. Drain/finish pending requests first: broker restart loses pending queue/results. Maintenance may briefly stop Mayi services. The new package introduces the PAM helper and per-decision PAM authentication. No unrelated persistent service configuration is requested; the named transient install timer/service is for this operation only.
@@ -95,7 +99,7 @@ mayi /usr/bin/systemd-run \
   --on-active=15s --timer-property=AccuracySec=1s \
   --property=Type=oneshot --property=RemainAfterExit=yes \
   /usr/bin/apt-get --assume-yes --allow-downgrades --no-download --no-remove install \
-  '/home/eugen/projekte/mayi-ui-development/dist/rollback/mayi_0.4.1-1_amd64.deb'
+  '[local-only path omitted]
 ```
 
 First simulate the downgrade, inspect the current failure/partial-install state, and request authorization; retain logs. If Mayi itself cannot authorize, stop: a human administrator needs an independently authorized recovery terminal to run the same apt-get downgrade command. The agent must not bypass Mayi with sudo/su/pkexec or a root shell. No purge, forced conflict resolution, account deletion, or automatic cleanup. Retain the new PAM-helper unit's status and check downgrade lifecycle effects; clean up leftovers only under separately reviewed authorization. Rolling back restores the older security model, not 0.4.1-8's later fixes.
